@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.config import get_settings
-from app.models import Base
+from app.models.base import Base
 
 settings = get_settings()
 

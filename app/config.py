@@ -10,7 +10,20 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     FASTAPI_PORT: int = 8432
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # Financial Modeling Prep
+    FMP_API_KEY: str = ""
+    FMP_BASE_URL: str = "https://financialmodelingprep.com"
+
+    # Debug mode — enable 1-hour external-resource cache for all quant API calls
+    DEBUG: bool = False
+
+    # LLM provider: "ark" | "openai" | "llamacpp"
+    LLM_PROVIDER: str = "ark"
+    LLAMACPP_MODEL_PATH: Optional[str] = None
+    LLAMACPP_N_CTX: int = 4096
+    LLAMACPP_N_GPU_LAYERS: int = -1
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 @lru_cache
