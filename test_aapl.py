@@ -6,9 +6,9 @@ import json
 
 async def test_aapl():
     """Test the financial analysis graph with AAPL."""
-    base_url = "http://localhost:8432"
+    base_url = "http://127.0.0.1:8432"
     
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=300, trust_env=False) as client:
         # Health check
         print("Checking health...")
         health = await client.get(f"{base_url}/health")
@@ -22,7 +22,7 @@ async def test_aapl():
         print("\nSubmitting AAPL query...")
         response = await client.post(
             f"{base_url}/query",
-            json={"query": "Evaluate AAPL stock", "user_id": "test_user"}
+            json={"query": "Should I buy AAPL stock?", "user_id": "test_user"}
         )
         
         print(f"Response status code: {response.status_code}")

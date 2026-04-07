@@ -70,3 +70,25 @@ CREATE TABLE IF NOT EXISTS fin_agents.node_executions (
 
 CREATE INDEX IF NOT EXISTS fin_agents_node_executions_thread_id_idx ON fin_agents.node_executions (thread_id);
 CREATE INDEX IF NOT EXISTS fin_agents_node_executions_node_name_idx ON fin_agents.node_executions (node_name);
+
+-- external_resources: logs every call to an external API (quant data providers, web search, etc.)
+-- used as a 1-hour cache in DEBUG mode — same cache_key within the TTL returns the stored output
+-- thread_id is nullable so the same cached record can be reused across different threads
+CREATE TABLE IF NOT EXISTS fin_agents.external_resources (
+    id BIGSERIAL PRIMARY KEY,
+    thread_id TEXT REFERENCES fin_agents.user_queries (thread_id) ON DELETE SET NULL,
+    node_name TEXT NOT NULL DEFAULT 'unknown',
+    source TEXT NOT NULL,          -- provider/client name: 'fmp', 'yfinance', 'web_search', etc.
+    method TEXT NOT NULL,          -- method/endpoint name: 'get_company_profile', etc.
+    cache_key TEXT NOT NULL,       -- sha256(source + method + serialised input) for cache lookup
+    input JSONB NOT NULL DEFAULT '{}',
+    output JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS fin_agents_external_resources_cache_key_idx
+    ON fin_agents.external_resources (cache_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS fin_agents_external_resources_thread_id_idx
+    ON fin_agents.external_resources (thread_id);
+CREATE INDEX IF NOT EXISTS fin_agents_external_resources_source_method_idx
+    ON fin_agents.external_resources (source, method);

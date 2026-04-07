@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, update
 
-from app.database import init_db, get_checkpointer, close_checkpointer, _get_session_factory
+from app.database import init_db, checkpointer, _get_session_factory
 from app.graph import build_graph
 from app.models import UserQuery
 
@@ -56,9 +56,7 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         await session.commit()
 
     try:
-        cp = await get_checkpointer()
-
-        try:
+        async with checkpointer() as cp:
             graph = build_graph().compile(checkpointer=cp)
 
             config = {
@@ -97,9 +95,6 @@ async def run_query(request: QueryRequest) -> QueryResponse:
                 status="completed",
                 report=report,
             )
-
-        finally:
-            await close_checkpointer(cp)
 
     except Exception as e:
         logger.exception(f"Error processing query {thread_id}: {e}")
