@@ -1,0 +1,37 @@
+# Web framework
+fastapi>=0.120.0
+uvicorn[standard]>=0.35.0
+sse-starlette>=2.1.0
+
+# Data validation
+pydantic>=2.11.0
+pydantic-settings>=2.8.0
+
+# Database
+sqlalchemy[asyncio]>=2.0.0
+psycopg[binary,pool]>=3.3.0
+
+# LangChain / LangGraph
+langgraph>=0.5.0
+langgraph-checkpoint-postgres>=2.1.0
+langchain-core>=0.4.0
+langchain-openai>=0.4.0
+langchain-community>=0.4.0  # optional: required only for llama.cpp provider
+
+# HTTP client
+httpx>=0.28.0
+
+# Market data
+yfinance>=0.3.0
+pandas>=2.3.0
+pandas-ta>=0.3.15b
+pandas-datareader>=0.10.0
+
+# Web search
+ddgs>=1.0.0
+
+# Google AI embeddings
+langchain-google-genai>=2.0.0
+
+# PDF parsing (financial reports)
+pypdf>=4.0.0

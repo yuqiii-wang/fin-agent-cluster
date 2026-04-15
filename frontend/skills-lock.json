@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "antd": {
+      "source": "ant-design/antd-skill",
+      "sourceType": "github",
+      "computedHash": "4295010f09f85855cab9e9de9ec7f96c14541474b4f3f9d6ef89006430931b94"
+    }
+  }
+}

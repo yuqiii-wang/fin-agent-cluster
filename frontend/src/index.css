@@ -1,0 +1,15 @@
+/* Blinking cursor for streaming token display */
+@keyframes blink {
+  from, to { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.blink-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 13px;
+  background: #1677ff;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}

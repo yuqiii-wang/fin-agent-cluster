@@ -71,24 +71,28 @@ CREATE TABLE IF NOT EXISTS fin_agents.node_executions (
 CREATE INDEX IF NOT EXISTS fin_agents_node_executions_thread_id_idx ON fin_agents.node_executions (thread_id);
 CREATE INDEX IF NOT EXISTS fin_agents_node_executions_node_name_idx ON fin_agents.node_executions (node_name);
 
--- external_resources: logs every call to an external API (quant data providers, web search, etc.)
--- used as a 1-hour cache in DEBUG mode — same cache_key within the TTL returns the stored output
--- thread_id is nullable so the same cached record can be reused across different threads
-CREATE TABLE IF NOT EXISTS fin_agents.external_resources (
+
+-- Sub-tasks emitted by each graph node (one row per fetch / LLM call)
+CREATE TABLE IF NOT EXISTS fin_agents.tasks (
     id BIGSERIAL PRIMARY KEY,
-    thread_id TEXT REFERENCES fin_agents.user_queries (thread_id) ON DELETE SET NULL,
-    node_name TEXT NOT NULL DEFAULT 'unknown',
-    source TEXT NOT NULL,          -- provider/client name: 'fmp', 'yfinance', 'web_search', etc.
-    method TEXT NOT NULL,          -- method/endpoint name: 'get_company_profile', etc.
-    cache_key TEXT NOT NULL,       -- sha256(source + method + serialised input) for cache lookup
-    input JSONB NOT NULL DEFAULT '{}',
-    output JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    thread_id TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
+    node_execution_id BIGINT REFERENCES fin_agents.node_executions (id) ON DELETE CASCADE,
+    node_name TEXT NOT NULL,
+    task_key  TEXT NOT NULL,
+    status    TEXT NOT NULL DEFAULT 'pending'
+              CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    input     JSONB NOT NULL DEFAULT '{}',
+    output    JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS fin_agents_external_resources_cache_key_idx
-    ON fin_agents.external_resources (cache_key, created_at DESC);
-CREATE INDEX IF NOT EXISTS fin_agents_external_resources_thread_id_idx
-    ON fin_agents.external_resources (thread_id);
-CREATE INDEX IF NOT EXISTS fin_agents_external_resources_source_method_idx
-    ON fin_agents.external_resources (source, method);
+-- Migration: if upgrading from older schema that had detail TEXT
+-- ALTER TABLE fin_agents.tasks ADD COLUMN IF NOT EXISTS input JSONB NOT NULL DEFAULT '{}';
+-- ALTER TABLE fin_agents.tasks ADD COLUMN IF NOT EXISTS output JSONB NOT NULL DEFAULT '{}';
+-- ALTER TABLE fin_agents.tasks DROP COLUMN IF EXISTS detail;
+
+CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_execution_id_idx ON fin_agents.tasks (node_execution_id);
+
+CREATE INDEX IF NOT EXISTS fin_agents_tasks_thread_id_idx ON fin_agents.tasks (thread_id);
+CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_name_idx ON fin_agents.tasks (node_name);

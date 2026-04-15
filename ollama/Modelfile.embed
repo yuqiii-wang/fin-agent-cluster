@@ -1,0 +1,4 @@
+FROM ./Qwen3-0.6B-Emb/Qwen3-Embedding-0.6B-Q8_0.gguf
+
+# Embedding model: called via Ollama /api/embed or /api/embeddings
+TEMPLATE """{{ .Prompt }}"""
