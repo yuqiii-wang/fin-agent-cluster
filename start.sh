@@ -3,6 +3,10 @@ set -e
 
 [ ! -f .env ] && echo "Error: .env file not found" && exit 1
 
+# Clear Python cache
+find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+find . -name "*.pyc" -delete 2>/dev/null || true
+
 # Kill all related processes
 taskkill //F //IM ollama.exe >/dev/null 2>&1 || true
 taskkill //F //IM node.exe >/dev/null 2>&1 || true

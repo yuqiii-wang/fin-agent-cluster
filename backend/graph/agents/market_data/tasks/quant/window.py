@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from backend.graph.utils.ohlcv import get_ohlcv_coverage
+from backend.graph.utils.ohlcv import get_ohlcv_coverage, fetch_ohlcv_from_db
 from backend.resource_api.quant_api.client import QuantClient
 from backend.resource_api.quant_api.constants import OhlcvWindow
 from backend.resource_api.quant_api.models import OHLCVBar, QuantQuery, QuantResult
@@ -49,8 +49,16 @@ async def fetch_window(
 
     fresh_cutoff = now - timedelta(hours=window.fresh_hours)
     if latest is not None and latest >= fresh_cutoff:
-        logger.info("[quant tasks] %s/%s up-to-date (latest=%s)", ticker, window.granularity, latest)
-        return [], "db"
+        logger.info("[quant tasks] %s/%s up-to-date (latest=%s); loading from DB", ticker, window.granularity, latest)
+        db_bars = await fetch_ohlcv_from_db(ticker, window.granularity, window_start)
+        if db_bars:
+            return db_bars, "db"
+        # DB reported fresh coverage but returned no bars — fall through to resource API
+        logger.warning(
+            "[quant tasks] %s/%s DB fresh but empty; falling back to resource API",
+            ticker, window.granularity,
+        )
+        latest = None  # force full-period fetch below
 
     params: dict
     if latest is not None:

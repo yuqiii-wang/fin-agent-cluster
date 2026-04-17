@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.resource_api.exceptions import ProviderNotFoundError
-from backend.resource_api.quant_api.constants import PERIOD_DAYS
+from backend.resource_api.quant_api.configs.periods import PERIOD_DAYS
 from backend.resource_api.quant_api.models import (
     OHLCVBar,
     PriceQuote,
@@ -53,69 +53,8 @@ _DAILY_PERIOD_MAP: dict[str, str] = {
     "1mo": "monthly",
 }
 
-# ---------------------------------------------------------------------------
-# Canonical-to-AKShare ticker translation map.
-# AKShare is China-centric.  Chinese A-share indices are translated to their
-# bare 6-digit codes (without the .SS / .SZ exchange suffix which AKShare
-# does not use).  All international and commodity tickers are set to None to
-# cause the client to fall through to yfinance / datareader.
-# ---------------------------------------------------------------------------
-TICKER_MAP: dict[str, str | None] = {
-    # Chinese A-share indices — strip exchange suffix to bare code
-    "000001.SS":  "000001",   # Shanghai Composite (SSE)
-    "399001.SZ":  "399001",   # Shenzhen Component (SZSE)
-    "399006.SZ":  "399006",   # ChiNext (SZSE)
-    "000300.SS":  "000300",   # CSI 300
-    "^SSEC":      "000001",   # Alternative canonical for Shanghai Composite
-    # HK — AKShare supports HSI via ak.index_global, but limited; prefer yfinance
-    "^HSI":       None,
-    "^HSCE":      None,
-    # Commodity futures — not available in AKShare
-    "GC=F":       None,
-    "CL=F":       None,
-    "NG=F":       None,
-    "BZ=F":       None,
-    "SI=F":       None,
-    "HG=F":       None,
-    # Treasury / CBOE yield indices — not in AKShare
-    "^IRX":       None,
-    "^TNX":       None,
-    "^TYX":       None,
-    "^FVX":       None,
-    "^US1MT":     None,
-    "^US6MT":     None,
-    # US equity indices — not supported by AKShare
-    "^GSPC":      None,
-    "^IXIC":      None,
-    "^NDX":       None,
-    "^DJI":       None,
-    "^RUT":       None,
-    # Other international indices — not supported
-    "^N225":      None,
-    "^TOPX":      None,
-    "^FTSE":      None,
-    "^GDAXI":     None,
-    "^FCHI":      None,
-    "^SSMI":      None,
-    "^AXJO":      None,
-    "^AORD":      None,
-    "^KS11":      None,
-    "^KQ11":      None,
-    "^BSESN":     None,
-    "^NSEI":      None,
-    "^STI":       None,
-    "^TWII":      None,
-    "^BVSP":      None,
-    "^IBEX":      None,
-    "^AEX":       None,
-    "^GSPTSE":    None,
-    "^MXX":       None,
-    "^JKSE":      None,
-    "FTSEMIB.MI": None,
-    # Crypto — not supported
-    "BTC-USD":    None,
-    "ETH-USD":    None,
-}
+from backend.resource_api.quant_api.configs.ticker_maps.akshare import TICKER_MAP  # noqa: F401
+
 
 
 def _strip_suffix(symbol: str) -> str:

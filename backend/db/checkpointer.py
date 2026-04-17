@@ -18,7 +18,7 @@ async def ensure_setup() -> None:
     if not _setup_done:
         settings = get_settings()
         async with await AsyncConnection.connect(
-            settings.DATABASE_URL,
+            settings.DATABASE_PG_URL,
             connect_timeout=settings.DB_CONNECT_TIMEOUT_SECONDS,
             autocommit=True,
             prepare_threshold=0,
@@ -35,7 +35,7 @@ async def checkpointer() -> AsyncGenerator[AsyncPostgresSaver, None]:
     """Async context manager that yields a ready-to-use AsyncPostgresSaver."""
     settings = get_settings()
     conn = await AsyncConnection.connect(
-        settings.DATABASE_URL,
+        settings.DATABASE_PG_URL,
         connect_timeout=settings.DB_CONNECT_TIMEOUT_SECONDS,
         autocommit=True,
         prepare_threshold=0,

@@ -17,5 +17,7 @@ async def init_db() -> None:
 
     engine = get_engine()
     async with engine.begin() as conn:
+        # Ensure application schemas exist before SQLAlchemy creates tables.
+        await conn.exec_driver_sql("CREATE SCHEMA IF NOT EXISTS fin_users")
         await conn.run_sync(Base.metadata.create_all)
     await ensure_setup()

@@ -59,7 +59,7 @@ async def query_optimizer(state: FinAnalysisState) -> dict:
 
     # ── Task 1: stream LLM JSON ──────────────────────────────────────────────
     raw_json = await comprehend_basics(_chain, query, thread_id, node_execution_id, _provider)
-    if raw_json is None:
+    if not raw_json:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         await finish_node_execution(
             node_execution_id, {"error": "comprehend_basics failed"}, elapsed_ms

@@ -1,8 +1,8 @@
 import {
-  Button,
   Collapse,
   Descriptions,
   Drawer,
+  Dropdown,
   Flex,
   Space,
   Tag,
@@ -14,13 +14,14 @@ import {
   CopyOutlined,
   DownOutlined,
   LoadingOutlined,
-  UpOutlined,
+  QuestionCircleOutlined,
 } from "@ant-design/icons";
-import { useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { NodeGroup, TaskInfo, TaskTypeMeta } from "../types";
-import { NODE_LABELS } from "./NodeList";
+import { NODE_LABELS } from "./nodeLabels";
 import { JsonViewer } from "./JsonViewer";
-import { OutputViewer } from "./OutputViewer";
+import { OutputViewer, isLlmTask } from "./OutputViewer";
+import { watchTask, cancelTask, passTask } from "../api";
 
 
 const { Text } = Typography;
@@ -40,8 +41,7 @@ function TaskMeta({ task }: { task: TaskInfo }) {
       size="small"
       column={1}
       bordered
-      labelStyle={{ fontSize: 11, whiteSpace: "nowrap", width: 72 }}
-      contentStyle={{ fontSize: 11 }}
+      styles={{ label: { fontSize: 11, whiteSpace: "nowrap", width: 72 }, content: { fontSize: 11 } }}
       items={[
         {
           key: "thread",
@@ -106,6 +106,78 @@ function TaskLabel({ task }: { task: TaskInfo }) {
   );
 }
 
+const ACTIONS_HELP = (
+  <div style={{ maxWidth: 260 }}>
+    <p style={{ margin: "0 0 6px" }}>
+      <strong>Cancel</strong> — stops the LLM stream immediately and marks this task as
+      <em> cancelled</em>. Downstream tasks that depend on its output will be skipped.
+    </p>
+    <p style={{ margin: 0 }}>
+      <strong>Pass</strong> — stops the stream and accepts whatever the LLM has generated so
+      far as the final output. The partial JSON is used to populate the required output schema.
+    </p>
+  </div>
+);
+
+/** Dropdown action button shown on running LLM tasks. */
+function LlmTaskActions({ task }: { task: TaskInfo }) {
+  const [busy, setBusy] = useState(false);
+
+  const handleAction = async (action: "cancel" | "pass") => {
+    setBusy(true);
+    try {
+      if (action === "cancel") {
+        await cancelTask(task.id);
+      } else {
+        await passTask(task.id);
+      }
+    } catch (err) {
+      console.error("[LlmTaskActions] action failed", err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Flex align="center" gap={6}>
+      <Dropdown
+        disabled={busy}
+        menu={{
+          items: [
+            {
+              key: "cancel",
+              label: "Cancel",
+              danger: true,
+              onClick: () => handleAction("cancel"),
+            },
+            {
+              key: "pass",
+              label: "Pass",
+              onClick: () => handleAction("pass"),
+            },
+          ],
+        }}
+        trigger={["click"]}
+      >
+        <a
+          onClick={(e) => e.preventDefault()}
+          style={{ fontSize: 11, userSelect: "none" }}
+        >
+          <Space size={4}>
+            {busy ? <LoadingOutlined style={{ fontSize: 11 }} /> : null}
+            Actions
+            <DownOutlined style={{ fontSize: 9 }} />
+          </Space>
+        </a>
+      </Dropdown>
+      <Tooltip title={ACTIONS_HELP} placement="rightTop">
+        <QuestionCircleOutlined style={{ fontSize: 12, color: "var(--ant-color-text-quaternary)", cursor: "help" }} />
+      </Tooltip>
+    </Flex>
+  );
+}
+
+
 interface Props {
   node: NodeGroup | null;
   /** Accumulated token strings keyed by task id, for live streaming display. */
@@ -122,14 +194,48 @@ export function TaskDrawer({ node, tokenStreams, taskProviders, taskMeta, onClos
     ? `${NODE_LABELS[node.node_name] ?? node.node_name} — Tasks`
     : "Tasks";
 
-  const defaultOpenKeys = useMemo(
-    () => node?.tasks.filter((t) => t.status === "running").map((t) => String(t.id)) ?? [],
-    [node],
+  // Accordion: a single string key, or undefined when all collapsed.
+  // Initialise to the first running task so live output is visible on open.
+  const [activeKey, setActiveKey] = useState<string | undefined>(
+    () => node?.tasks.find((t) => t.status === "running")?.id.toString()
   );
 
-  const [activeKeys, setActiveKeys] = useState<string[]>(defaultOpenKeys);
-  const allKeys = node?.tasks.map((t) => String(t.id)) ?? [];
-  const allExpanded = allKeys.length > 0 && allKeys.every((k) => activeKeys.includes(k));
+  // Reset the expanded panel whenever the drawer switches to a different node.
+  const prevNodeNameRef = useRef<string | undefined>(node?.node_name);
+  useEffect(() => {
+    if (node?.node_name === prevNodeNameRef.current) return;
+    prevNodeNameRef.current = node?.node_name;
+    setActiveKey(node?.tasks.find((t) => t.status === "running")?.id.toString());
+  }, [node]);
+
+  // threadId is stable for the lifetime of a task group — use the first task's id.
+  const threadId = node?.tasks[0]?.thread_id ?? "";
+
+  // Register the active task with the backend watch registry whenever it changes,
+  // including on initial open — so tokens start flowing as soon as the drawer opens.
+  useEffect(() => {
+    if (!threadId || activeKey === undefined) return;
+    const taskId = parseInt(activeKey, 10);
+    console.debug("[TaskDrawer] watchTask threadId=%s taskId=%d", threadId, taskId);
+    watchTask(threadId, taskId).catch((err) => {
+      console.error("[TaskDrawer] watchTask failed", err);
+    });
+  }, [threadId, activeKey]);
+
+  const handleCollapseChange = (keys: string | string[]) => {
+    const arr = (Array.isArray(keys) ? keys : [keys]).filter(Boolean);
+    // If the active panel was clicked again, collapse it; otherwise switch to the new one.
+    const next = arr.find((k) => k !== activeKey);
+    console.debug("[TaskDrawer] collapseChange keys=%o activeKey=%s next=%s", arr, activeKey, next);
+    setActiveKey(next);
+    // watchTask is handled by the useEffect above on activeKey change
+  };
+
+  const handleClose = () => {
+    console.debug("[TaskDrawer] close threadId=%s", threadId);
+    if (threadId) watchTask(threadId, null).catch((err) => console.error("[TaskDrawer] unwatch failed", err));
+    onClose();
+  };
 
   return (
     <Drawer
@@ -137,80 +243,70 @@ export function TaskDrawer({ node, tokenStreams, taskProviders, taskMeta, onClos
       placement="right"
       width="50vw"
       open={node !== null}
-      onClose={onClose}
+      onClose={handleClose}
       styles={{ body: { padding: "12px 8px" } }}
     >
       {node && (
-        <Flex vertical gap={8}>
-          {/* ── Top bar ── */}
-          <Flex justify="flex-end">
-            <Tooltip title={allExpanded ? "Collapse all" : "Expand all"}>
-              <Button
-                size="small"
-                icon={allExpanded ? <UpOutlined /> : <DownOutlined />}
-                onClick={() => setActiveKeys(allExpanded ? [] : allKeys)}
-              >
-                {allExpanded ? "Collapse all" : "Expand all"}
-              </Button>
-            </Tooltip>
-          </Flex>
+        <Collapse
+          accordion
+          activeKey={activeKey !== undefined ? [activeKey] : []}
+          onChange={handleCollapseChange}
+          size="small"
+          style={{ background: "transparent", border: "none" }}
+          items={node.tasks.map((task) => {
+            const stream = tokenStreams[task.id];
+            const hasInput = task.input && Object.keys(task.input).length > 0;
+            // Show the actions button only on the actively-expanded task that is
+            // still running AND is an LLM stream (tokens flowing or meta confirms it).
+            const isLlmRunning =
+              activeKey === String(task.id) &&
+              task.status === "running" &&
+              (!!stream || (taskMeta != null && isLlmTask(task.task_key, taskMeta)));
 
-          {/* ── Task panels ── */}
-          <Collapse
-            activeKey={activeKeys}
-            onChange={(keys) => setActiveKeys(Array.isArray(keys) ? keys : [keys as string])}
-            size="small"
-            style={{ background: "transparent", border: "none" }}
-            items={node.tasks.map((task) => {
-              const stream = tokenStreams[task.id];
-              const hasInput = task.input && Object.keys(task.input).length > 0;
+            return {
+              key: String(task.id),
+              label: <TaskLabel task={task} />,
+              style: { marginBottom: 6, borderRadius: 6 },
+              children: (
+                <Flex vertical gap={8}>
+                  <TaskMeta task={task} />
 
-              return {
-                key: String(task.id),
-                label: <TaskLabel task={task} />,
-                style: { marginBottom: 6, borderRadius: 6 },
-                children: (
-                  <Flex vertical gap={8}>
-                    {/* Metadata grid */}
-                    <TaskMeta task={task} />
-
-                    {/* Input section */}
-                    {hasInput && (
-                      <Flex vertical gap={4}>
-                        <Text type="secondary" style={{ fontSize: 11, fontWeight: 500 }}>INPUT</Text>
-                        <JsonViewer data={task.input} maxHeight={300} />
-                      </Flex>
-                    )}
-
-                    {/* Output section — routed through OutputViewer */}
+                  {hasInput && (
                     <Flex vertical gap={4}>
-                      <Text type="secondary" style={{ fontSize: 11, fontWeight: 500 }}>OUTPUT</Text>
-                      <OutputViewer
-                        task={task}
-                        stream={stream}
-                        provider={taskProviders[task.id]}
-                        taskMeta={taskMeta}
-                      />
+                      <Text type="secondary" style={{ fontSize: 11, fontWeight: 500 }}>INPUT</Text>
+                      <JsonViewer data={task.input} maxHeight={300} />
                     </Flex>
+                  )}
 
-                    {/* Timing */}
-                    <Space size={16}>
-                      <Text type="secondary" style={{ fontSize: 11 }}>
-                        <ClockCircleOutlined style={{ marginRight: 4 }} />
-                        started {new Date(task.created_at).toLocaleTimeString()}
-                      </Text>
-                      {task.status !== "running" && (
-                        <Text type="secondary" style={{ fontSize: 11 }}>
-                          updated {new Date(task.updated_at).toLocaleTimeString()}
-                        </Text>
-                      )}
-                    </Space>
+                  <Flex vertical gap={4}>
+                    <Flex align="center" justify="space-between">
+                      <Text type="secondary" style={{ fontSize: 11, fontWeight: 500 }}>OUTPUT</Text>
+                      {isLlmRunning && <LlmTaskActions task={task} />}
+                    </Flex>
+                    <OutputViewer
+                      task={task}
+                      stream={stream}
+                      provider={taskProviders[task.id]}
+                      taskMeta={taskMeta}
+                    />
                   </Flex>
-                ),
-              };
-            })}
-          />
-        </Flex>
+
+                  <Space size={16}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      <ClockCircleOutlined style={{ marginRight: 4 }} />
+                      started {new Date(task.created_at).toLocaleTimeString()}
+                    </Text>
+                    {task.status !== "running" && (
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        updated {new Date(task.updated_at).toLocaleTimeString()}
+                      </Text>
+                    )}
+                  </Space>
+                </Flex>
+              ),
+            };
+          })}
+        />
       )}
     </Drawer>
   );

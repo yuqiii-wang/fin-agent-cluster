@@ -15,7 +15,7 @@ def get_engine() -> AsyncEngine:
     global _engine, _session_factory
     if _engine is None:
         settings = get_settings()
-        sa_url = settings.DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+        sa_url = settings.DATABASE_PG_URL.replace("postgresql://", "postgresql+psycopg://", 1)
         _engine = create_async_engine(
             sa_url,
             echo=False,

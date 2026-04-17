@@ -3,8 +3,10 @@
 Mounted at ``/users`` under the parent API router, so full paths are:
 
     POST /api/v1/users/query
+    POST /api/v1/users/query/{thread_id}/cancel
     GET  /api/v1/users/query/{thread_id}
     GET  /api/v1/users/query/{thread_id}/tasks
+    GET  /api/v1/users/query/{thread_id}/nodes
 """
 
 from __future__ import annotations
@@ -14,22 +16,23 @@ import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Header, HTTPException
 from sqlalchemy import select, update
 
 from backend.db import checkpointer, get_session_factory as _get_session_factory
 from backend.graph import build_graph
 from backend.graph.models import AgentTask, NodeExecution
+from backend.api.registry import running_tasks as _running_tasks
 from backend.graph.utils.task_stream import emit_done
+from backend.users.auth import ensure_guest
 from backend.users.models import UserQuery
 from backend.users.schemas import QueryRequest, QueryResponse, SessionStatus, TaskInfo, NodeExecutionInfo
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/users", tags=["users"])
-
-# module-level registry of in-flight asyncio Tasks, keyed by thread_id
-_running_tasks: dict[str, asyncio.Task] = {}
 
 
 async def _run_graph(thread_id: str, query: str) -> None:
@@ -113,7 +116,10 @@ async def _run_graph(thread_id: str, query: str) -> None:
 
 
 @router.post("/query", response_model=QueryResponse)
-async def run_query(request: QueryRequest) -> QueryResponse:
+async def run_query(
+    request: QueryRequest,
+    x_user_token: Annotated[str, Header(alias="X-User-Token")],
+) -> QueryResponse:
     """Submit a financial analysis query and begin processing asynchronously.
 
     Creates a *UserQuery* record and immediately returns the *thread_id*.
@@ -123,10 +129,12 @@ async def run_query(request: QueryRequest) -> QueryResponse:
 
     Args:
         request: Query payload containing the user's natural-language question.
+        x_user_token: Guest bearer token from ``X-User-Token`` header.
 
     Returns:
         ``QueryResponse`` with *thread_id* and ``status="running"``.
     """
+    user, _ = await ensure_guest(x_user_token)
     thread_id = str(uuid.uuid4())
     factory = _get_session_factory()
 
@@ -134,7 +142,7 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         session.add(
             UserQuery(
                 thread_id=thread_id,
-                user_id=request.user_id,
+                user_id=user.id,
                 query=request.query,
                 status="running",
             )
@@ -237,6 +245,7 @@ async def get_query_tasks(thread_id: str) -> SessionStatus:
         tasks=[
             TaskInfo(
                 id=t.id,
+                thread_id=t.thread_id,
                 node_execution_id=t.node_execution_id,
                 node_name=t.node_name,
                 task_key=t.task_key,

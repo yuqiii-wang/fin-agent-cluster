@@ -31,14 +31,23 @@ class Settings(BaseSettings):
     OLLAMA_EMBED_MODEL: str = "qwen3-0.6b-emb"
 
     # ── Database / API keys ─────────────────────────────────────
-    DATABASE_URL: str
+    DATABASE_PG_URL: str
+    DATABASE_REDIS_URL: str = "redis://127.0.0.1:6379"
     DB_CONNECT_TIMEOUT_SECONDS: int = 8
     ALPHAVANTAGE_API_KEY: Optional[str] = None
+    FMP_API_KEY: Optional[str] = None
+    FMP_BASE_URL: str = "https://financialmodelingprep.com/stable"
     FASTAPI_PORT: int = 8432
     # Outbound HTTP proxy for all external calls (LLM, market-data, news, embeddings).
     # Example: HTTP_PROXY=http://127.0.0.1:7890
     # Leave unset to connect directly.
     HTTP_PROXY: Optional[str] = None
+
+    # ── Kong AI Gateway ──────────────────────────────────────────
+    # Set to Kong's proxy URL when LLM_PROVIDER=kong_ai.
+    # Kong's ai-proxy plugin then manages model routing and API-key injection.
+    # Example: KONG_AI_PROXY_URL=http://localhost:8000/llm
+    KONG_AI_PROXY_URL: Optional[str] = None
 
     # ── Web search provider selection ────────────────────────────
     # Choices: auto | ddgs | bing | google | volc

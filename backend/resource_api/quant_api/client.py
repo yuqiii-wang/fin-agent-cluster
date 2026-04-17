@@ -13,12 +13,14 @@ from backend.db import raw_conn
 from backend.db.queries.fin_markets_quant import QuantRawSQL
 from backend.resource_api.exceptions import ProviderNotFoundError
 from backend.resource_api.mem_cache import TimedLRUCache
-from backend.resource_api.quant_api.constants import QUANT_SOURCE_DEFAULTS
+from backend.resource_api.quant_api.configs.sources import QUANT_SOURCE_DEFAULTS
 from backend.resource_api.quant_api.models import QuantQuery, QuantResult, QuantSource
 from backend.resource_api.quant_api.providers import (
     alpha_vantage,
     akshare_provider,
     datareader_provider,
+    fmp_provider,
+    fred_provider,
     yfinance_provider,
 )
 
@@ -30,6 +32,8 @@ _TICKER_MAPS: dict[str, dict[str, str | None]] = {
     "datareader":    datareader_provider.TICKER_MAP,
     "alpha_vantage": alpha_vantage.TICKER_MAP,
     "akshare":       akshare_provider.TICKER_MAP,
+    "fred":          fred_provider.TICKER_MAP,
+    "fmp":           fmp_provider.TICKER_MAP,
 }
 
 
@@ -61,10 +65,12 @@ _mem_cache: TimedLRUCache = TimedLRUCache()
 # Key = primary source; value = ordered list of sources to try next.
 # akshare → alpha_vantage → yfinance for CN; yfinance is always last resort.
 _FALLBACK_CHAINS: dict[str, list[str]] = {
-    "akshare":       ["alpha_vantage", "datareader", "yfinance"],
-    "yfinance":      ["alpha_vantage", "datareader"],
-    "datareader":    ["alpha_vantage", "yfinance"],
-    "alpha_vantage": ["yfinance"],
+    "akshare":       ["alpha_vantage", "datareader", "fred", "yfinance"],
+    "yfinance":      [],  # last resort — no further fallback
+    "datareader":    ["alpha_vantage", "fred", "yfinance"],
+    "alpha_vantage": ["datareader", "fred", "yfinance"],
+    "fred":          ["datareader", "yfinance"],
+    "fmp":           ["alpha_vantage", "datareader", "fred", "yfinance"],
 }
 
 
@@ -128,6 +134,8 @@ class QuantClient:
         """Initialise the client using application settings."""
         settings = get_settings()
         self._av_key: Optional[str] = settings.ALPHAVANTAGE_API_KEY
+        self._fmp_key: Optional[str] = settings.FMP_API_KEY
+        self._fmp_base_url: str = settings.FMP_BASE_URL
         # Ordered provider lists keyed by region code (lower-case).
         # Built once from settings so callers don't need to know the config shape.
         self._region_sources: dict[str, list[str]] = _build_region_source_map(settings)
@@ -199,10 +207,16 @@ class QuantClient:
             if not self._av_key:
                 raise ValueError("ALPHAVANTAGE_API_KEY is not set — skipping alpha_vantage")
             return await alpha_vantage.fetch(query, self._av_key)  # type: ignore[arg-type]
+        if source == "fmp":
+            if not self._fmp_key:
+                raise ValueError("FMP_API_KEY is not set — skipping fmp")
+            return await fmp_provider.fetch(query, self._fmp_base_url, self._fmp_key)
         if source == "akshare":
             return await akshare_provider.fetch(query)
         if source == "datareader":
             return await datareader_provider.fetch(query)
+        if source == "fred":
+            return await fred_provider.fetch(query)
         return await yfinance_provider.fetch(query)
 
     async def fetch(
@@ -334,6 +348,7 @@ def _build_region_source_map(settings: Any) -> dict[str, list[str]]:
         "hk":      _parse("QUANT_SOURCES_HK",      "hk"),
         "us":      _parse("QUANT_SOURCES_US",       "us"),
         "tw":      _parse("QUANT_SOURCES_TW",       "tw"),
+        "macro":   _parse("QUANT_SOURCES_MACRO",    "macro"),
         "default": _parse("QUANT_SOURCES_DEFAULT",  "default"),
     }
 

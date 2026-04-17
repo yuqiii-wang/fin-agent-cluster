@@ -11,33 +11,10 @@ from typing import Optional
 
 from backend.graph.agents.market_data.models.quant import MacroResult, OHLCVWindowResult, BondResult
 from backend.resource_api.quant_api.client import QuantClient
+from backend.resource_api.quant_api.configs.macro_symbols import MACRO_SYMBOLS, BOND_TENORS
 from backend.resource_api.quant_api.models import QuantQuery, QuantResult
 
 logger = logging.getLogger(__name__)
-
-# Canonical yfinance / Stooq symbols for macro market indicators.
-# Direct SOFR rates are not quoted on yfinance; proxies are used:
-#   sofr_on  — ^IRX (13-week T-bill yield, overnight rate proxy)
-#   sofr_tn  — ZQ=F (30-day Fed Funds futures, tom/next proxy)
-#   sofr_1m  — SR1=F (CME 1-month SOFR futures, term rate)
-MACRO_SYMBOLS: dict[str, tuple[str, str]] = {
-    "gold":        ("GC=F",    "Gold ($/oz)"),
-    "crude_oil":   ("CL=F",    "WTI Crude Oil ($/bbl)"),
-    "natural_gas": ("NG=F",    "Natural Gas ($/MMBtu)"),
-    "sofr_on":     ("^IRX",    "SOFR Overnight (13-week T-bill proxy, %)"),
-    "sofr_tn":     ("ZQ=F",    "SOFR Tom/Next (30-day Fed Funds futures proxy, %)"),
-    "sofr_1m":     ("SR1=F",   "SOFR 1-Month (CME 1-month SOFR futures, %)"),
-    "bitcoin":     ("BTC-USD", "Bitcoin (USD)"),
-}
-
-# US Bond yield tickers ordered by tenor (1-month → 6-month → 5-year → 10-year).
-# ^US1MT and ^US6MT are Stooq symbols (datareader); ^FVX and ^TNX are yfinance CBOE indices.
-BOND_TENORS: list[tuple[str, str]] = [
-    ("^US1MT", "US Bond 1-Month Yield (%)"),
-    ("^US6MT", "US Bond 6-Month Yield (%)"),
-    ("^FVX",   "US Bond 5-Year Yield (%)"),
-    ("^TNX",   "US Bond 10-Year Yield (%)"),
-]
 
 
 async def fetch_macro_ticker(
@@ -47,23 +24,23 @@ async def fetch_macro_ticker(
     thread_id: Optional[str],
     period: str = "2y",
     key: str = "",
-    region: Optional[str] = None,
+    region: Optional[str] = None,  # kept for call-site compatibility; overridden to "macro"
 ) -> MacroResult:
-    """Fetch two years of daily OHLCV bars plus the current quote for a macro ticker.
+    """Fetch two years of daily OHLCV bars for a global macro commodity or rate ticker.
 
-    Uses ``source='auto'`` so the region-aware QuantClient selects the best
-    available provider for the given region.  If the primary provider for the
-    region does not support the macro symbol, the client walks the fallback
-    chain automatically (e.g. akshare → alpha_vantage → yfinance for CN).
+    Always uses the ``'macro'`` provider chain (datareader → FRED → yfinance)
+    regardless of the equity region being analysed.  Macro instruments (gold,
+    silver, crude oil, SOFR) are globally priced and do not benefit from
+    region-specific data sources.
 
     Args:
         qclient:   Shared QuantClient instance.
-        symbol:    Ticker symbol, e.g. 'GC=F' (gold), 'BTC-USD' (bitcoin).
+        symbol:    Canonical ticker, e.g. 'GC=F' (gold), 'SOFR', 'BTC-USD'.
         label:     Human-readable label for context lines.
         thread_id: LangGraph thread id.
         period:    yfinance period string for the fetch window (default '2y').
         key:       MACRO_SYMBOLS key for identification, e.g. 'gold'.
-        region:    fin_markets.regions code (e.g. 'cn', 'us') for provider selection.
+        region:    Ignored — macro chain used unconditionally.
 
     Returns:
         :class:`MacroResult` with price, move statistics, and bar count.
@@ -78,7 +55,7 @@ async def fetch_macro_ticker(
                 node_name="market_data_collector",
             ),
             source="auto",
-            region=region,
+            region="macro",
         )
         bars = ohlcv_result.bars or []
         if not bars:
@@ -112,14 +89,14 @@ async def fetch_bond_yields(
     qclient: QuantClient,
     thread_id: Optional[str],
     period: str = "2y",
-    region: Optional[str] = None,
+    region: Optional[str] = None,  # kept for call-site compatibility; overridden to "macro"
 ) -> BondResult:
     """Fetch 2-year daily OHLCV bars for US Bond yield tenors (1-mo, 6-mo, 5-yr, 10-yr).
 
     Each tenor is fetched independently so a failure for one does not block
-    the others.  Provider selection respects the ``region`` parameter so the
-    region-aware QuantClient chain is used instead of always defaulting to
-    yfinance.
+    the others.  Always uses the ``'macro'`` provider chain (datareader → FRED
+    → yfinance); FRED is the preferred authoritative source for constant-maturity
+    Treasury yield series (DGS1MO, DGS6MO, DGS5, DGS10).
 
     Args:
         qclient:   Shared QuantClient instance.
@@ -142,7 +119,7 @@ async def fetch_bond_yields(
                     node_name="market_data_collector",
                 ),
                 source="auto",
-                region=region,
+                region="macro",
             )
             bars = result.bars or []
             tenors.append(OHLCVWindowResult(

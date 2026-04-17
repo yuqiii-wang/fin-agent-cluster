@@ -6,11 +6,12 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
+      // Route all API traffic through Kong (port 8888) instead of FastAPI directly.
+      // Kong enforces CORS, rate-limiting, and correlation-ID headers globally.
       "/api": {
-        target: "http://127.0.0.1:8432",
+        target: "http://127.0.0.1:8888",
         changeOrigin: true,
       },
-
     },
   },
 });

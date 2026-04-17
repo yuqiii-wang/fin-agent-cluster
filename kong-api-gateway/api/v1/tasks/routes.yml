@@ -1,0 +1,12 @@
+# Tasks routes — agent task key metadata and task control.
+# Source: api/v1/tasks/routes.yml
+#
+#   GET  /api/v1/tasks/meta              task key classification for frontend routing
+#   POST /api/v1/tasks/{task_id}/cancel  cancel an individual agent sub-task
+routes:
+  - name: route-tasks
+    service: fastapi
+    paths:
+      - /api/v1/tasks
+    strip_path: false
+    protocols: [http, https]

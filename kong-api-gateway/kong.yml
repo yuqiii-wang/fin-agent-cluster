@@ -1,0 +1,171 @@
+# AUTO-GENERATED — do not edit directly.
+# Run:  python kong-api-gateway/build.py
+#
+# Source fragments:
+#   _shared/          upstreams, services, global plugins
+#   api/v1/auth/      POST /api/v1/auth/*
+#   api/v1/users/     POST|GET /api/v1/users/query/*
+#   api/v1/stream/    GET /api/v1/stream/* (SSE)
+#   api/v1/reports/   GET /api/v1/reports/*
+#   api/v1/tasks/     GET|POST /api/v1/tasks/*
+#   api/v1/quant/     GET /api/v1/quant/*
+#   llm/              POST /llm/* (Kong AI Gateway ai-proxy)
+
+_format_version: '3.0'
+_transform: true
+upstreams:
+- name: fastapi-upstream
+  algorithm: round-robin
+  healthchecks:
+    active:
+      healthy:
+        interval: 10
+        successes: 1
+      unhealthy:
+        interval: 5
+        http_failures: 3
+      http_path: /docs
+      timeout: 5
+  targets:
+  - target: host.docker.internal:8432
+    weight: 100
+services:
+- name: fastapi
+  host: fastapi-upstream
+  port: 80
+  protocol: http
+  connect_timeout: 10000
+  write_timeout: 3600000
+  read_timeout: 3600000
+- name: llm-proxy
+  url: http://placeholder.invalid
+  connect_timeout: 10000
+  write_timeout: 3600000
+  read_timeout: 3600000
+routes:
+- name: route-auth
+  service: fastapi
+  paths:
+  - /api/v1/auth
+  strip_path: false
+  protocols:
+  - http
+  - https
+- name: route-quant
+  service: fastapi
+  paths:
+  - /api/v1/quant
+  strip_path: false
+  protocols:
+  - http
+  - https
+- name: route-reports
+  service: fastapi
+  paths:
+  - /api/v1/reports
+  strip_path: false
+  protocols:
+  - http
+  - https
+- name: route-stream
+  service: fastapi
+  paths:
+  - /api/v1/stream
+  strip_path: false
+  protocols:
+  - http
+  - https
+  response_buffering: false
+- name: route-tasks
+  service: fastapi
+  paths:
+  - /api/v1/tasks
+  strip_path: false
+  protocols:
+  - http
+  - https
+- name: route-queries
+  service: fastapi
+  paths:
+  - /api/v1/users
+  strip_path: false
+  protocols:
+  - http
+  - https
+- name: route-llm-chat
+  service: llm-proxy
+  paths:
+  - /llm
+  strip_path: true
+  methods:
+  - POST
+  - OPTIONS
+  protocols:
+  - http
+  - https
+  response_buffering: false
+- name: route-docs
+  service: fastapi
+  paths:
+  - /docs
+  - /redoc
+  - /openapi.json
+  strip_path: false
+  protocols:
+  - http
+  - https
+plugins:
+- name: ai-proxy
+  service: llm-proxy
+  config:
+    route_type: llm/v1/chat
+    auth:
+      header_name: Authorization
+      header_value: Bearer ollama
+    model:
+      provider: openai
+      name: qwen3.5-27b
+      options:
+        upstream_url: http://host.docker.internal:11434/v1
+- name: cors
+  config:
+    origins:
+    - '*'
+    methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+    - PATCH
+    headers:
+    - Authorization
+    - Content-Type
+    - X-User-Token
+    - Accept
+    - Cache-Control
+    - X-Requested-With
+    - Last-Event-ID
+    exposed_headers:
+    - X-Auth-Token
+    - X-Kong-Upstream-Latency
+    - X-Kong-Proxy-Latency
+    credentials: true
+    max_age: 3600
+    preflight_continue: false
+- name: request-size-limiting
+  config:
+    allowed_payload_size: 10
+    size_unit: megabytes
+- name: rate-limiting
+  config:
+    minute: 300
+    hour: 5000
+    policy: local
+    limit_by: ip
+    hide_client_headers: false
+- name: correlation-id
+  config:
+    header_name: X-Request-ID
+    generator: uuid#counter
+    echo_downstream: true

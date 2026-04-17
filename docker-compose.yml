@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:18.3-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-P@ssw0rd123}
+      POSTGRES_DB: ${POSTGRES_DB:-fin_trading}
+    ports:
+      - "${POSTGRES_PORT:-6543}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8.6.2-trixie
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-3456}:6379"
+    volumes:
+      - redis_data:/data
+
+  kong:
+    image: kong/kong-gateway:3.12.0.5-20260415-rhel-fips
+    restart: unless-stopped
+    extra_hosts:
+      # Resolve host.docker.internal on Linux (automatic on Docker Desktop only).
+      - "host.docker.internal:host-gateway"
+    environment:
+      # DB-less declarative mode — no Postgres dependency for Kong itself.
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_PROXY_LISTEN: "0.0.0.0:8000, 0.0.0.0:8443 ssl"
+      # Variables substituted into kong/kong.yml at startup
+      BACKEND_HOST: host.docker.internal
+      BACKEND_PORT: "${FASTAPI_PORT:-8432}"
+      OLLAMA_HOST: host.docker.internal
+      OLLAMA_PORT: "11434"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3.5-27b}"
+    volumes:
+      - ./kong-api-gateway/kong.yml:/etc/kong/kong.yml:ro
+    ports:
+      - "${KONG_PROXY_PORT:-8888}:8000"
+      - "${KONG_PROXY_SSL_PORT:-8443}:8443"
+      - "${KONG_ADMIN_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:

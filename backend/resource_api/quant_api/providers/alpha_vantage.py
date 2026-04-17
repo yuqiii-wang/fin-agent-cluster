@@ -17,71 +17,7 @@ from backend.resource_api.quant_api.models import (
 
 _BASE_URL = "https://www.alphavantage.co/query"
 
-# ---------------------------------------------------------------------------
-# Canonical-to-Alpha-Vantage ticker translation map.
-# Alpha Vantage TIME_SERIES_* endpoints are designed for equities.
-# Commodity futures (=F), CBOE yield indices (^IRX, ^TNX), Treasury synthetic
-# tickers (^US1MT), and market-cap indices (^GSPC, ^IXIC, etc.) are not
-# supported via the standard OHLCV endpoints — they require premium commodity/
-# forex/crypto endpoints that differ significantly in response shape.
-# Setting a value to None causes the client to skip AV and try the next
-# provider (yfinance / datareader), avoiding wasted API quota calls.
-# ---------------------------------------------------------------------------
-TICKER_MAP: dict[str, str | None] = {
-    # Commodity futures — not available in TIME_SERIES_DAILY
-    "GC=F":      None,
-    "CL=F":      None,
-    "NG=F":      None,
-    "BZ=F":      None,
-    "SI=F":      None,
-    "HG=F":      None,
-    # Treasury / CBOE yield indices — not in AV equity endpoints
-    "^IRX":      None,
-    "^TNX":      None,
-    "^TYX":      None,
-    "^FVX":      None,
-    "^US1MT":    None,
-    "^US6MT":    None,
-    # US equity indices — AV does not support index OHLCV via TIME_SERIES_DAILY
-    "^GSPC":     None,
-    "^IXIC":     None,
-    "^NDX":      None,
-    "^DJI":      None,
-    "^RUT":      None,
-    # International indices — not supported
-    "^N225":     None,
-    "^TOPX":     None,
-    "^HSI":      None,
-    "^HSCE":     None,
-    "^FTSE":     None,
-    "^GDAXI":    None,
-    "^FCHI":     None,
-    "^SSMI":     None,
-    "^AXJO":     None,
-    "^AORD":     None,
-    "^KS11":     None,
-    "^KQ11":     None,
-    "^BSESN":    None,
-    "^NSEI":     None,
-    "^STI":      None,
-    "^TWII":     None,
-    "^BVSP":     None,
-    "^IBEX":     None,
-    "^AEX":      None,
-    "^GSPTSE":   None,
-    "^MXX":      None,
-    "^JKSE":     None,
-    "FTSEMIB.MI": None,
-    # Chinese A-share indices — AV uses Shanghai / Shenzhen exchange format
-    # AV supports Chinese equities with the full .SHH / .SHZ suffix
-    "000001.SS":  "000001.SHH",
-    "399001.SZ":  "399001.SHZ",
-    "399006.SZ":  "399006.SHZ",
-    "000300.SS":  "000300.SHH",
-    # Crypto — AV has a dedicated DIGITAL_CURRENCY endpoint; skip in equity OHLCV
-    "BTC-USD":   None,
-    "ETH-USD":   None,
-}
+from backend.resource_api.quant_api.configs.ticker_maps.alpha_vantage import TICKER_MAP  # noqa: F401
 
 
 async def _get(params: dict[str, Any], api_key: str, symbol: str, service: str) -> dict[str, Any]:

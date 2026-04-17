@@ -1,5 +1,27 @@
 /** Shared TypeScript types mirroring the backend schemas. */
 
+/** Guest user returned by POST /api/v1/auth/guest. */
+export interface GuestUser {
+  id: string;
+  username: string;
+  display_name: string | null;
+  email: string | null;
+  email_verified: boolean;
+  avatar_url: string | null;
+  auth_type: "guest" | "password" | "oauth";
+  is_new: boolean;
+}
+
+/** Lightweight thread summary for the history panel. */
+export interface ThreadSummary {
+  thread_id: string;
+  query: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  answer: string | null;
+}
+
 /** Task key type classification metadata from GET /api/v1/tasks/meta. */
 export interface TaskTypeMeta {
   /** Task keys that emit token-stream SSE events (LLM streaming). */
@@ -55,7 +77,7 @@ export interface TaskInfo {
   node_execution_id: number | null;
   node_name: string;
   task_key: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   input: Record<string, unknown>;
   output: Record<string, unknown>;
   created_at: string;
@@ -99,6 +121,13 @@ export interface SseCompleted {
 }
 
 export interface SseFailed {
+  task_id: number;
+  node_name: string;
+  task_key: string;
+  output: Record<string, unknown>;
+}
+
+export interface SseCancelled {
   task_id: number;
   node_name: string;
   task_key: string;

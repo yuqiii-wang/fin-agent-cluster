@@ -1,0 +1,13 @@
+# Reports routes — strategy report retrieval.
+# Source: api/v1/reports/routes.yml
+#
+#   GET /api/v1/reports/symbol/{symbol}           latest report for a symbol
+#   GET /api/v1/reports/{report_id}               single report by ID
+#   GET /api/v1/reports/symbol/{symbol}/list      paginated list for a symbol
+routes:
+  - name: route-reports
+    service: fastapi
+    paths:
+      - /api/v1/reports
+    strip_path: false
+    protocols: [http, https]

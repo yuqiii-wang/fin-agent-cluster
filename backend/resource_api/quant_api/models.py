@@ -8,7 +8,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 QuantMethod = Literal["daily_ohlcv", "intraday_ohlcv", "periodic_ohlcv", "quote", "overview"]
-QuantSource = Literal["yfinance", "alpha_vantage", "akshare", "datareader", "auto"]
+QuantSource = Literal["yfinance", "alpha_vantage", "akshare", "datareader", "fred", "fmp", "auto"]
 
 
 class QuantQuery(BaseModel):

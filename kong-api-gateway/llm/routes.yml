@@ -1,0 +1,17 @@
+# LLM proxy routes — OpenAI-compatible chat completions via Kong AI Gateway.
+# Source: llm/routes.yml
+# The ai-proxy plugin (llm/plugins.yml) intercepts these requests and routes
+# them to the configured upstream LLM provider (Ollama by default).
+#
+#   POST /llm/v1/chat/completions   chat completion (OpenAI-compatible)
+routes:
+  - name: route-llm-chat
+    service: llm-proxy
+    paths:
+      - /llm
+    strip_path: true
+    methods: [POST, OPTIONS]
+    protocols: [http, https]
+    # LLM streaming responses (OpenAI SSE / ndjson) require buffering off so
+    # chunks are forwarded to the client as they arrive from Ollama.
+    response_buffering: false

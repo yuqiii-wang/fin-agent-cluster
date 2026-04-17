@@ -21,7 +21,7 @@ async def raw_conn(
     """
     settings = get_settings()
     conn = await AsyncConnection.connect(
-        settings.DATABASE_URL,
+        settings.DATABASE_PG_URL,
         connect_timeout=settings.DB_CONNECT_TIMEOUT_SECONDS,
         autocommit=True,
         row_factory=dict_row,

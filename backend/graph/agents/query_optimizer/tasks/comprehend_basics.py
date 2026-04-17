@@ -12,7 +12,15 @@ from typing import Optional
 from langchain_core.runnables import Runnable
 
 from backend.graph.agents.task_keys import QO_COMPREHEND_BASICS
-from backend.graph.utils.task_stream import complete_task, create_task, fail_task, stream_text_task
+from backend.graph.utils.task_stream import (
+    TaskCancelledSignal,
+    TaskPassSignal,
+    cancel_task,
+    complete_task,
+    create_task,
+    fail_task,
+    stream_text_task,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +59,20 @@ async def comprehend_basics(
         )
         await complete_task(
             thread_id, task_id, QO_COMPREHEND_BASICS,
-            {"raw_json_len": len(raw_json)},
+            {"raw_json_len": len(raw_json), "text": raw_json},
         )
         return raw_json
+    except TaskCancelledSignal:
+        logger.info("[query_optimizer] comprehend_basics cancelled task_id=%d", task_id)
+        await cancel_task(thread_id, task_id, QO_COMPREHEND_BASICS)
+        return None
+    except TaskPassSignal as sig:
+        logger.info("[query_optimizer] comprehend_basics passed task_id=%d chars=%d", task_id, len(sig.partial_text))
+        await complete_task(
+            thread_id, task_id, QO_COMPREHEND_BASICS,
+            {"raw_json_len": len(sig.partial_text), "text": sig.partial_text, "passed": True},
+        )
+        return sig.partial_text
     except Exception as exc:
         logger.warning("[query_optimizer] comprehend_basics failed: %s", exc)
         await fail_task(thread_id, task_id, QO_COMPREHEND_BASICS, str(exc))

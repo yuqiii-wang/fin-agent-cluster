@@ -10,6 +10,7 @@ pydantic-settings>=2.8.0
 # Database
 sqlalchemy[asyncio]>=2.0.0
 psycopg[binary,pool]>=3.3.0
+redis[asyncio]>=5.0.0
 
 # LangChain / LangGraph
 langgraph>=0.5.0
@@ -35,3 +36,6 @@ langchain-google-genai>=2.0.0
 
 # PDF parsing (financial reports)
 pypdf>=4.0.0
+
+# YAML — used by kong-api-gateway/build.py to merge declarative config fragments
+PyYAML>=6.0

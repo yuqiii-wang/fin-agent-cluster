@@ -23,7 +23,7 @@ class MarketDataOutput(BaseModel):
         2b. ``company_news``   — yfinance company news
         2c. ``web_search_*``   — N named search queries (one per NewsContext field)
         2d. ``peer_ohlcv_*``   — 2 peer ticker 1y daily OHLCV
-        2e. ``macro_*``        — 7 macro tickers (gold, crude_oil, natural_gas, sofr_on, sofr_tn, sofr_1m, bitcoin)
+        2e. ``macro_*``        — 8 macro tickers (gold, silver, crude_oil, natural_gas, sofr_on, sofr_tn, sofr_1m, bitcoin)
         2f. ``bond``           — US Bond yield curve
         2g. ``index_ohlcv_*``  — ticker benchmark index 1y daily OHLCV (if available)
       Sequential (after gather):

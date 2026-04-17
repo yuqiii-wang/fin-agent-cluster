@@ -12,7 +12,6 @@ class QueryRequest(BaseModel):
     """Payload for submitting a new financial analysis query."""
 
     query: str
-    user_id: Optional[str] = None
 
 
 class QueryResponse(BaseModel):
@@ -95,3 +94,30 @@ class StrategyReportList(BaseModel):
     symbol: str
     total: int
     reports: list[StrategyReport]
+
+
+# ── Auth / User management ───────────────────────────────────────────────────
+
+
+class GuestAuthResponse(BaseModel):
+    """Returned by POST /auth/guest \u2014 and embedded in me/ profile responses."""
+
+    id: str
+    username: str
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    email_verified: bool = False
+    avatar_url: Optional[str] = None
+    auth_type: str
+    is_new: bool
+
+
+class ThreadSummary(BaseModel):
+    """Lightweight summary of one user thread for the history panel."""
+
+    thread_id: str
+    query: str
+    status: str
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    answer: Optional[str] = None

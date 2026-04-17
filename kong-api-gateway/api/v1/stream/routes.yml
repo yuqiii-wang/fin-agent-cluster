@@ -1,0 +1,17 @@
+# Stream routes — real-time SSE event feed for a running query.
+# Source: api/v1/stream/routes.yml
+# These connections are long-lived (minutes); the parent fastapi service
+# already carries 60-minute read/write timeouts.
+#
+#   GET  /api/v1/stream/{thread_id}         subscribe to SSE event stream
+#   PUT  /api/v1/stream/{thread_id}/watch   register which task to watch for tokens
+routes:
+  - name: route-stream
+    service: fastapi
+    paths:
+      - /api/v1/stream
+    strip_path: false
+    protocols: [http, https]
+    # SSE requires response buffering disabled so events are flushed
+    # immediately instead of being held in Kong's nginx buffer.
+    response_buffering: false

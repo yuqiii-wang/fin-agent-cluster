@@ -44,27 +44,3 @@ About DB and SQL:
 * Use `antd` CLI for all antd related queries and operations, do not search antd APIs from memory or the web.
 * Do NOT hardcode any UI element in the frontend, all UI elements should be generated from backend APIs, including but not limited to: form fields, buttons, dropdown options, etc.
 
-### Start Guide
-
-* run `start.sh` to start the FastAPI server, which will also start the langgraph agent.
-
-```py
-#!/bin/bash
-set -e
-
-# Check for .env file
-if [ ! -f .env ]; then
-  echo "Error: .env file not found"
-  exit 1
-fi
-
-# Start the FastAPI server
-python run.py
-```
-
-Test Guide
-
-* run `test_appl.py` to complete e2e test to make sure the flow can work.
-
-Agent Node Guide
-

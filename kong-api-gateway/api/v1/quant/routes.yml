@@ -1,0 +1,13 @@
+# Quant routes — technical indicator metadata and time-series data.
+# Source: api/v1/quant/routes.yml
+#
+#   GET /api/v1/quant/indicators                         static indicator list
+#   GET /api/v1/quant/stats/{symbol}/{granularity}       indicator time-series
+#   GET /api/v1/quant/symbol-currency/{symbol}           currency info for a symbol
+routes:
+  - name: route-quant
+    service: fastapi
+    paths:
+      - /api/v1/quant
+    strip_path: false
+    protocols: [http, https]

@@ -15,7 +15,14 @@ from langchain_core.output_parsers import StrOutputParser
 from backend.graph.agents.decision_maker.models.output import DecisionReport
 from backend.graph.agents.task_keys import DM_LLM_INFER
 from backend.graph.prompts.decision_maker import build_prompt_template
-from backend.graph.utils.task_stream import complete_task, fail_task, stream_text_task
+from backend.graph.utils.task_stream import (
+    TaskCancelledSignal,
+    TaskPassSignal,
+    cancel_task,
+    complete_task,
+    fail_task,
+    stream_text_task,
+)
 from backend.llm import get_active_provider, get_llm
 
 logger = logging.getLogger(__name__)
@@ -56,8 +63,16 @@ async def run_llm_infer(
             _chain.astream({"query": query, "market_data_context": market_data_context}),
         )
         await complete_task(
-            thread_id, task_id, DM_LLM_INFER, {"chars": len(raw_json)}
+            thread_id, task_id, DM_LLM_INFER, {"chars": len(raw_json), "text": raw_json}
         )
+    except TaskCancelledSignal:
+        logger.info("[decision_maker/llm_infer] LLM cancelled task_id=%d", task_id)
+        await cancel_task(thread_id, task_id, DM_LLM_INFER)
+        return DecisionReport()
+    except TaskPassSignal as sig:
+        logger.info("[decision_maker/llm_infer] LLM passed task_id=%d chars=%d", task_id, len(sig.partial_text))
+        raw_json = sig.partial_text
+        await complete_task(thread_id, task_id, DM_LLM_INFER, {"chars": len(raw_json), "text": raw_json, "passed": True})
     except Exception as exc:
         logger.warning("[decision_maker/llm_infer] LLM call failed: %s", exc)
         await fail_task(thread_id, task_id, DM_LLM_INFER, str(exc))

@@ -1,0 +1,19 @@
+# Kong upstream — FastAPI backend
+# Uses active health checks so Kong can detect FastAPI restarts quickly.
+# BACKEND_HOST / BACKEND_PORT are injected via docker-compose environment variables.
+upstreams:
+  - name: fastapi-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        healthy:
+          interval: 10
+          successes: 1
+        unhealthy:
+          interval: 5
+          http_failures: 3
+        http_path: /docs
+        timeout: 5
+    targets:
+      - target: "{BACKEND_HOST}:{BACKEND_PORT}"
+        weight: 100

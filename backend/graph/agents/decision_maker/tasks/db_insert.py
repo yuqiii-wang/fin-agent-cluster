@@ -7,6 +7,7 @@ to ``fin_strategies.reports`` and returns the full inserted row as a dict.
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime
 from typing import Any, Optional
 
 from backend.db.connection import raw_conn
@@ -117,7 +118,11 @@ async def run_db_insert(
                 ),
             )
             result = await row.fetchone()
-            row_data: dict[str, Any] = dict(result) if result else {}
+            raw: dict[str, Any] = dict(result) if result else {}
+            row_data: dict[str, Any] = {
+                k: v.isoformat() if isinstance(v, (datetime, date)) else v
+                for k, v in raw.items()
+            }
 
         await complete_task(
             thread_id, task_id, DM_DB_INSERT_REPORT, row_data

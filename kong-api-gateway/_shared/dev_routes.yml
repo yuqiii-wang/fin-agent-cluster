@@ -1,0 +1,11 @@
+# Dev-only routes — FastAPI auto-generated OpenAPI docs.
+# Remove or gate behind an IP-restriction plugin in production.
+routes:
+  - name: route-docs
+    service: fastapi
+    paths:
+      - /docs
+      - /redoc
+      - /openapi.json
+    strip_path: false
+    protocols: [http, https]

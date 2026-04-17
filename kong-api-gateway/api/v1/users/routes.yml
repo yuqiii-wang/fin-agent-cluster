@@ -1,0 +1,15 @@
+# Query routes — submit, cancel, and poll financial analysis queries.
+# Source: api/v1/users/routes.yml
+#
+#   POST /api/v1/users/query                        submit a new query
+#   POST /api/v1/users/query/{thread_id}/cancel     cancel a running query
+#   GET  /api/v1/users/query/{thread_id}            poll query status
+#   GET  /api/v1/users/query/{thread_id}/tasks      list agent sub-tasks
+#   GET  /api/v1/users/query/{thread_id}/nodes      node-level I/O snapshots
+routes:
+  - name: route-queries
+    service: fastapi
+    paths:
+      - /api/v1/users
+    strip_path: false
+    protocols: [http, https]

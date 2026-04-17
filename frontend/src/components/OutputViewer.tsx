@@ -193,10 +193,16 @@ export function OutputViewer({ task, stream, provider, taskMeta }: Props) {
 
   const isLlm = taskMeta ? isLlmTask(task.task_key, taskMeta) : false;
 
-  // ── LLM stream tokens present → thinking-style rendering ─────────────────────
-  if (stream) {
+  // Fall back to persisted output.text when no live token stream is available
+  // (e.g. on thread recovery where tokenStreams state has been reset).
+  const displayStream =
+    stream ??
+    (typeof task.output?.text === "string" ? (task.output.text as string) : undefined);
+
+  // ── LLM stream tokens present (live or persisted) → thinking-style rendering ──
+  if (displayStream) {
     return (
-      <ThinkingStream stream={stream} isRunning={task.status === "running"} />
+      <ThinkingStream stream={displayStream} isRunning={task.status === "running"} />
     );
   }
 

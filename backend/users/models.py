@@ -1,13 +1,56 @@
-"""ORM model for user-submitted queries."""
+"""ORM models for user management and submitted queries."""
 
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, Index, String, Text, func, TIMESTAMP
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Index, String, Text, func, TIMESTAMP
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.db.base import Base
+
+
+class GuestUser(Base):
+    """User row — supports guest, password, and OAuth authentication modes.
+
+    Columns are additive so a guest account can be progressively upgraded to
+    a full password or OAuth account without re-creating the row.
+    """
+
+    __tablename__ = "users"
+    __table_args__ = (
+        Index("fin_users_users_email_idx", "email"),
+        Index("fin_users_users_oauth_idx", "oauth_provider", "oauth_subject"),
+        {"schema": "fin_users"},
+    )
+
+    # Primary key — UUID bearer token for guests, surrogate PK for password/OAuth users
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    username: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    email: Mapped[Optional[str]] = mapped_column(String(320), nullable=True, unique=True)
+    email_verified: Mapped[bool] = mapped_column(nullable=False, default=False)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # OAuth — all nullable until provider links the account
+    oauth_provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    oauth_subject: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    oauth_access_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    oauth_refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    oauth_token_expires_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+
+    # Auth mode: 'guest' | 'password' | 'oauth'
+    auth_type: Mapped[str] = mapped_column(String(20), nullable=False, default="guest")
+    is_active: Mapped[bool] = mapped_column(nullable=False, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, nullable=False, server_default=func.now()
+    )
 
 
 class UserQuery(Base):

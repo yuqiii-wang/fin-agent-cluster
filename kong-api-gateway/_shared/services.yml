@@ -1,0 +1,22 @@
+# Kong services — one entry per backend.
+# Routes are declared in each domain's routes.yml; not embedded here.
+services:
+  # FastAPI application — all REST + SSE routes
+  - name: fastapi
+    host: fastapi-upstream   # references the upstream defined in upstreams.yml
+    port: 80
+    protocol: http
+    # SSE streams can run for minutes; set generous timeouts.
+    connect_timeout: 10000    # 10 s
+    write_timeout: 3600000    # 60 min
+    read_timeout: 3600000     # 60 min
+
+  # Kong AI proxy — intercepts LLM calls before forwarding.
+  # The ai-proxy plugin (defined in llm/plugins.yml) handles routing;
+  # this placeholder URL is never actually contacted.
+  # Generous timeouts match large-model inference latency.
+  - name: llm-proxy
+    url: http://placeholder.invalid
+    connect_timeout: 10000    # 10 s
+    write_timeout: 3600000    # 60 min — LLM streaming can run for minutes
+    read_timeout: 3600000     # 60 min

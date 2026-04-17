@@ -20,8 +20,8 @@ from backend.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_PROVIDERS = ("ark", "gemini", "ollama")
-# Providers eligible for automatic failover (excludes ollama which needs local setup)
+_SUPPORTED_PROVIDERS = ("ark", "gemini", "ollama", "kong_ai")
+# Providers eligible for automatic failover (excludes ollama/kong_ai which need local setup)
 _FAILOVER_CANDIDATES = ("ark", "gemini")
 
 # Set at runtime by startup probe; takes precedence over LLM_PROVIDER in settings.
@@ -72,6 +72,9 @@ def _build_provider(provider: str, temperature: float) -> Optional[BaseChatModel
         if provider == "ollama":
             from backend.llm.providers.ollama import get_ollama_llm
             return get_ollama_llm(temperature)
+        if provider == "kong_ai":
+            from backend.llm.providers.kong_ai import get_kong_ai_llm
+            return get_kong_ai_llm(temperature)
     except ValueError as exc:
         logger.debug("[llm.factory] provider %r unavailable: %s", provider, exc)
     return None

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Drawer, Input, Layout, Space, Spin, Typography, theme } from "antd";
-import { FileTextOutlined, SearchOutlined } from "@ant-design/icons";
+import { Button, Drawer, Input, Layout, Space, Spin, Tag, Typography, theme } from "antd";
+import { FileTextOutlined, HistoryOutlined, SearchOutlined } from "@ant-design/icons";
 import { ChatInput } from "./components/ChatInput";
+import { HistoryPanel } from "./components/HistoryPanel";
 import { MessageList } from "./components/MessageList";
 import { TaskDrawer } from "./components/TaskDrawer";
 import { ReportView } from "./components/ReportView";
-import { submitQuery, openStream, cancelQuery, fetchLatestReport, fetchReportById, fetchTaskMeta } from "./api";
-import type { ChatMessage, NodeGroup, StrategyReport, TaskInfo, TaskTypeMeta } from "./types";
+import { submitQuery, openStream, cancelQuery, fetchLatestReport, fetchReportById, fetchTaskMeta, fetchActiveThread, fetchHistory } from "./api";
+import { useGuestAuth } from "./hooks/useGuestAuth";
+import type { ChatMessage, NodeGroup, StrategyReport, TaskInfo, TaskTypeMeta, ThreadSummary } from "./types";
 
 const { Header, Content, Footer } = Layout;
 const { Title } = Typography;
@@ -21,7 +23,7 @@ function buildNodeGroups(tasks: TaskInfo[]): NodeGroup[] {
     let status: NodeGroup["status"] = "pending";
     if (nodeTasks.some((t) => t.status === "failed")) status = "failed";
     else if (nodeTasks.some((t) => t.status === "running")) status = "running";
-    else if (nodeTasks.every((t) => t.status === "completed")) status = "completed";
+    else if (nodeTasks.every((t) => t.status === "completed" || t.status === "cancelled")) status = "completed";
     else if (nodeTasks.length > 0) status = "running";
     return { node_name, status, tasks: nodeTasks };
   });
@@ -29,12 +31,17 @@ function buildNodeGroups(tasks: TaskInfo[]): NodeGroup[] {
 
 export default function App() {
   const { token } = theme.useToken();
+  const { token: userToken, username, loading: authLoading } = useGuestAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [drawerNodeName, setDrawerNodeName] = useState<string | null>(null);
   const [tokenStreams, setTokenStreams] = useState<Record<number, string>>({});
   const [taskProviders, setTaskProviders] = useState<Record<number, string>>({});
   const [taskMeta, setTaskMeta] = useState<TaskTypeMeta | null>(null);
+
+  // ── History panel ──
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyItems, setHistoryItems] = useState<ThreadSummary[]>([]);
 
   // Fetch task type metadata once on mount for OutputViewer routing
   useEffect(() => {
@@ -94,8 +101,177 @@ export default function App() {
     );
   }, []);
 
+  /** Reconstruct a finished or in-progress thread into the message list. */
+  const recoverThread = useCallback(
+    (thread: ThreadSummary) => {
+      cleanupSse.current?.();
+      const asstMsgId = crypto.randomUUID();
+      threadToMsgId.current.set(thread.thread_id, asstMsgId);
+      activeThreadId.current = thread.thread_id;
+
+      setTokenStreams({});
+      setTaskProviders({});
+      setMessages([
+        { id: crypto.randomUUID(), role: "user", text: thread.query },
+        {
+          id: asstMsgId,
+          role: "assistant",
+          text: thread.answer ?? "",
+          status: thread.status as ChatMessage["status"],
+          thread_id: thread.thread_id,
+          nodes: [],
+        },
+      ]);
+
+      if (thread.status === "running" || thread.status === "pending") {
+        setLoading(true);
+        const close = openStream(thread.thread_id, {
+          onStarted: (data) => {
+            const { task_id, node_name, task_key, provider } = data as {
+              task_id: number; node_name: string; task_key: string; provider?: string;
+            };
+            if (provider) setTaskProviders((prev) => ({ ...prev, [task_id]: provider }));
+            const newTask: TaskInfo = {
+              id: task_id,
+              thread_id: thread.thread_id,
+              node_execution_id: null,
+              node_name,
+              task_key,
+              status: "running",
+              input: {},
+              output: {},
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== asstMsgId) return m;
+                const nodes = m.nodes ?? [];
+                const existing = nodes.find((n) => n.node_name === node_name);
+                if (existing) {
+                  return {
+                    ...m,
+                    nodes: nodes.map((n) =>
+                      n.node_name === node_name
+                        ? { ...n, status: "running" as const, tasks: [...n.tasks, newTask] }
+                        : n
+                    ),
+                  };
+                }
+                return {
+                  ...m,
+                  nodes: [...nodes, { node_name, status: "running" as const, tasks: [newTask] }],
+                };
+              })
+            );
+          },
+          onToken: (data) => {
+            const { task_id, task_key, data: token } = data as {
+              task_id: number; task_key: string; data: string;
+            };
+            if (task_key === "llm_analysis") appendMessageText(asstMsgId, token);
+            setTokenStreams((prev) => ({ ...prev, [task_id]: (prev[task_id] ?? "") + token }));
+          },
+          onCompleted: (data) => {
+            const { task_id, node_name, output } = data as {
+              task_id: number; node_name: string; task_key: string; output: Record<string, unknown>;
+            };
+            const safeOutput = output?._truncated ? undefined : output;
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== asstMsgId || !m.nodes) return m;
+                return {
+                  ...m,
+                  nodes: m.nodes.map((ng) => {
+                    if (ng.node_name !== node_name) return ng;
+                    const tasks = ng.tasks.map((t) =>
+                      t.id === task_id ? { ...t, status: "completed" as const, output: safeOutput ?? t.output } : t
+                    );
+                    const allDone = tasks.every((t) => t.status === "completed" || t.status === "failed");
+                    return { ...ng, tasks, status: (allDone ? "completed" : ng.status) as NodeGroup["status"] };
+                  }),
+                };
+              })
+            );
+          },
+          onFailed: (data) => {
+            const { task_id, node_name, output } = data as {
+              task_id: number; node_name: string; task_key: string; output?: Record<string, unknown>;
+            };
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== asstMsgId || !m.nodes) return m;
+                return {
+                  ...m,
+                  nodes: m.nodes.map((ng) => {
+                    if (ng.node_name !== node_name) return ng;
+                    const tasks = ng.tasks.map((t) =>
+                      t.id === task_id ? { ...t, status: "failed" as const, output: output || t.output } : t
+                    );
+                    return { ...ng, tasks, status: "failed" as NodeGroup["status"] };
+                  }),
+                };
+              })
+            );
+          },
+          onCancelled: (data) => {
+            const { task_id, node_name } = data as {
+              task_id: number; node_name: string; task_key: string;
+            };
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== asstMsgId || !m.nodes) return m;
+                return {
+                  ...m,
+                  nodes: m.nodes.map((ng) => {
+                    if (ng.node_name !== node_name) return ng;
+                    const tasks = ng.tasks.map((t) =>
+                      t.id === task_id ? { ...t, status: "cancelled" as const } : t
+                    );
+                    const allDone = tasks.every((t) => ["completed", "failed", "cancelled"].includes(t.status));
+                    return { ...ng, tasks, status: (allDone ? "completed" : ng.status) as NodeGroup["status"] };
+                  }),
+                };
+              })
+            );
+          },
+          onDone: (data) => {
+            const { status } = data as { status: string };
+            updateMessage(asstMsgId, { status: status as ChatMessage["status"] });
+            activeThreadId.current = null;
+            setLoading(false);
+            close();
+            if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
+          },
+          onClose: () => {
+            updateMessage(asstMsgId, { status: "failed" as ChatMessage["status"] });
+            activeThreadId.current = null;
+            setLoading(false);
+          },
+        });
+        cleanupSse.current = close;
+      }
+
+      setHistoryOpen(false);
+    },
+    [appendMessageText, updateMessage]
+  );
+
+  // After auth resolves, check for an active thread and load history
+  useEffect(() => {
+    if (!userToken) return;
+
+    fetchActiveThread(userToken).then((active) => {
+      if (active) recoverThread(active);
+    }).catch(console.error);
+
+    fetchHistory(userToken).then(setHistoryItems).catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userToken]);
+
   const handleSubmit = useCallback(
     async (query: string) => {
+      if (!userToken) return; // guard: auth not ready
       cleanupSse.current?.();
       setTokenStreams({});
       setTaskProviders({});
@@ -113,7 +289,7 @@ export default function App() {
 
       try {
         // POST returns immediately (status="running") — graph runs in background
-        const res = await submitQuery(query);
+        const res = await submitQuery(query, userToken!);
         const threadId = res.thread_id;
         threadToMsgId.current.set(threadId, asstMsgId);
         activeThreadId.current = threadId;
@@ -183,6 +359,9 @@ export default function App() {
             const { task_id, node_name, task_key, output } = data as {
               task_id: number; node_name: string; task_key: string; output: Record<string, unknown>;
             };
+            // _truncated sentinel means the payload exceeded pg_notify's 8 KB limit;
+            // keep the existing (empty) output in state — TaskDrawer loads it lazily.
+            const safeOutput = output?._truncated ? undefined : output;
             setMessages((prev) =>
               prev.map((m) => {
                 if (m.id !== asstMsgId || !m.nodes) return m;
@@ -192,10 +371,10 @@ export default function App() {
                     if (ng.node_name !== node_name) return ng;
                     const tasks = ng.tasks.map((t) =>
                       t.id === task_id
-                        ? { ...t, status: "completed" as const, output: output || t.output }
+                        ? { ...t, status: "completed" as const, output: safeOutput ?? t.output }
                         : t
                     );
-                    const allDone = tasks.every((t) => t.status === "completed" || t.status === "failed");
+                    const allDone = tasks.every((t) => t.status === "completed" || t.status === "failed" || t.status === "cancelled");
                     return {
                       ...ng,
                       tasks,
@@ -235,6 +414,27 @@ export default function App() {
             );
             void task_key;
           },
+          onCancelled: (data) => {
+            const { task_id, node_name } = data as {
+              task_id: number; node_name: string; task_key: string;
+            };
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== asstMsgId || !m.nodes) return m;
+                return {
+                  ...m,
+                  nodes: m.nodes.map((ng) => {
+                    if (ng.node_name !== node_name) return ng;
+                    const tasks = ng.tasks.map((t) =>
+                      t.id === task_id ? { ...t, status: "cancelled" as const } : t
+                    );
+                    const allDone = tasks.every((t) => ["completed", "failed", "cancelled"].includes(t.status));
+                    return { ...ng, tasks, status: (allDone ? "completed" : ng.status) as NodeGroup["status"] };
+                  }),
+                };
+              })
+            );
+          },
           onDone: (data) => {
             const { status } = data as { status: string };
             if (status === "cancelled") {
@@ -245,10 +445,13 @@ export default function App() {
             activeThreadId.current = null;
             close();
             setLoading(false);
+            // Refresh history so the completed thread appears
+            if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
           },
           onClose: () => {
-            // SSE disconnected without a done event — mark completed
-            updateMessage(asstMsgId, { status: "completed" });
+            // SSE dropped without a done event (network blip, browser closed).
+            // Backend continues running — on next load recoverThread will reconnect.
+            updateMessage(asstMsgId, { status: "failed" as ChatMessage["status"] });
             activeThreadId.current = null;
             setLoading(false);
           },
@@ -260,7 +463,7 @@ export default function App() {
         setLoading(false);
       }
     },
-    [updateMessage, appendMessageText]
+    [updateMessage, appendMessageText, userToken]
   );
 
   const handleCancel = useCallback(async () => {
@@ -295,9 +498,21 @@ export default function App() {
             justifyContent: "space-between",
           }}
         >
-          <Title level={4} style={{ color: token.colorText, margin: 0 }}>
-            🤖 Fin Agent
-          </Title>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <Button
+              icon={<HistoryOutlined />}
+              onClick={() => {
+                if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
+                setHistoryOpen(true);
+              }}
+            />
+            <Title level={4} style={{ color: token.colorText, margin: 0 }}>
+              🤖 Fin Agent
+            </Title>
+            {username && (
+              <Tag color="blue" style={{ margin: 0 }}>{username}</Tag>
+            )}
+          </div>
           <Button
             icon={<FileTextOutlined />}
             onClick={() => setReportDrawerOpen(true)}
@@ -316,6 +531,13 @@ export default function App() {
       </Layout>
 
       <TaskDrawer node={drawerNode} tokenStreams={tokenStreams} taskProviders={taskProviders} taskMeta={taskMeta} onClose={() => setDrawerNodeName(null)} />
+
+      <HistoryPanel
+        open={historyOpen}
+        items={historyItems}
+        onClose={() => setHistoryOpen(false)}
+        onRecover={recoverThread}
+      />
 
       {/* ── Strategy Report Drawer ── */}
       <Drawer

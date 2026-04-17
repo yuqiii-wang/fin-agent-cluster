@@ -21,67 +21,7 @@ _VALID_PERIODS = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd
 _VALID_INTRADAY_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"}
 _VALID_INTERVALS = _VALID_INTRADAY_INTERVALS | {"1d", "1wk", "1mo"}
 
-# ---------------------------------------------------------------------------
-# Canonical-to-yfinance ticker translation map.
-# Maps well-known canonical symbols that may differ from yfinance's native
-# format.  A None value means yfinance cannot fetch this ticker — the client
-# will skip yfinance and fall through to the next provider.
-# Canonical symbols not listed here are passed through unchanged.
-# ---------------------------------------------------------------------------
-TICKER_MAP: dict[str, str | None] = {
-    # Stooq-native Treasury yield symbols — yfinance uses CBOE ^IRX as proxy
-    "^US1MT":    "^IRX",   # 1-month T-bill (no direct yfinance symbol; use 3-mo proxy)
-    "^US6MT":    "^FVX",   # 6-month T-bill → 5-year note (FVX) as proxy on yfinance
-    # Commodity futures: yfinance handles all =F symbols natively (no translation needed)
-    "GC=F":      "GC=F",   # Gold (COMEX)
-    "CL=F":      "CL=F",   # WTI Crude Oil (NYMEX)
-    "NG=F":      "NG=F",   # Natural Gas (Henry Hub)
-    "BZ=F":      "BZ=F",   # Brent Crude (ICE)
-    "SI=F":      "SI=F",   # Silver (COMEX)
-    "HG=F":      "HG=F",   # Copper (COMEX)
-    # CBOE yield indices
-    "^IRX":      "^IRX",   # 13-week T-bill (≈ SOFR proxy)
-    "^TNX":      "^TNX",   # 10-year Treasury
-    "^TYX":      "^TYX",   # 30-year Treasury
-    "^FVX":      "^FVX",   # 5-year Treasury
-    # US equity indices — yfinance native
-    "^GSPC":     "^GSPC",  # S&P 500
-    "^IXIC":     "^IXIC",  # NASDAQ Composite
-    "^NDX":      "^NDX",   # NASDAQ 100
-    "^DJI":      "^DJI",   # Dow Jones Industrial Average
-    "^RUT":      "^RUT",   # Russell 2000
-    # International indices — yfinance native
-    "^N225":     "^N225",  # Nikkei 225
-    "^HSI":      "^HSI",   # Hang Seng
-    "^HSCE":     "^HSCE",  # Hang Seng China Enterprises
-    "^FTSE":     "^FTSE",  # FTSE 100
-    "^GDAXI":    "^GDAXI", # DAX 40
-    "^FCHI":     "^FCHI",  # CAC 40
-    "^SSMI":     "^SSMI",  # SMI
-    "^AXJO":     "^AXJO",  # S&P/ASX 200
-    "^AORD":     "^AORD",  # All Ordinaries
-    "^KS11":     "^KS11",  # KOSPI
-    "^BSESN":    "^BSESN", # BSE Sensex
-    "^NSEI":     "^NSEI",  # Nifty 50
-    "^STI":      "^STI",   # Straits Times Index
-    "^TWII":     "^TWII",  # TAIEX
-    "^BVSP":     "^BVSP",  # Ibovespa
-    "^IBEX":     "^IBEX",  # IBEX 35
-    "^AEX":      "^AEX",   # AEX
-    "^GSPTSE":   "^GSPTSE",# S&P/TSX Composite
-    "^JKSE":     "^JKSE",  # IDX Composite
-    "^MXX":      "^MXX",   # IPC
-    "^TOPX":     None,     # TOPIX not available on yfinance (use datareader)
-    "FTSEMIB.MI":"FTSEMIB.MI",
-    # Chinese A-share indices — yfinance uses .SS / .SZ suffixes
-    "000001.SS":  "000001.SS",
-    "399001.SZ":  "399001.SZ",
-    "399006.SZ":  "399006.SZ",
-    "000300.SS":  "000300.SS",
-    # Crypto
-    "BTC-USD":   "BTC-USD",
-    "ETH-USD":   "ETH-USD",
-}
+from backend.resource_api.quant_api.configs.ticker_maps.yfinance import TICKER_MAP  # noqa: F401
 
 
 def _fetch_daily_ohlcv(symbol: str, params: dict[str, Any]) -> QuantResult:

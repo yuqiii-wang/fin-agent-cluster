@@ -190,6 +190,9 @@ async def validate_basics(
         thread_id, QO_VALIDATE_BASICS, node_execution_id, provider=provider
     )
     try:
+        if not raw_json or not raw_json.strip():
+            raise ValueError("raw_json is empty — comprehend_basics produced no output (cancelled or passed before any tokens arrived)")
+
         # Parse current LLM output
         ctx = LLMRawContext.model_validate_json(raw_json)
         data: dict = ctx.model_dump()

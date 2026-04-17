@@ -94,6 +94,11 @@ def probe_ollama(timeout: float = 10.0) -> bool:
 def get_ollama_llm(temperature: float = 0.3) -> BaseChatModel:
     """Return a chat model backed by a local Ollama server.
 
+    Uses an ``httpx.AsyncClient`` (not the default sync client) so that async
+    streaming calls participate in asyncio cancellation.  When the calling
+    ``asyncio.Task`` is cancelled (e.g. frontend disconnect), the live HTTP
+    streaming request to Ollama is immediately aborted and the GPU is released.
+
     Args:
         temperature: Sampling temperature passed to the model.
 
@@ -105,7 +110,9 @@ def get_ollama_llm(temperature: float = 0.3) -> BaseChatModel:
 
     base_url = _build_openai_base_url(s.OLLAMA_SERVER_URL)
     bypass_proxy = _should_bypass_proxy(base_url)
-    http_client = httpx.Client(trust_env=not bypass_proxy)
+    # Use AsyncClient so that asyncio task cancellation propagates through
+    # httpx and causes Ollama to abort in-flight inference (GPU freed).
+    http_async_client = httpx.AsyncClient(trust_env=not bypass_proxy)
 
     return ChatOpenAI(
         api_key="ollama",  # Ollama doesn't require a strict auth key
@@ -113,5 +120,5 @@ def get_ollama_llm(temperature: float = 0.3) -> BaseChatModel:
         model=s.OLLAMA_MODEL,
         temperature=temperature,
         streaming=True,
-        http_client=http_client,
+        http_async_client=http_async_client,
     )

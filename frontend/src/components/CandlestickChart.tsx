@@ -180,10 +180,12 @@ function PanelChart({
 
     meta.keys.forEach((key, i) => {
       const s = chart.addSeries(LineSeries, { color: indicatorColor(indicatorId, i), lineWidth: 1 });
-      const pts = data
-        .map((p) => ({ time: toChartTime(p.date) as string & number, value: p.values[key] }))
-        .filter((pt): pt is { time: string & number; value: number } => pt.value != null);
-      s.setData(pts);
+      const seen = new Map<string | number, { time: string & number; value: number }>();
+      for (const p of data) {
+        const value = p.values[key];
+        if (value != null) seen.set(toChartTime(p.date), { time: toChartTime(p.date) as string & number, value });
+      }
+      s.setData(Array.from(seen.values()));
     });
 
     chart.timeScale().fitContent();
@@ -203,11 +205,13 @@ export function CandlestickChart({ bars, symbol, taskKey, height = 340 }: Props)
   const granularity = extractGranularity(taskKey);
   const canShowIndicators = !!granularity && !!symbol;
 
-  // Sort once ascending by date
-  const sortedBars = useMemo(
-    () => [...bars].sort((a, b) => Date.parse(a.date) - Date.parse(b.date)),
-    [bars],
-  );
+  // Sort ascending by date, then deduplicate by chart-time key (last entry wins).
+  const sortedBars = useMemo(() => {
+    const sorted = [...bars].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+    const seen = new Map<string | number, OHLCVBar>();
+    for (const bar of sorted) seen.set(toChartTime(bar.date), bar);
+    return Array.from(seen.values());
+  }, [bars]);
 
   const rangeOptions = useMemo(() => deriveRangeOptions(sortedBars), [sortedBars]);
   const [selectedDays, setSelectedDays] = useState<number>(0);
@@ -345,10 +349,12 @@ export function CandlestickChart({ bars, symbol, taskKey, height = 340 }: Props)
             ? { lineStyle: 2 }
             : {}),
         });
-        const pts = series.data
-          .map((p) => ({ time: toChartTime(p.date) as string & number, value: p.values[key] }))
-          .filter((pt): pt is { time: string & number; value: number } => pt.value != null);
-        ls.setData(pts);
+        const seen = new Map<string | number, { time: string & number; value: number }>();
+        for (const p of series.data) {
+          const value = p.values[key];
+          if (value != null) seen.set(toChartTime(p.date), { time: toChartTime(p.date) as string & number, value });
+        }
+        ls.setData(Array.from(seen.values()));
       });
     });
 

@@ -3,13 +3,9 @@ import { Flex, Spin, Steps, Tooltip, Typography } from "antd";
 import type { NodeExecutionInfo, NodeGroup } from "../types";
 import { fetchNodeExecutions } from "../api";
 import { JsonViewer } from "./JsonViewer";
+import { NODE_LABELS } from "./nodeLabels";
 
 const { Text } = Typography;
-
-export const NODE_LABELS: Record<string, string> = {
-  query_optimizer: "Query Optimizer",
-  market_data_collector: "Market Data",
-};
 
 const STEP_STATUS: Record<NodeGroup["status"], "wait" | "process" | "finish" | "error"> = {
   pending: "wait",
@@ -91,19 +87,24 @@ export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStr
     }
     if (!needsRefresh || !selectedNodeName) return;
 
+    console.debug("[NodeList] auto-refresh executions selectedNode=%s threadId=%s", selectedNodeName, threadId);
     setLoading(true);
     fetchNodeExecutions(threadId)
       .then((list) => {
+        console.debug("[NodeList] auto-refresh ok count=%d", list.length);
         const map: Record<string, NodeExecutionInfo | null> = {};
         for (const e of list) map[e.node_name] = e;
         setExecutions(map);
       })
-      .catch(() => {})
+      .catch((err) => {
+        console.error("[NodeList] auto-refresh fetchNodeExecutions failed", err);
+      })
       .finally(() => setLoading(false));
   }, [nodes, selectedNodeName, threadId]);
 
   const handleClick = (node: NodeGroup) => {
     const name = node.node_name;
+    console.debug("[NodeList] click node=%s status=%s threadId=%s", name, node.status, threadId);
     if (selectedNodeName === name) {
       setSelectedNodeName(null);
       return;
@@ -116,15 +117,21 @@ export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStr
     const stale = cached !== undefined && node.status === "completed" &&
       Object.keys(cached?.output ?? {}).length === 0;
 
+    console.debug("[NodeList] cached=%o stale=%s", cached, stale);
     if (!(name in executions) || stale) {
       setLoading(true);
+      console.debug("[NodeList] fetching executions threadId=%s", threadId);
       fetchNodeExecutions(threadId)
         .then((list) => {
+          console.debug("[NodeList] fetchNodeExecutions ok count=%d", list.length, list);
           const map: Record<string, NodeExecutionInfo | null> = {};
           for (const e of list) map[e.node_name] = e;
           setExecutions(map);
         })
-        .catch(() => setExecutions((prev) => ({ ...prev, [name]: null })))
+        .catch((err) => {
+          console.error("[NodeList] fetchNodeExecutions failed", err);
+          setExecutions((prev) => ({ ...prev, [name]: null }));
+        })
         .finally(() => setLoading(false));
     }
   };

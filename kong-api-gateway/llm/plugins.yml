@@ -1,0 +1,22 @@
+# LLM proxy plugin — Kong AI Gateway ai-proxy.
+# Source: llm/plugins.yml
+# Scoped to the llm-proxy service; intercepts every request before forwarding.
+#
+# Ollama exposes an OpenAI-compatible API; Kong ai-proxy uses provider: openai
+# with a custom upstream_url pointing to Ollama's /v1 endpoint.
+# OLLAMA_MODEL / OLLAMA_HOST / OLLAMA_PORT are injected by docker-compose.
+plugins:
+  - name: ai-proxy
+    service: llm-proxy
+    config:
+      route_type: llm/v1/chat
+      auth:
+        # Ollama does not validate API keys; any non-empty value is accepted.
+        header_name: Authorization
+        header_value: "Bearer ollama"
+      model:
+        # Use openai provider with Ollama's OpenAI-compatible endpoint.
+        provider: openai
+        name: "{OLLAMA_MODEL}"
+        options:
+          upstream_url: "http://{OLLAMA_HOST}:{OLLAMA_PORT}/v1"

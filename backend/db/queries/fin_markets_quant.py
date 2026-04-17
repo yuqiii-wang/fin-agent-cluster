@@ -122,6 +122,16 @@ class OhlcvStatsSQL:
           AND bar_time >= %s
     """
 
+    GET_BARS_IN_WINDOW = """
+        SELECT bar_time, open, high, low, close, volume
+        FROM fin_markets.quant_stats
+        WHERE symbol = %s
+          AND instrument_type = 'equity'
+          AND granularity = %s
+          AND bar_time >= %s
+        ORDER BY bar_time ASC
+    """
+
     GET_BY_SYMBOL = """
         SELECT *
         FROM fin_markets.quant_stats

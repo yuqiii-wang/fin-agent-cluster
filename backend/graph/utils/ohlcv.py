@@ -76,6 +76,46 @@ async def get_ohlcv_coverage(
     return row["latest"] if row and row["latest"] else None
 
 
+async def fetch_ohlcv_from_db(
+    symbol: str,
+    granularity: str,
+    since: datetime,
+) -> list[OHLCVBar]:
+    """Fetch OHLCV bars from *quant_stats* for the given symbol and window.
+
+    Args:
+        symbol:      Ticker symbol (e.g. ``'AAPL'``).
+        granularity: DB granularity string (e.g. ``'15min'``, ``'1day'``, ``'1mo'``).
+        since:       Window start — only bars at or after this datetime are returned.
+
+    Returns:
+        Chronologically ordered list of :class:`OHLCVBar` objects, empty when
+        no rows exist in the requested window.
+    """
+    async with raw_conn() as conn:
+        cur = await conn.execute(
+            OhlcvStatsSQL.GET_BARS_IN_WINDOW,
+            (symbol.upper(), granularity, since),
+        )
+        rows = await cur.fetchall()
+
+    bars: list[OHLCVBar] = []
+    for row in rows:
+        bar_time = row["bar_time"]
+        date_str = bar_time.isoformat() if hasattr(bar_time, "isoformat") else str(bar_time)
+        bars.append(
+            OHLCVBar(
+                date=date_str,
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                volume=int(row["volume"] or 0),
+            )
+        )
+    return bars
+
+
 async def upsert_quant_stats(
     bar_lists: list[list[OHLCVBar]],
     symbol: str,
