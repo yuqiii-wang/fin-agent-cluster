@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 from backend.config import get_settings
 from backend.db import raw_conn
-from backend.db.queries.fin_markets_news import NewsRawSQL
+from backend.db.postgres.queries.fin_markets_news import NewsRawSQL
 from backend.resource_api.exceptions import ProviderNotFoundError
 from backend.resource_api.mem_cache import TimedLRUCache
 from backend.resource_api.news_api.models import NewsQuery, NewsResult, NewsSource
@@ -201,6 +201,13 @@ class NewsClient:
                 )
             raw_id = await _save_to_cache(cache_key, query, provider, result)
             _mem_cache.set(cache_key, result)
+            # Publish to Redis Stream (best-effort, non-blocking)
+            try:
+                import asyncio as _asyncio
+                from backend.resource_api.stream_events import publish_news_enrichment
+                _asyncio.ensure_future(publish_news_enrichment(query, result, provider))
+            except Exception:
+                pass
             return result, raw_id
 
         # All providers exhausted — if every failure was "not found", return an empty

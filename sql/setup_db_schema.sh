@@ -21,12 +21,14 @@ DATABASE_PG_URL=$(grep -E '^(export )?DATABASE_PG_URL=' "$ENV_FILE" \
 echo "Using database: $DATABASE_PG_URL"
 
 # Run SQL files in dependency order:
+#   kong       (no deps)
 #   fin_users  (no deps)
 #   fin_agents (no deps)
 #   fin_markets       (refs fin_agents)
 #   fin_markets_consts (refs fin_markets)
 #   fin_strategies    (refs fin_agents)
 SQL_FILES=(
+    "kong.sql"
     "fin_users.sql"
     "fin_agents.sql"
     "fin_markets.sql"

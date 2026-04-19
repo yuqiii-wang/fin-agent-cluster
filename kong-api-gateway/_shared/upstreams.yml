@@ -7,12 +7,12 @@ upstreams:
     healthchecks:
       active:
         healthy:
-          interval: 10
+          interval: 60
           successes: 1
         unhealthy:
-          interval: 5
+          interval: 10
           http_failures: 3
-        http_path: /docs
+        http_path: /health
         timeout: 5
     targets:
       - target: "{BACKEND_HOST}:{BACKEND_PORT}"

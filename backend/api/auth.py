@@ -15,7 +15,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Header, HTTPException
 from sqlalchemy import desc, select
 
-from backend.db.engine import get_session_factory
+from backend.db.postgres.engine import get_session_factory
 from backend.users.auth import ensure_guest
 from backend.users.models import UserQuery
 from backend.users.schemas import GuestAuthResponse, ThreadSummary

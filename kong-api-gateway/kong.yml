@@ -19,12 +19,12 @@ upstreams:
   healthchecks:
     active:
       healthy:
-        interval: 10
+        interval: 60
         successes: 1
       unhealthy:
-        interval: 5
+        interval: 10
         http_failures: 3
-      http_path: /docs
+      http_path: /health
       timeout: 5
   targets:
   - target: host.docker.internal:8432
@@ -76,6 +76,41 @@ routes:
   - http
   - https
   response_buffering: false
+- name: route-streaming-sse
+  service: fastapi
+  paths:
+  - /api/v1/streaming/sse
+  methods:
+  - GET
+  - OPTIONS
+  strip_path: false
+  protocols:
+  - http
+  - https
+  response_buffering: false
+- name: route-streaming-poll
+  service: fastapi
+  paths:
+  - /api/v1/streaming/poll
+  methods:
+  - GET
+  - OPTIONS
+  strip_path: false
+  protocols:
+  - http
+  - https
+  response_buffering: false
+- name: route-streaming-info
+  service: fastapi
+  paths:
+  - /api/v1/streaming/info
+  methods:
+  - GET
+  - OPTIONS
+  strip_path: false
+  protocols:
+  - http
+  - https
 - name: route-tasks
   service: fastapi
   paths:
@@ -130,7 +165,10 @@ plugins:
 - name: cors
   config:
     origins:
-    - '*'
+    - http://localhost:3000
+    - http://localhost:8886
+    - http://127.0.0.1:3000
+    - http://127.0.0.1:8886
     methods:
     - GET
     - POST
@@ -161,11 +199,22 @@ plugins:
   config:
     minute: 300
     hour: 5000
-    policy: local
+    policy: redis
     limit_by: ip
     hide_client_headers: false
+    redis:
+      host: redis
+      port: 6379
+      database: 1
+      timeout: 2000
 - name: correlation-id
   config:
     header_name: X-Request-ID
     generator: uuid#counter
     echo_downstream: true
+- name: prometheus
+  config:
+    status_code_metrics: true
+    latency_metrics: true
+    bandwidth_metrics: true
+    upstream_health_metrics: true

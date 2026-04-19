@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from backend.db.queries.fin_markets_region import PromptCatalogs
+from backend.db.postgres.queries.fin_markets_region import PromptCatalogs
 
 _JSON_SCHEMA = """\
 Your response MUST be a single valid JSON object with exactly these keys:

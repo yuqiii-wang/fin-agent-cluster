@@ -4,7 +4,10 @@ plugins:
   - name: cors
     config:
       origins:
-        - "*"
+        - "http://localhost:3000"   # Vite dev server
+        - "http://localhost:8886"   # Kong Manager
+        - "http://127.0.0.1:3000"
+        - "http://127.0.0.1:8886"
       methods:
         - GET
         - POST
@@ -34,14 +37,19 @@ plugins:
       allowed_payload_size: 10   # MB
       size_unit: megabytes
 
-  # Rate limiting (local counter; switch to redis policy for multi-node)
+  # Rate limiting — Redis policy for consistent counters across Kong workers/nodes
   - name: rate-limiting
     config:
       minute: 300
       hour: 5000
-      policy: local
+      policy: redis
       limit_by: ip
       hide_client_headers: false
+      redis:
+        host: "{REDIS_HOST}"
+        port: {REDIS_PORT}
+        database: 1       # DB 0 reserved for app; Kong uses DB 1
+        timeout: 2000
 
   # Correlation ID — adds X-Request-ID to every response for traceability
   - name: correlation-id
@@ -49,3 +57,13 @@ plugins:
       header_name: X-Request-ID
       generator: uuid#counter
       echo_downstream: true
+
+  # Prometheus — exposes /metrics on Kong's Admin API (port 8001).
+  # Scraped by the prometheus container; per-route/service counters,
+  # latency histograms, and upstream health are all available OSS.
+  - name: prometheus
+    config:
+      status_code_metrics: true   # per-status-code request counters
+      latency_metrics: true       # proxy / upstream / kong latency histograms
+      bandwidth_metrics: true     # ingress / egress byte counters
+      upstream_health_metrics: true  # upstream target health state

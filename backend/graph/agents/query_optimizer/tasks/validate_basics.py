@@ -16,14 +16,14 @@ import json
 import logging
 from typing import Optional
 
-from backend.db.queries.fin_markets_region import (
+from backend.db.postgres.queries.fin_markets_region import (
     get_currency_codes,
     get_news_sector_values,
     get_regions_for_validation,
 )
 from backend.graph.agents.query_optimizer.models import LLMRawContext
 from backend.graph.agents.task_keys import QO_VALIDATE_BASICS
-from backend.graph.utils.task_stream import complete_task, create_task, fail_task
+from backend.sse_notifications import complete_task, create_task, fail_task
 
 logger = logging.getLogger(__name__)
 

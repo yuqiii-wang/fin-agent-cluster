@@ -1,0 +1,60 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: fin-trading-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: fin-trading
+          host: backend
+          # *.log* matches both the active file (api.log) and rotated files (api.log.1, api.log.2 ...)
+          __path__: /logs/*.log*
+
+    pipeline_stages:
+      # Extract the base component name from the filename.
+      # Works for both active (api.log) and rotated (api.log.1, api.log.2) files:
+      # [^.]+ captures the first word only, \. log anchors to the .log boundary,
+      # and any trailing rotation suffix (.1 .2 etc.) is ignored.
+      - regex:
+          source: filename
+          expression: '/logs/(?P<source>[^.]+)\.log'
+
+      - labels:
+          source:
+
+      # Parse JSON lines produced by backend.log_config.JsonFileFormatter
+      - json:
+          expressions:
+            timestamp: timestamp
+            level: level
+            logger: logger
+            component: component
+            message: message
+            exception: exception
+
+      # Promote parsed fields as Loki stream labels (low-cardinality only)
+      - labels:
+          level:
+          component:
+
+      # Structured metadata (high-cardinality — queryable but not indexed as stream labels)
+      - structured_metadata:
+          logger:
+
+      # Parse the ISO timestamp from the JSON so Loki stores the correct event time
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02T15:04:05.000000"
+
+      # Use the parsed message as the final log line
+      - output:
+          source: message

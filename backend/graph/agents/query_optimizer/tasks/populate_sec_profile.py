@@ -16,13 +16,13 @@ import logging
 from typing import Optional
 
 from backend.db import raw_conn
-from backend.db.queries.fin_markets_region import (
+from backend.db.postgres.queries.fin_markets_region import (
     get_region_currency_map,
     get_region_name_to_code,
 )
-from backend.db.queries.fin_markets_static import SecProfileSQL
+from backend.db.postgres.queries.fin_markets_static import SecProfileSQL
 from backend.graph.agents.task_keys import QO_POPULATE_SEC_PROFILE
-from backend.graph.utils.task_stream import complete_task, create_task, fail_task
+from backend.sse_notifications import complete_task, create_task, fail_task
 from backend.resource_api.quant_api.client import QuantClient
 from backend.resource_api.quant_api.models import QuantQuery
 

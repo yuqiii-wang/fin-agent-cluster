@@ -1,0 +1,48 @@
+# Streaming routes — HTTP/SSE bridge to Redis Streams MQ.
+# Source: api/v1/streaming/routes.yml
+#
+# All routes proxy to FastAPI which talks to Redis Streams internally.
+# Kong never connects to Redis directly.
+# All write paths (token publishing, lifecycle events) happen in-process;
+# no external publish endpoint is exposed.
+#
+#   GET  /api/v1/streaming/sse/{stream_key}
+#       SSE event source — streams new messages to the client in real-time.
+#       response_buffering must be disabled so events flush through Kong.
+#
+#   GET  /api/v1/streaming/poll/{stream_key}
+#       HTTP long-poll — returns a JSON batch of messages.
+#       ?last_id=<msg_id>&count=<n>&block_ms=<ms>
+#
+#   GET  /api/v1/streaming/info/{stream_key}
+#       Stream metadata (length, internal name).
+routes:
+  - name: route-streaming-sse
+    service: fastapi
+    paths:
+      - /api/v1/streaming/sse
+    methods: [GET, OPTIONS]
+    strip_path: false
+    protocols: [http, https]
+    # SSE requires response buffering disabled so events are flushed immediately
+    # instead of being held in Kong's nginx buffer.
+    response_buffering: false
+
+  - name: route-streaming-poll
+    service: fastapi
+    paths:
+      - /api/v1/streaming/poll
+    methods: [GET, OPTIONS]
+    strip_path: false
+    protocols: [http, https]
+    # Long-poll blocks until Redis Streams data arrives; disable buffering so
+    # Kong flushes the response immediately when the upstream connection unblocks.
+    response_buffering: false
+
+  - name: route-streaming-info
+    service: fastapi
+    paths:
+      - /api/v1/streaming/info
+    methods: [GET, OPTIONS]
+    strip_path: false
+    protocols: [http, https]

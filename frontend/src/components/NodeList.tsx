@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Flex, Spin, Steps, Tooltip, Typography } from "antd";
+import { StopOutlined } from "@ant-design/icons";
 import type { NodeExecutionInfo, NodeGroup } from "../types";
 import { fetchNodeExecutions } from "../api";
 import { JsonViewer } from "./JsonViewer";
@@ -12,6 +13,7 @@ const STEP_STATUS: Record<NodeGroup["status"], "wait" | "process" | "finish" | "
   running: "process",
   completed: "finish",
   failed: "error",
+  cancelled: "error",
 };
 
 interface Props {
@@ -31,10 +33,27 @@ function LabelledField({ label, data }: { label: string; data: unknown }) {
   );
 }
 
+interface NodeInlinePanelProps {
+  execution: NodeExecutionInfo | null | "loading";
+  /** Status of the selected node — used to show a waiting spinner for non-completed nodes. */
+  nodeStatus?: NodeGroup["status"];
+}
+
 /** Inline input/output panel for a node, showing the actual state data. */
-function NodeInlinePanel({ execution }: { execution: NodeExecutionInfo | null | "loading" }) {
+function NodeInlinePanel({ execution, nodeStatus }: NodeInlinePanelProps) {
   if (execution === "loading") {
     return <Flex justify="center" style={{ marginTop: 8 }}><Spin size="small" /></Flex>;
+  }
+
+  if (!execution && (nodeStatus === "pending" || nodeStatus === "running")) {
+    return (
+      <Flex align="center" gap={6} style={{ marginTop: 8 }}>
+        <Spin size="small" />
+        <Text type="secondary" style={{ fontSize: 12, fontStyle: "italic" }}>
+          Waiting for node to complete…
+        </Text>
+      </Flex>
+    );
   }
 
   return (
@@ -107,6 +126,7 @@ export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStr
     console.debug("[NodeList] click node=%s status=%s threadId=%s", name, node.status, threadId);
     if (selectedNodeName === name) {
       setSelectedNodeName(null);
+      onNodeClick(node);
       return;
     }
     setSelectedNodeName(name);
@@ -146,6 +166,7 @@ export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStr
     ),
     description: <span style={{ fontSize: 11 }}>{node.tasks.length} task(s)</span>,
     status: STEP_STATUS[node.status],
+    ...(node.status === "cancelled" ? { icon: <StopOutlined style={{ color: "#faad14" }} /> } : {}),
   }));
 
   const panelData: NodeExecutionInfo | null | "loading" =
@@ -154,6 +175,10 @@ export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStr
       : loading
       ? "loading"
       : executions[selectedNodeName] ?? null;
+
+  const selectedNodeStatus = selectedNodeName
+    ? nodes.find((n) => n.node_name === selectedNodeName)?.status
+    : undefined;
 
   return (
     <>
@@ -165,7 +190,7 @@ export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStr
         items={items}
       />
       {selectedNodeName !== null && (
-        <NodeInlinePanel execution={panelData} />
+        <NodeInlinePanel execution={panelData} nodeStatus={selectedNodeStatus} />
       )}
     </>
   );

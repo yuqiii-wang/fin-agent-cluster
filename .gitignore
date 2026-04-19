@@ -90,3 +90,7 @@ node_modules/
 ollama/QWen3.5-27B-Instruct/*
 ollama/QWen3-4B-Emb/*
 ollama/QWen3-0.6B-Emb/*
+
+celerybeat-schedule.*
+
+logs

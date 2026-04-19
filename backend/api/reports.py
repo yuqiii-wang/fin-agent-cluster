@@ -15,8 +15,8 @@ from fastapi import APIRouter, HTTPException, Query
 from psycopg.rows import dict_row
 
 from backend.db import raw_conn
-from backend.db.queries.fin_agents import TaskSQL
-from backend.db.queries.fin_strategies import ReportSQL
+from backend.db.postgres.queries.fin_agents import TaskSQL
+from backend.db.postgres.queries.fin_strategies import ReportSQL
 from backend.users.schemas import StrategyReport, StrategyReportList, TaskInfo
 
 logger = logging.getLogger(__name__)

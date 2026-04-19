@@ -12,7 +12,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable
 
-from backend.db.queries.fin_markets_region import get_prompt_catalogs
+from backend.db.postgres.queries.fin_markets_region import get_prompt_catalogs
 from backend.graph.prompts.query_optimizer import build_prompt_template
 
 

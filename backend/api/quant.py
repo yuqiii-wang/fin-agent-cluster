@@ -16,8 +16,8 @@ from psycopg.rows import dict_row
 from pydantic import BaseModel
 
 from backend.db import raw_conn
-from backend.db.queries.fin_markets_quant import OhlcvStatsSQL
-from backend.db.queries.fin_markets_region import get_currency_for_symbol
+from backend.db.postgres.queries.fin_markets_quant import OhlcvStatsSQL
+from backend.db.postgres.queries.fin_markets_region import get_currency_for_symbol
 
 logger = logging.getLogger(__name__)
 

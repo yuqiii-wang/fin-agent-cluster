@@ -21,11 +21,11 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException
 from sqlalchemy import select, update
 
-from backend.db import checkpointer, get_session_factory as _get_session_factory
-from backend.graph import build_graph
+from backend.db import get_session_factory as _get_session_factory
 from backend.graph.models import AgentTask, NodeExecution
 from backend.api.registry import running_tasks as _running_tasks
-from backend.graph.utils.task_stream import emit_done
+from backend.sse_notifications import emit_done
+from backend.streaming.workers.graph_runner import run_graph_async as _run_graph_async
 from backend.users.auth import ensure_guest
 from backend.users.models import UserQuery
 from backend.users.schemas import QueryRequest, QueryResponse, SessionStatus, TaskInfo, NodeExecutionInfo
@@ -35,86 +35,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-async def _run_graph(thread_id: str, query: str) -> None:
-    """Background coroutine: execute the LangGraph workflow and emit a ``done`` event.
-
-    Runs after the POST response has been returned.  Emits ``done``
-    (completed or failed) via ``pg_notify`` so SSE subscribers can finalise
-    the UI state.
-
-    Args:
-        thread_id: LangGraph UUID already persisted to the DB.
-        query:     Raw user query string.
-    """
-    factory = _get_session_factory()
-    # Brief yield so the SSE client has time to connect and register LISTEN
-    # before the first pg_notify fires.  LLM cold-start takes seconds; 1 s is
-    # enough for TCP + HTTP handshake on a local connection.
-    await asyncio.sleep(1)
-    try:
-        async with checkpointer() as cp:
-            graph = build_graph().compile(checkpointer=cp)
-            config = {
-                "configurable": {
-                    "thread_id": thread_id,
-                    "checkpoint_ns": "",
-                }
-            }
-            initial_state = {
-                "query": query,
-                "thread_id": thread_id,
-                "ticker": "",
-                "market_data": "",
-                "fundamental_analysis": "",
-                "technical_analysis": "",
-                "risk_assessment": "",
-                "report": "",
-                "steps": [],
-            }
-            final_state = await graph.ainvoke(initial_state, config)
-            report = final_state.get("market_data", "No report generated")
-
-        async with factory() as session:
-            await session.execute(
-                update(UserQuery)
-                .where(UserQuery.thread_id == thread_id)
-                .values(status="completed", answer=report, completed_at=datetime.utcnow())
-            )
-            await session.commit()
-
-        await emit_done(thread_id, "completed", report)
-
-    except asyncio.CancelledError:
-        logger.info("Query %s cancelled by user", thread_id)
-        async with factory() as session:
-            await session.execute(
-                update(UserQuery)
-                .where(UserQuery.thread_id == thread_id)
-                .values(status="cancelled")
-            )
-            await session.execute(
-                update(AgentTask)
-                .where(AgentTask.thread_id == thread_id, AgentTask.status == "running")
-                .values(status="cancelled")
-            )
-            await session.commit()
-        await emit_done(thread_id, "cancelled", "Query cancelled by user")
-
-    except Exception as exc:
-        logger.exception("Error processing query %s: %s", thread_id, exc)
-        async with factory() as session:
-            await session.execute(
-                update(UserQuery)
-                .where(UserQuery.thread_id == thread_id)
-                .values(status="failed", error=str(exc))
-            )
-            await session.commit()
-        await emit_done(thread_id, "failed", str(exc))
-
-    finally:
-        _running_tasks.pop(thread_id, None)
-
-
 @router.post("/query", response_model=QueryResponse)
 async def run_query(
     request: QueryRequest,
@@ -122,13 +42,20 @@ async def run_query(
 ) -> QueryResponse:
     """Submit a financial analysis query and begin processing asynchronously.
 
+    Both normal fin-analysis and perf-test queries run as asyncio tasks on the
+    FastAPI event loop via the unified LangGraph graph.  The graph routes
+    internally based on the query text.  LLM calls, DB I/O, and Redis XADD
+    are all I/O-bound coroutines — cooperative multitasking provides real
+    parallelism across concurrent requests without gevent/asyncio conflicts.
+
     Creates a *UserQuery* record and immediately returns the *thread_id*.
-    Graph execution runs in the background; subscribe to
-    ``GET /api/v1/stream/{thread_id}`` for real-time SSE events including a
-    final ``done`` event with the completed status.
+    Subscribe to ``GET /api/v1/stream/{thread_id}`` for real-time SSE events
+    including a final ``done`` event with the completed status.
 
     Args:
-        request: Query payload containing the user's natural-language question.
+        request: Query payload with the user's natural-language question.
+                 If the query equals ``PERF_TEST_TRIGGER`` the perf-test branch
+                 runs; no special parameters are required.
         x_user_token: Guest bearer token from ``X-User-Token`` header.
 
     Returns:
@@ -149,33 +76,60 @@ async def run_query(
         )
         await session.commit()
 
-    task = asyncio.create_task(_run_graph(thread_id, request.query))
+    # Dispatch the unified graph as an asyncio task on the FastAPI event loop.
+    # The graph routes internally: perf-test trigger → perf_test_streamer;
+    # all other queries → fin-analysis pipeline.
+    # I/O-bound LLM / DB / Redis calls yield cooperatively so multiple
+    # concurrent requests run in parallel without blocking each other.
+    task = asyncio.create_task(_run_graph_async(thread_id, request.query))
     _running_tasks[thread_id] = task
+    logger.info(
+        "[queries] query_accepted thread_id=%s query=%r",
+        thread_id,
+        request.query[:80],
+    )
     return QueryResponse(thread_id=thread_id, status="running")
 
 
 @router.post("/query/{thread_id}/cancel", response_model=QueryResponse)
 async def cancel_query(thread_id: str) -> QueryResponse:
-    """Cancel a running query and notify SSE subscribers.
+    """Cancel a running query.
 
-    Cancels the background asyncio task for *thread_id*, marks the
-    ``UserQuery`` and all its running ``AgentTask`` rows as ``cancelled`` in
-    the DB, and emits a ``done`` SSE event so the frontend can update.
+    Cancels the asyncio.Task running the graph on the FastAPI event loop.
+    The cancel endpoint also takes ownership of the final DB status update
+    and ``done`` SSE event so the graph runner does not have to.
 
     Args:
         thread_id: The UUID returned when the query was submitted.
 
     Returns:
         ``QueryResponse`` with ``status="cancelled"``.
-
-    Raises:
-        HTTPException 404: If *thread_id* is not found in the running-tasks
-            registry (query already finished or was never started).
     """
-    task = _running_tasks.get(thread_id)
-    if task is None or task.done():
-        raise HTTPException(status_code=404, detail="No running query found for this thread_id")
-    task.cancel()
+    task = _running_tasks.pop(thread_id, None)
+    if task is None:
+        return QueryResponse(thread_id=thread_id, status="cancelled")
+
+    # Update DB and emit done before cancelling so the graph's CancelledError
+    # handler does not race with this endpoint.
+    factory = _get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            update(UserQuery)
+            .where(UserQuery.thread_id == thread_id)
+            .values(status="cancelled")
+        )
+        await session.execute(
+            update(AgentTask)
+            .where(AgentTask.thread_id == thread_id, AgentTask.status == "running")
+            .values(status="cancelled")
+        )
+        await session.commit()
+    await emit_done(thread_id, "cancelled", "Query cancelled by user")
+
+    if not task.done():
+        task.cancel()
+    logger.info("[queries] task_cancelled thread_id=%s", thread_id)
+
     return QueryResponse(thread_id=thread_id, status="cancelled")
 
 

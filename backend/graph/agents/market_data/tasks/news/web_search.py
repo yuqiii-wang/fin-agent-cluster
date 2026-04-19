@@ -13,7 +13,7 @@ from backend.graph.agents.market_data.models.news import ArticleSummary, NewsRaw
 from backend.graph.agents.task_keys import md_web_search
 from backend.graph.utils.news_stats import transform_news_to_stats
 from backend.graph.utils.pdf_parser import fetch_and_parse_pdf, is_pdf_url
-from backend.graph.utils.task_stream import complete_task, fail_task
+from backend.sse_notifications import complete_task, fail_task
 from backend.resource_api.news_api.client import NewsClient
 from backend.resource_api.news_api.models import NewsArticle, NewsQuery, NewsResult
 

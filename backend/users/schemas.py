@@ -9,7 +9,11 @@ from pydantic import BaseModel
 
 
 class QueryRequest(BaseModel):
-    """Payload for submitting a new financial analysis query."""
+    """Payload for submitting a new financial analysis query.
+
+    For performance-test requests set ``query`` to ``DO STREAMING PERFORMANCE
+    TEST NOW``; the perf-test node uses its own internal defaults.
+    """
 
     query: str
 

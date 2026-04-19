@@ -7,7 +7,7 @@ from sqlalchemy import BigInteger, ForeignKey, Index, Integer, String, Text, TIM
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from backend.db.base import Base
+from backend.db.postgres.base import Base
 
 
 class NodeExecution(Base):

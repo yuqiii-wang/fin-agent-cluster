@@ -10,8 +10,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.graph.agents.task_keys import LLM_STREAM_KEYS, STATIC_KEYS
-from backend.graph.utils.task_stream import signal_task_control
+from backend.graph.agents.task_keys import LLM_STREAM_KEYS, PERF_TOKEN_KEYS, STATIC_KEYS
+from backend.sse_notifications import signal_task_control
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -23,10 +23,13 @@ class TaskTypeMeta(BaseModel):
         llm_task_keys: Keys that emit token-stream SSE events (call
             ``stream_text_task`` or ``stream_llm_task``).
         all_task_keys: Every static key that is not an LLM stream key.
+        perf_token_task_keys: Keys that emit ``perf_token`` SSE events for
+            silent metric aggregation (not shown as task output text).
     """
 
     llm_task_keys: list[str]
     all_task_keys: list[str]
+    perf_token_task_keys: list[str]
 
 
 def _build_task_meta() -> TaskTypeMeta:
@@ -36,10 +39,11 @@ def _build_task_meta() -> TaskTypeMeta:
         :class:`TaskTypeMeta` with ``llm_task_keys`` and ``all_task_keys``
         derived from :mod:`backend.graph.agents.task_keys`.
     """
-    non_llm = STATIC_KEYS - LLM_STREAM_KEYS
+    non_llm = STATIC_KEYS - LLM_STREAM_KEYS - PERF_TOKEN_KEYS
     return TaskTypeMeta(
         llm_task_keys=sorted(LLM_STREAM_KEYS),
         all_task_keys=sorted(non_llm),
+        perf_token_task_keys=sorted(PERF_TOKEN_KEYS),
     )
 
 

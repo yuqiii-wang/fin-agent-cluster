@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
     user_id TEXT,
     query TEXT NOT NULL,
     answer TEXT,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
     extra JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS fin_agents.tasks (
     node_name TEXT NOT NULL,
     task_key  TEXT NOT NULL,
     status    TEXT NOT NULL DEFAULT 'pending'
-              CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+              CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
     input     JSONB NOT NULL DEFAULT '{}',
     output    JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

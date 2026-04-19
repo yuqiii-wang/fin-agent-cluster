@@ -24,7 +24,7 @@ from backend.graph.agents.market_data.models.output import MarketDataOutput
 from backend.graph.agents.task_keys import DM_DB_INSERT_REPORT, DM_LLM_INFER
 from backend.graph.state import FinAnalysisState
 from backend.graph.utils.execution_log import finish_node_execution, start_node_execution
-from backend.graph.utils.task_stream import create_task
+from backend.sse_notifications import create_task
 
 logger = logging.getLogger(__name__)
 

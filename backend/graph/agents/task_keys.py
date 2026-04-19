@@ -159,6 +159,26 @@ def md_web_search(label: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# perf_test_streamer keys
+# ---------------------------------------------------------------------------
+
+PERF_TEST_INGEST: str = "perf_test_streamer.mock_ingest"
+"""Ingest phase — MockChatModel bulk-writes tokens to ``fin:perf:{thread_id}``
+Redis stream via the dedicated PerfIngest Celery app.
+
+Created first; completed before the pub task is created.
+"""
+
+PERF_TEST_PUB: str = "perf_test_streamer.mock_pub"
+"""Token publishing phase — reads from ``fin:perf:{thread_id}`` Redis stream
+and emits ``perf_token`` SSE events.
+
+Created after :data:`PERF_TEST_INGEST` completes so the UI shows
+ingest→pub as two distinct tracked steps.
+"""
+
+
+# ---------------------------------------------------------------------------
 # Classification sets
 # ---------------------------------------------------------------------------
 
@@ -170,6 +190,14 @@ LLM_STREAM_KEYS: frozenset[str] = frozenset(
 )
 """Keys whose tasks emit token-stream SSE events via ``stream_text_task`` / ``stream_llm_task``."""
 
+PERF_TOKEN_KEYS: frozenset[str] = frozenset(
+    {
+        PERF_TEST_INGEST,
+        PERF_TEST_PUB,
+    }
+)
+"""Keys whose tasks emit ``perf_token`` SSE events (silent metrics aggregation, not shown in UI output)."""
+
 STATIC_KEYS: frozenset[str] = frozenset(
     {
         QO_COMPREHEND_BASICS,
@@ -178,6 +206,8 @@ STATIC_KEYS: frozenset[str] = frozenset(
         DM_LLM_INFER,
         DM_DB_INSERT_REPORT,
         MD_BOND,
+        PERF_TEST_INGEST,
+        PERF_TEST_PUB,
     }
 )
 """All fully-static (non-dynamic) task keys defined at import time."""

@@ -7,7 +7,7 @@ from sqlalchemy import BigInteger, Boolean, CheckConstraint, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from backend.db.base import Base
+from backend.db.postgres.base import Base
 
 
 class GuestUser(Base):
@@ -60,7 +60,7 @@ class UserQuery(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'running', 'completed', 'failed')",
+            "status IN ('pending', 'running', 'completed', 'failed', 'cancelled')",
             name="ck_user_queries_status",
         ),
         Index("fin_agents_user_queries_user_id_idx", "user_id"),

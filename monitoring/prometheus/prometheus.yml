@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Scrape Kong metrics from the Admin API /metrics endpoint.
+  # The prometheus plugin (global) exposes per-route counters, latency
+  # histograms, bandwidth, and upstream health — all OSS, no Enterprise needed.
+  - job_name: kong
+    static_configs:
+      - targets:
+          - kong:8001   # Kong Admin API — reachable inside the compose network
+    metrics_path: /metrics

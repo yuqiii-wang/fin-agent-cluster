@@ -16,7 +16,7 @@ from backend.graph.agents.query_optimizer.models import (
     QueryOptimizerOutput,
 )
 from backend.graph.agents.task_keys import QO_POPULATE_JSON
-from backend.graph.utils.task_stream import complete_task, create_task, fail_task
+from backend.sse_notifications import complete_task, create_task, fail_task
 
 logger = logging.getLogger(__name__)
 

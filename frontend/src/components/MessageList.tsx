@@ -69,17 +69,31 @@ export function MessageList({ messages, onNodeClick }: Props) {
                     }}
                   >
                     {msg.text}
-                    {msg.status === "running" && (
+                    {msg.streamingCursor && (
                       <span className="blink-cursor" />
                     )}
                   </div>
-                ) : msg.status === "running" ? (
+                ) : msg.status === "running" && msg.nodes && msg.nodes.length > 0 && msg.nodes.every((n) => n.status === "completed") ? (
+                  /* All nodes done — waiting for final summary text */
+                  <Flex
+                    align="center"
+                    gap={8}
+                    style={{
+                      marginTop: 8,
+                      color: token.colorTextSecondary,
+                      fontSize: 13,
+                    }}
+                  >
+                    <LoadingOutlined />
+                    <span>Preparing summary…</span>
+                  </Flex>
+                ) : msg.status === "running" && (!msg.nodes || msg.nodes.length === 0) ? (
                   /* Placeholder while waiting for first node / first token */
                   <Flex
                     align="center"
                     gap={8}
                     style={{
-                      marginTop: msg.nodes?.length ? 8 : 0,
+                      marginTop: 0,
                       color: token.colorTextSecondary,
                       fontSize: 13,
                     }}

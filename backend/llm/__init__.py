@@ -18,5 +18,6 @@ Usage
 """
 
 from backend.llm.factory import get_active_provider, get_llm
+from backend.llm.stream_events import LLMStreamCallbackHandler, publish_completion
 
-__all__ = ["get_active_provider", "get_llm"]
+__all__ = ["get_active_provider", "get_llm", "LLMStreamCallbackHandler", "publish_completion"]

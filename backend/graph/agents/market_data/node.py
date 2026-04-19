@@ -33,7 +33,7 @@ from typing import Optional
 from backend.graph.state import FinAnalysisState
 from backend.graph.utils.execution_log import start_node_execution, finish_node_execution
 from backend.graph.utils.ohlcv import upsert_quant_stats
-from backend.graph.utils.task_stream import create_task, complete_task, fail_task
+from backend.sse_notifications import create_task, complete_task, fail_task
 from backend.graph.agents.task_keys import (
     MD_BOND,
     md_ohlcv,

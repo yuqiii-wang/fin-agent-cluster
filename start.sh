@@ -24,4 +24,3 @@ cd frontend && npm run dev
 cd ..
 
 python run.py
-

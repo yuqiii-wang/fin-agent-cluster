@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     VOLC_SEARCH_REGION: str = "cn-north-1"
     VOLC_SEARCH_SERVICE: str = "search_platform"
 
+    # ── Redis Streams (MQ / buffer layer) ────────────────────────────────────
+    # Soft cap on each stream's entry count (XADD MAXLEN ~).
+    # Increase for higher-throughput environments.
+    STREAM_MAX_LEN: int = 10000
+
     model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

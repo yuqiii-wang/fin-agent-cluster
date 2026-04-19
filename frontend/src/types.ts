@@ -28,6 +28,8 @@ export interface TaskTypeMeta {
   llm_task_keys: string[];
   /** All other static literal task keys found in agent tasks modules. */
   all_task_keys: string[];
+  /** Task keys that emit perf_token SSE events (silent metric aggregation, not shown as task output). */
+  perf_token_task_keys: string[];
 }
 
 /** Metadata for one selectable technical indicator (from GET /api/v1/quant/indicators). */
@@ -101,7 +103,7 @@ export interface QueryResponse {
 /** A node group derived from tasks, keyed by node_name. */
 export interface NodeGroup {
   node_name: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   tasks: TaskInfo[];
 }
 
@@ -146,6 +148,9 @@ export interface ChatMessage {
   text: string;
   thread_id?: string;
   status?: "running" | "completed" | "failed" | "cancelled";
+  streamingCursor?: boolean;
+  /** True when this message was produced by the streaming perf test. */
+  isPerfTest?: boolean;
   nodes?: NodeGroup[];
   report?: StrategyReport;
 }

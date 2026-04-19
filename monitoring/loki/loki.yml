@@ -1,0 +1,41 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Allow ingesting logs older than the default 1h window (useful on first run)
+  reject_old_samples: false
+  reject_old_samples_max_age: 168h   # 7 days
+  # Allow entries up to 10 h in the future — covers the UTC+8 skew from
+  # any log files written before the formatter was fixed to emit UTC.
+  creation_grace_period: 10h
+  # Relax cardinality limits for per-component label fan-out
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+
+ruler:
+  alertmanager_url: http://localhost:9093

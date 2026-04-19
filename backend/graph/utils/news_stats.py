@@ -26,7 +26,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from backend.db import raw_conn
-from backend.db.queries.fin_markets_news import NewsStatsSQL
+from backend.db.postgres.queries.fin_markets_news import NewsStatsSQL
 from backend.graph.prompts.news_enrichment import build_news_enrichment_prompt
 from backend.llm.embeddings import get_embedder
 from backend.resource_api.news_api.models import NewsArticle, NewsResult
@@ -165,7 +165,7 @@ async def _enrich_articles_batch(
         from langchain_core.output_parsers import StrOutputParser  # noqa: PLC0415
 
         from backend.llm import get_llm  # noqa: PLC0415
-        from backend.graph.utils.task_stream import stream_text_task  # noqa: PLC0415
+        from backend.sse_notifications import stream_text_task  # noqa: PLC0415
 
         llm = get_llm(temperature=0.0)
         prompt = build_news_enrichment_prompt()

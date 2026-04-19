@@ -53,7 +53,20 @@ async def lifespan(app: FastAPI):
         logger.info("[startup] Ollama not reachable — using configured LLM_PROVIDER")
     await _check_db_conn()
     await init_db()
+    # Ensure all Redis Stream consumer groups exist before workers start.
+    from backend.streaming.streams import ensure_all_groups
+    await ensure_all_groups()
+    # Start stream consumers: prefer Celery workers; fall back to FastAPI threads.
+    from backend.streaming.fallback import celery_workers_available, start_fallback_workers
+    _fallback_tasks: list = []
+    if await celery_workers_available():
+        logger.info("[startup] Celery workers detected — stream consumers delegated to Celery")
+    else:
+        _fallback_tasks = await start_fallback_workers()
     yield
+    # Cancel fallback tasks on shutdown (no-op if Celery was used)
+    for task in _fallback_tasks:
+        task.cancel()
 
 
 app = FastAPI(title="Financial Agent Cluster", version="1.0.0", lifespan=lifespan)

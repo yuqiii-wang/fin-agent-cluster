@@ -1,77 +1,50 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Drawer, Input, Layout, Space, Spin, Tag, Typography, theme } from "antd";
-import { FileTextOutlined, HistoryOutlined, SearchOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button, Layout, Tag, Typography, theme } from "antd";
+import { FileTextOutlined, HistoryOutlined } from "@ant-design/icons";
 import { ChatInput } from "./components/ChatInput";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { MessageList } from "./components/MessageList";
+import { StreamingPerfTestPanel } from "./components/StreamingPerfTestPanel";
 import { TaskDrawer } from "./components/TaskDrawer";
-import { ReportView } from "./components/ReportView";
-import { submitQuery, openStream, cancelQuery, fetchLatestReport, fetchReportById, fetchTaskMeta, fetchActiveThread, fetchHistory } from "./api";
+import { fetchActiveThread, fetchHistory, fetchTaskMeta } from "./api";
 import { useGuestAuth } from "./hooks/useGuestAuth";
-import type { ChatMessage, NodeGroup, StrategyReport, TaskInfo, TaskTypeMeta, ThreadSummary } from "./types";
+import { useStreamSession } from "./app/useStreamSession";
+import { ReportDrawerPanel } from "./app/ReportDrawerPanel";
+import type { NodeGroup, TaskTypeMeta, ThreadSummary } from "./types";
 
 const { Header, Content, Footer } = Layout;
 const { Title } = Typography;
 
-function buildNodeGroups(tasks: TaskInfo[]): NodeGroup[] {
-  const map = new Map<string, TaskInfo[]>();
-  for (const t of tasks) {
-    if (!map.has(t.node_name)) map.set(t.node_name, []);
-    map.get(t.node_name)!.push(t);
-  }
-  return Array.from(map.entries()).map(([node_name, nodeTasks]) => {
-    let status: NodeGroup["status"] = "pending";
-    if (nodeTasks.some((t) => t.status === "failed")) status = "failed";
-    else if (nodeTasks.some((t) => t.status === "running")) status = "running";
-    else if (nodeTasks.every((t) => t.status === "completed" || t.status === "cancelled")) status = "completed";
-    else if (nodeTasks.length > 0) status = "running";
-    return { node_name, status, tasks: nodeTasks };
-  });
-}
-
 export default function App() {
   const { token } = theme.useToken();
-  const { token: userToken, username, loading: authLoading } = useGuestAuth();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [drawerNodeName, setDrawerNodeName] = useState<string | null>(null);
-  const [tokenStreams, setTokenStreams] = useState<Record<number, string>>({});
-  const [taskProviders, setTaskProviders] = useState<Record<number, string>>({});
-  const [taskMeta, setTaskMeta] = useState<TaskTypeMeta | null>(null);
+  const { token: userToken, username } = useGuestAuth();
 
-  // ── History panel ──
+  const [drawerNodeName, setDrawerNodeName] = useState<string | null>(null);
+  const [taskMeta, setTaskMeta] = useState<TaskTypeMeta | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyItems, setHistoryItems] = useState<ThreadSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [reportDrawerOpen, setReportDrawerOpen] = useState(false);
 
-  // Fetch task type metadata once on mount for OutputViewer routing
+  const {
+    messages,
+    loading,
+    tokenStreams,
+    taskProviders,
+    perfTestThreadId,
+    setPerfTestThreadId,
+    perfTestGridVisible,
+    setPerfTestGridVisible,
+    forcePerfTestComplete,
+    recoverThread,
+    handleSubmit,
+    handleCancel,
+  } = useStreamSession(userToken, setHistoryItems);
+
   useEffect(() => {
     fetchTaskMeta().then(setTaskMeta).catch(console.error);
   }, []);
 
-  // ── Strategy report drawer ──
-  const [reportDrawerOpen, setReportDrawerOpen] = useState(false);
-  const [reportSymbol, setReportSymbol] = useState("");
-  const [reportData, setReportData] = useState<StrategyReport | null>(null);
-  const [reportLoading, setReportLoading] = useState(false);
-  const [reportError, setReportError] = useState<string | null>(null);
-
-  const handleLoadReport = useCallback(async () => {
-    const sym = reportSymbol.trim().toUpperCase();
-    if (!sym) return;
-    setReportLoading(true);
-    setReportError(null);
-    setReportData(null);
-    try {
-      const data = await fetchLatestReport(sym);
-      setReportData(data);
-    } catch (err) {
-      setReportError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setReportLoading(false);
-    }
-  }, [reportSymbol]);
-
-  /** Always reflect the latest task data for the open drawer node. */
   const drawerNode = useMemo<NodeGroup | null>(() => {
     if (!drawerNodeName) return null;
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -81,413 +54,22 @@ export default function App() {
     return null;
   }, [drawerNodeName, messages]);
 
-  const threadToMsgId = useRef<Map<string, string>>(new Map());
-  const cleanupSse = useRef<(() => void) | null>(null);
-  const activeThreadId = useRef<string | null>(null);
-
-  const updateMessage = useCallback(
-    (msgId: string, patch: Partial<ChatMessage>) => {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === msgId ? { ...m, ...patch } : m))
-      );
-    },
-    []
-  );
-
-  /** Append a single token to the message body (no full-replace needed). */
-  const appendMessageText = useCallback((msgId: string, token: string) => {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === msgId ? { ...m, text: m.text + token } : m))
-    );
-  }, []);
-
-  /** Reconstruct a finished or in-progress thread into the message list. */
-  const recoverThread = useCallback(
-    (thread: ThreadSummary) => {
-      cleanupSse.current?.();
-      const asstMsgId = crypto.randomUUID();
-      threadToMsgId.current.set(thread.thread_id, asstMsgId);
-      activeThreadId.current = thread.thread_id;
-
-      setTokenStreams({});
-      setTaskProviders({});
-      setMessages([
-        { id: crypto.randomUUID(), role: "user", text: thread.query },
-        {
-          id: asstMsgId,
-          role: "assistant",
-          text: thread.answer ?? "",
-          status: thread.status as ChatMessage["status"],
-          thread_id: thread.thread_id,
-          nodes: [],
-        },
-      ]);
-
-      if (thread.status === "running" || thread.status === "pending") {
-        setLoading(true);
-        const close = openStream(thread.thread_id, {
-          onStarted: (data) => {
-            const { task_id, node_name, task_key, provider } = data as {
-              task_id: number; node_name: string; task_key: string; provider?: string;
-            };
-            if (provider) setTaskProviders((prev) => ({ ...prev, [task_id]: provider }));
-            const newTask: TaskInfo = {
-              id: task_id,
-              thread_id: thread.thread_id,
-              node_execution_id: null,
-              node_name,
-              task_key,
-              status: "running",
-              input: {},
-              output: {},
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            };
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.id !== asstMsgId) return m;
-                const nodes = m.nodes ?? [];
-                const existing = nodes.find((n) => n.node_name === node_name);
-                if (existing) {
-                  return {
-                    ...m,
-                    nodes: nodes.map((n) =>
-                      n.node_name === node_name
-                        ? { ...n, status: "running" as const, tasks: [...n.tasks, newTask] }
-                        : n
-                    ),
-                  };
-                }
-                return {
-                  ...m,
-                  nodes: [...nodes, { node_name, status: "running" as const, tasks: [newTask] }],
-                };
-              })
-            );
-          },
-          onToken: (data) => {
-            const { task_id, task_key, data: token } = data as {
-              task_id: number; task_key: string; data: string;
-            };
-            if (task_key === "llm_analysis") appendMessageText(asstMsgId, token);
-            setTokenStreams((prev) => ({ ...prev, [task_id]: (prev[task_id] ?? "") + token }));
-          },
-          onCompleted: (data) => {
-            const { task_id, node_name, output } = data as {
-              task_id: number; node_name: string; task_key: string; output: Record<string, unknown>;
-            };
-            const safeOutput = output?._truncated ? undefined : output;
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.id !== asstMsgId || !m.nodes) return m;
-                return {
-                  ...m,
-                  nodes: m.nodes.map((ng) => {
-                    if (ng.node_name !== node_name) return ng;
-                    const tasks = ng.tasks.map((t) =>
-                      t.id === task_id ? { ...t, status: "completed" as const, output: safeOutput ?? t.output } : t
-                    );
-                    const allDone = tasks.every((t) => t.status === "completed" || t.status === "failed");
-                    return { ...ng, tasks, status: (allDone ? "completed" : ng.status) as NodeGroup["status"] };
-                  }),
-                };
-              })
-            );
-          },
-          onFailed: (data) => {
-            const { task_id, node_name, output } = data as {
-              task_id: number; node_name: string; task_key: string; output?: Record<string, unknown>;
-            };
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.id !== asstMsgId || !m.nodes) return m;
-                return {
-                  ...m,
-                  nodes: m.nodes.map((ng) => {
-                    if (ng.node_name !== node_name) return ng;
-                    const tasks = ng.tasks.map((t) =>
-                      t.id === task_id ? { ...t, status: "failed" as const, output: output || t.output } : t
-                    );
-                    return { ...ng, tasks, status: "failed" as NodeGroup["status"] };
-                  }),
-                };
-              })
-            );
-          },
-          onCancelled: (data) => {
-            const { task_id, node_name } = data as {
-              task_id: number; node_name: string; task_key: string;
-            };
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.id !== asstMsgId || !m.nodes) return m;
-                return {
-                  ...m,
-                  nodes: m.nodes.map((ng) => {
-                    if (ng.node_name !== node_name) return ng;
-                    const tasks = ng.tasks.map((t) =>
-                      t.id === task_id ? { ...t, status: "cancelled" as const } : t
-                    );
-                    const allDone = tasks.every((t) => ["completed", "failed", "cancelled"].includes(t.status));
-                    return { ...ng, tasks, status: (allDone ? "completed" : ng.status) as NodeGroup["status"] };
-                  }),
-                };
-              })
-            );
-          },
-          onDone: (data) => {
-            const { status } = data as { status: string };
-            updateMessage(asstMsgId, { status: status as ChatMessage["status"] });
-            activeThreadId.current = null;
-            setLoading(false);
-            close();
-            if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
-          },
-          onClose: () => {
-            updateMessage(asstMsgId, { status: "failed" as ChatMessage["status"] });
-            activeThreadId.current = null;
-            setLoading(false);
-          },
-        });
-        cleanupSse.current = close;
-      }
-
-      setHistoryOpen(false);
-    },
-    [appendMessageText, updateMessage]
-  );
-
-  // After auth resolves, check for an active thread and load history
   useEffect(() => {
     if (!userToken) return;
-
     fetchActiveThread(userToken).then((active) => {
       if (active) recoverThread(active);
     }).catch(console.error);
-
     fetchHistory(userToken).then(setHistoryItems).catch(console.error);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userToken]);
 
-  const handleSubmit = useCallback(
-    async (query: string) => {
-      if (!userToken) return; // guard: auth not ready
-      cleanupSse.current?.();
-      setTokenStreams({});
-      setTaskProviders({});
-
-      const userMsgId = crypto.randomUUID();
-      const asstMsgId = crypto.randomUUID();
-
-      setMessages((prev) => [
-        ...prev,
-        { id: userMsgId, role: "user", text: query },
-        // Start with empty text — content arrives via SSE tokens
-        { id: asstMsgId, role: "assistant", text: "", status: "running", nodes: [] },
-      ]);
-      setLoading(true);
-
-      try {
-        // POST returns immediately (status="running") — graph runs in background
-        const res = await submitQuery(query, userToken!);
-        const threadId = res.thread_id;
-        threadToMsgId.current.set(threadId, asstMsgId);
-        activeThreadId.current = threadId;
-        updateMessage(asstMsgId, { thread_id: threadId });
-
-        const close = openStream(threadId, {
-          onStarted: (data) => {
-            // Inline task insert — no DB round-trip needed
-            const { task_id, node_name, task_key, provider } = data as {
-              task_id: number; node_name: string; task_key: string; provider?: string;
-            };
-            if (provider) {
-              setTaskProviders((prev) => ({ ...prev, [task_id]: provider }));
-            }
-            const newTask: TaskInfo = {
-              id: task_id,
-              thread_id: threadId,
-              node_execution_id: null,
-              node_name,
-              task_key,
-              status: "running",
-              input: {},
-              output: {},
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            };
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.id !== asstMsgId) return m;
-                const nodes = m.nodes ?? [];
-                const existing = nodes.find((n) => n.node_name === node_name);
-                if (existing) {
-                  return {
-                    ...m,
-                    nodes: nodes.map((n) =>
-                      n.node_name === node_name
-                        ? { ...n, status: "running" as const, tasks: [...n.tasks, newTask] }
-                        : n
-                    ),
-                  };
-                }
-                return {
-                  ...m,
-                  nodes: [...nodes, { node_name, status: "running" as const, tasks: [newTask] }],
-                };
-              })
-            );
-          },
-          onToken: (data) => {
-            const { task_id, task_key, data: token } = data as {
-              task_id: number;
-              task_key: string;
-              data: string;
-            };
-            // llm_analysis tokens → stream into both the main chat bubble and the sidebar
-            if (task_key === "llm_analysis") {
-              appendMessageText(asstMsgId, token);
-            }
-            // All tokens → accumulated in sidebar tokenStreams keyed by task_id
-            setTokenStreams((prev) => ({
-              ...prev,
-              [task_id]: (prev[task_id] ?? "") + token,
-            }));
-          },
-          onCompleted: (data) => {
-            // Inline task update from SSE payload — avoids extra DB round-trip
-            const { task_id, node_name, task_key, output } = data as {
-              task_id: number; node_name: string; task_key: string; output: Record<string, unknown>;
-            };
-            // _truncated sentinel means the payload exceeded pg_notify's 8 KB limit;
-            // keep the existing (empty) output in state — TaskDrawer loads it lazily.
-            const safeOutput = output?._truncated ? undefined : output;
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.id !== asstMsgId || !m.nodes) return m;
-                return {
-                  ...m,
-                  nodes: m.nodes.map((ng) => {
-                    if (ng.node_name !== node_name) return ng;
-                    const tasks = ng.tasks.map((t) =>
-                      t.id === task_id
-                        ? { ...t, status: "completed" as const, output: safeOutput ?? t.output }
-                        : t
-                    );
-                    const allDone = tasks.every((t) => t.status === "completed" || t.status === "failed" || t.status === "cancelled");
-                    return {
-                      ...ng,
-                      tasks,
-                      status: (allDone ? "completed" : ng.status) as NodeGroup["status"],
-                    };
-                  }),
-                };
-              })
-            );
-            // When the decision_maker report is persisted, fetch + attach it to the message
-            if (task_key === "db_insert_report" && typeof output?.id === "number") {
-              fetchReportById(output.id as number)
-                .then((report) => updateMessage(asstMsgId, { report }))
-                .catch(console.error);
-            }
-          },
-          onFailed: (data) => {
-            const { task_id, node_name, task_key, output } = data as {
-              task_id: number; node_name: string; task_key: string; output?: Record<string, unknown>;
-            };
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.id !== asstMsgId || !m.nodes) return m;
-                return {
-                  ...m,
-                  nodes: m.nodes.map((ng) => {
-                    if (ng.node_name !== node_name) return ng;
-                    const tasks = ng.tasks.map((t) =>
-                      t.id === task_id
-                        ? { ...t, status: "failed" as const, output: output || t.output }
-                        : t
-                    );
-                    return { ...ng, tasks, status: "failed" as NodeGroup["status"] };
-                  }),
-                };
-              })
-            );
-            void task_key;
-          },
-          onCancelled: (data) => {
-            const { task_id, node_name } = data as {
-              task_id: number; node_name: string; task_key: string;
-            };
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.id !== asstMsgId || !m.nodes) return m;
-                return {
-                  ...m,
-                  nodes: m.nodes.map((ng) => {
-                    if (ng.node_name !== node_name) return ng;
-                    const tasks = ng.tasks.map((t) =>
-                      t.id === task_id ? { ...t, status: "cancelled" as const } : t
-                    );
-                    const allDone = tasks.every((t) => ["completed", "failed", "cancelled"].includes(t.status));
-                    return { ...ng, tasks, status: (allDone ? "completed" : ng.status) as NodeGroup["status"] };
-                  }),
-                };
-              })
-            );
-          },
-          onDone: (data) => {
-            const { status } = data as { status: string };
-            if (status === "cancelled") {
-              updateMessage(asstMsgId, { text: "Query cancelled by user.", status: "cancelled" as ChatMessage["status"] });
-            } else {
-              updateMessage(asstMsgId, { status: status as ChatMessage["status"] });
-            }
-            activeThreadId.current = null;
-            close();
-            setLoading(false);
-            // Refresh history so the completed thread appears
-            if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
-          },
-          onClose: () => {
-            // SSE dropped without a done event (network blip, browser closed).
-            // Backend continues running — on next load recoverThread will reconnect.
-            updateMessage(asstMsgId, { status: "failed" as ChatMessage["status"] });
-            activeThreadId.current = null;
-            setLoading(false);
-          },
-        });
-        cleanupSse.current = close;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        updateMessage(asstMsgId, { text: `Error: ${msg}`, status: "failed" });
-        setLoading(false);
-      }
-    },
-    [updateMessage, appendMessageText, userToken]
-  );
-
-  const handleCancel = useCallback(async () => {
-    const threadId = activeThreadId.current;
-    if (!threadId) return;
-    try {
-      await cancelQuery(threadId);
-    } catch {
-      // If cancel fails (already done), just close SSE and let UI settle
-      cleanupSse.current?.();
-      setLoading(false);
-    }
+  const handlePerfNodeClick = useCallback((n: NodeGroup) => {
+    setDrawerNodeName(n.node_name);
   }, []);
 
   return (
     <>
-      <Layout
-        style={{
-          height: "100vh",
-          background: token.colorBgLayout,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
+      <Layout style={{ height: "100vh", background: token.colorBgLayout, display: "flex", flexDirection: "column" }}>
         <Header
           style={{
             background: token.colorBgContainer,
@@ -501,87 +83,88 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <Button
               icon={<HistoryOutlined />}
+              loading={historyLoading}
               onClick={() => {
-                if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
                 setHistoryOpen(true);
+                if (userToken) {
+                  setHistoryLoading(true);
+                  fetchHistory(userToken)
+                    .then(setHistoryItems)
+                    .catch(console.error)
+                    .finally(() => setHistoryLoading(false));
+                }
               }}
             />
             <Title level={4} style={{ color: token.colorText, margin: 0 }}>
               🤖 Fin Agent
             </Title>
-            {username && (
-              <Tag color="blue" style={{ margin: 0 }}>{username}</Tag>
-            )}
+            {username && <Tag color="blue" style={{ margin: 0 }}>{username}</Tag>}
           </div>
-          <Button
-            icon={<FileTextOutlined />}
-            onClick={() => setReportDrawerOpen(true)}
-          >
+          <Button icon={<FileTextOutlined />} onClick={() => setReportDrawerOpen(true)}>
             Strategy Report
           </Button>
         </Header>
 
         <Content style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <MessageList messages={messages} onNodeClick={(n) => setDrawerNodeName(n.node_name)} />
+          {perfTestThreadId ? (
+            <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+              <div style={{ flex: "0 0 auto" }}>
+                <MessageList messages={messages} onNodeClick={handlePerfNodeClick} />
+              </div>
+
+              <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 16px" }}>
+                <StreamingPerfTestPanel
+                  key={perfTestThreadId}
+                  initialThreadId={perfTestThreadId}
+                  userToken={userToken!}
+                  onComplete={forcePerfTestComplete}
+                />
+              </div>
+            </div>
+          ) : (
+            <MessageList
+              messages={messages}
+              onNodeClick={(n) => {
+                // If this node belongs to a perf test message, re-enter the perf grid first
+                const msg = [...messages].reverse().find((m) => m.nodes?.some((ng) => ng.node_name === n.node_name));
+                if (msg?.isPerfTest && msg.thread_id) {
+                  setPerfTestThreadId(msg.thread_id);
+                }
+                setDrawerNodeName(n.node_name);
+              }}
+            />
+          )}
         </Content>
 
         <Footer style={{ padding: 0, background: "transparent" }}>
-          <ChatInput onSubmit={handleSubmit} onCancel={handleCancel} loading={loading} />
+          {perfTestThreadId ? (
+            <div style={{ padding: "8px 20px", display: "flex", justifyContent: "flex-end" }}>
+              <Button onClick={() => { setPerfTestThreadId(null); setPerfTestGridVisible(true); }}>
+                Exit Performance Test
+              </Button>
+            </div>
+          ) : (
+            <ChatInput onSubmit={handleSubmit} onCancel={handleCancel} loading={loading} />
+          )}
         </Footer>
       </Layout>
 
-      <TaskDrawer node={drawerNode} tokenStreams={tokenStreams} taskProviders={taskProviders} taskMeta={taskMeta} onClose={() => setDrawerNodeName(null)} />
+      <TaskDrawer
+        node={drawerNode}
+        tokenStreams={tokenStreams}
+        taskProviders={taskProviders}
+        taskMeta={taskMeta}
+        onClose={() => setDrawerNodeName(null)}
+      />
 
       <HistoryPanel
         open={historyOpen}
         items={historyItems}
         onClose={() => setHistoryOpen(false)}
-        onRecover={recoverThread}
+        onRecover={(thread) => { recoverThread(thread); setHistoryOpen(false); }}
       />
 
-      {/* ── Strategy Report Drawer ── */}
-      <Drawer
-        title="Strategy Report"
-        placement="right"
-        width="75vw"
-        open={reportDrawerOpen}
-        onClose={() => setReportDrawerOpen(false)}
-        styles={{ body: { padding: "16px 12px", overflowY: "auto" } }}
-      >
-        <Space.Compact style={{ width: "100%", marginBottom: 20 }}>
-          <Input
-            placeholder="Enter ticker symbol, e.g. AAPL"
-            value={reportSymbol}
-            onChange={(e) => setReportSymbol(e.target.value)}
-            onPressEnter={handleLoadReport}
-            style={{ textTransform: "uppercase" }}
-          />
-          <Button
-            type="primary"
-            icon={<SearchOutlined />}
-            onClick={handleLoadReport}
-            loading={reportLoading}
-          >
-            Load
-          </Button>
-        </Space.Compact>
-
-        {reportLoading && (
-          <div style={{ textAlign: "center", padding: "40px 0" }}>
-            <Spin size="large" />
-          </div>
-        )}
-
-        {reportError && !reportLoading && (
-          <div style={{ color: token.colorError, padding: "8px 0" }}>
-            {reportError}
-          </div>
-        )}
-
-        {reportData && !reportLoading && (
-          <ReportView report={reportData} />
-        )}
-      </Drawer>
+      <ReportDrawerPanel open={reportDrawerOpen} onClose={() => setReportDrawerOpen(false)} />
     </>
   );
 }

@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 from backend.config import get_settings
 from backend.db import raw_conn
-from backend.db.queries.fin_markets_quant import QuantRawSQL
+from backend.db.postgres.queries.fin_markets_quant import QuantRawSQL
 from backend.resource_api.exceptions import ProviderNotFoundError
 from backend.resource_api.mem_cache import TimedLRUCache
 from backend.resource_api.quant_api.configs.sources import QUANT_SOURCE_DEFAULTS
@@ -285,6 +285,13 @@ class QuantClient:
                 except Exception:
                     pass  # cache write failure is non-fatal
                 _mem_cache.set(cache_key, result)
+                # Publish to Redis Stream (best-effort, non-blocking)
+                try:
+                    import asyncio as _asyncio
+                    from backend.resource_api.stream_events import publish_market_tick
+                    _asyncio.ensure_future(publish_market_tick(query, result, provider))
+                except Exception:
+                    pass
                 return result
             except ProviderNotFoundError as exc:
                 not_found_attempts.append(exc.as_log_entry())

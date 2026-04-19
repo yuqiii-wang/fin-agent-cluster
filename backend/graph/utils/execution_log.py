@@ -19,7 +19,7 @@ async def start_node_execution(
     Returns:
         The primary-key ``id`` of the new ``NodeExecution`` row.
     """
-    from backend.db.engine import get_session_factory as _get_session_factory
+    from backend.db.postgres.engine import get_session_factory as _get_session_factory
     from backend.graph.models import NodeExecution
 
     factory = _get_session_factory()
@@ -53,7 +53,7 @@ async def finish_node_execution(
     """
     from sqlalchemy import update as sa_update
 
-    from backend.db.engine import get_session_factory as _get_session_factory
+    from backend.db.postgres.engine import get_session_factory as _get_session_factory
     from backend.graph.models import NodeExecution
 
     factory = _get_session_factory()
@@ -79,7 +79,7 @@ async def log_node_execution(
     Kept for backward compatibility with callers that don't need the
     start/finish split.  Returns the new row's primary-key id.
     """
-    from backend.db.engine import get_session_factory as _get_session_factory
+    from backend.db.postgres.engine import get_session_factory as _get_session_factory
     from backend.graph.models import NodeExecution
 
     factory = _get_session_factory()

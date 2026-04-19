@@ -12,7 +12,7 @@ from typing import Optional
 from langchain_core.runnables import Runnable
 
 from backend.graph.agents.task_keys import QO_COMPREHEND_BASICS
-from backend.graph.utils.task_stream import (
+from backend.sse_notifications import (
     TaskCancelledSignal,
     TaskPassSignal,
     cancel_task,

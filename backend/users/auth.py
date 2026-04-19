@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select, update
 
-from backend.db.engine import get_session_factory
+from backend.db.postgres.engine import get_session_factory
 from backend.users.models import GuestUser
 
 

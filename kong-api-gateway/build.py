@@ -64,6 +64,8 @@ _DEFAULTS: dict[str, str] = {
     "OLLAMA_HOST": "host.docker.internal",
     "OLLAMA_PORT": "11434",
     "OLLAMA_MODEL": "qwen3.5-27b",
+    "REDIS_HOST": "redis",
+    "REDIS_PORT": "6379",
 }
 
 # List-valued Kong keys — fragments are concatenated across files.

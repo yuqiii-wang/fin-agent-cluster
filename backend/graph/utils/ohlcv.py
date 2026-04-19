@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from backend.db import raw_conn
-from backend.db.queries.fin_markets_quant import OhlcvStatsSQL
+from backend.db.postgres.queries.fin_markets_quant import OhlcvStatsSQL
 from backend.resource_api.quant_api.models import OHLCVBar
 from backend.resource_api.quant_api.ohlcv_processor import compute_quant_stats
 

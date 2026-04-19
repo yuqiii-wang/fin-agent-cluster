@@ -10,13 +10,13 @@ import logging
 from datetime import date, datetime
 from typing import Any, Optional
 
-from backend.db.connection import raw_conn
-from backend.db.queries.fin_agents import TaskSQL
-from backend.db.queries.fin_markets_quant import OhlcvStatsSQL
-from backend.db.queries.fin_strategies import ReportSQL
+from backend.db.postgres.connection import raw_conn
+from backend.db.postgres.queries.fin_agents import TaskSQL
+from backend.db.postgres.queries.fin_markets_quant import OhlcvStatsSQL
+from backend.db.postgres.queries.fin_strategies import ReportSQL
 from backend.graph.agents.decision_maker.models.output import DecisionReport
 from backend.graph.agents.task_keys import DM_DB_INSERT_REPORT
-from backend.graph.utils.task_stream import complete_task, fail_task
+from backend.sse_notifications import complete_task, fail_task
 
 logger = logging.getLogger(__name__)
 
