@@ -174,7 +174,13 @@ PERF_TEST_PUB: str = "perf_test_streamer.mock_pub"
 and emits ``perf_token`` SSE events.
 
 Created after :data:`PERF_TEST_INGEST` completes so the UI shows
-ingest→pub as two distinct tracked steps.
+ingest→pub as two distinct tracked steps.  Only used when ``pub_mode == "browser"``.
+"""
+
+PERF_TEST_LOCUST: str = "perf_test_streamer.locust_digest"
+"""Locust digest phase — drains ``fin:perf:{thread_id}`` without emitting per-token
+SSE events.  Created after :data:`PERF_TEST_INGEST` when ``pub_mode == "locust"``.
+Emits a single ``locust_complete`` event with aggregate throughput stats.
 """
 
 
@@ -208,6 +214,7 @@ STATIC_KEYS: frozenset[str] = frozenset(
         MD_BOND,
         PERF_TEST_INGEST,
         PERF_TEST_PUB,
+        PERF_TEST_LOCUST,
     }
 )
 """All fully-static (non-dynamic) task keys defined at import time."""

@@ -118,4 +118,109 @@ async def emit_perf_test_complete(
     )
 
 
-__all__ = ["emit_perf_test_metrics", "emit_perf_test_stopped", "emit_perf_test_complete"]
+async def emit_perf_ingest_complete(
+    thread_id: str,
+    ingest_ms: int,
+    produced: int,
+    stop_reason: str,
+) -> None:
+    """Emit a ``perf_ingest_complete`` SSE event when the ingest phase finishes.
+
+    Fired by the perf-test node immediately after the ingest task completes
+    (Phase 1 done, before Phase 2 pub starts).  Carries the authoritative
+    backend ingest duration so the frontend can display an accurate "Ingest
+    Time" column without relying on client-side timestamps.  Does not write
+    to the database — this is an ephemeral control event.
+
+    Args:
+        thread_id:   LangGraph thread UUID.
+        ingest_ms:   Wall-clock milliseconds for the ingest phase.
+        produced:    Number of tokens written to the Redis perf stream.
+        stop_reason: ``"completed"`` or ``"timeout"``.
+    """
+    await pg_notify(
+        thread_id,
+        {
+            "event": "perf_ingest_complete",
+            "ingest_ms": ingest_ms,
+            "produced": produced,
+            "stop_reason": stop_reason,
+        },
+    )
+    logger.info(
+        "[perf_test] ingest_complete emitted ingest_ms=%d produced=%d "
+        "stop_reason=%s thread_id=%s",
+        ingest_ms,
+        produced,
+        stop_reason,
+        thread_id,
+    )
+
+
+async def emit_locust_complete(
+    thread_id: str,
+    consumed: int,
+    tps: float,
+    digest_ms: int,
+) -> None:
+    """Emit a ``locust_complete`` SSE event when the locust digest phase finishes.
+
+    Fired by :func:`~backend.graph.agents.perf_test.tasks.locust_digest.run_locust_digest`
+    after all tokens in the perf stream have been consumed.  This is the single
+    aggregate event that the frontend grid uses to update session stats when
+    ``pub_mode == "locust"`` — no per-token events are emitted in this mode.
+
+    Args:
+        thread_id:  LangGraph thread UUID.
+        consumed:   Number of tokens read from the Redis perf stream.
+        tps:        Digest throughput in tokens per second.
+        digest_ms:  Wall-clock milliseconds for the digest phase.
+    """
+    await pg_notify(
+        thread_id,
+        {
+            "event": "locust_complete",
+            "consumed": consumed,
+            "tps": round(tps, 2),
+            "digest_ms": digest_ms,
+        },
+    )
+    logger.info(
+        "[perf_test] locust_complete emitted consumed=%d tps=%.1f "
+        "digest_ms=%d thread_id=%s",
+        consumed, tps, digest_ms, thread_id,
+    )
+
+
+async def emit_query_status(thread_id: str, phase: str) -> None:
+    """Emit a ``query_status`` SSE event signalling a backend phase transition.
+
+    Fires via pg_notify so the frontend grid can update the status column in
+    real time.  The phase is also stored in Redis by the caller so
+    late-connecting SSE clients recover the current phase via
+    :func:`~backend.api.stream._replay_existing`.
+
+    Phase progression:
+        ``received`` → ``preparing`` → ``ingesting`` → ``sending``
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        phase:     One of ``"received"``, ``"preparing"``, ``"ingesting"``,
+                   ``"sending"``.
+    """
+    await pg_notify(thread_id, {"event": "query_status", "phase": phase})
+    logger.info(
+        "[query_status] emitted phase=%s thread_id=%s",
+        phase,
+        thread_id,
+    )
+
+
+__all__ = [
+    "emit_query_status",
+    "emit_perf_test_metrics",
+    "emit_perf_test_stopped",
+    "emit_perf_test_complete",
+    "emit_perf_ingest_complete",
+    "emit_locust_complete",
+]

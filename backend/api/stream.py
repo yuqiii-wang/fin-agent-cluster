@@ -41,6 +41,7 @@ from sse_starlette.sse import EventSourceResponse
 from backend.api.registry import running_tasks, is_task_active
 from backend.db.postgres.engine import get_session_factory
 from backend.db.postgres.listener import pg_listen
+from backend.db.redis.query_phase import get_query_phase
 from backend.db.redis.subscriber import read_stream
 from backend.graph.models import AgentTask
 from backend.users.models import UserQuery
@@ -125,6 +126,17 @@ async def _replay_existing(thread_id: str) -> tuple[list[dict], str]:
             .order_by(AgentTask.created_at)
         )
         tasks = result.scalars().all()
+
+    # For still-running queries, inject the current backend phase so that
+    # late-connecting SSE clients (who missed the live pg_notify event) can
+    # immediately display the correct status label.
+    if query_status == "running":
+        phase = await get_query_phase(thread_id)
+        if phase:
+            events.append({
+                "event": "query_status",
+                "data": json.dumps({"event": "query_status", "phase": phase}),
+            })
 
     for task in tasks:
         started_payload = json.dumps({
@@ -353,6 +365,13 @@ async def stream_thread(thread_id: str, request: Request) -> EventSourceResponse
                                     task_id, thread_id,
                                 )
 
+                        if event_type == "query_status":
+                            logger.info(
+                                "[stream] query_status_recv phase=%s thread_id=%s",
+                                payload.get("phase"),
+                                thread_id,
+                            )
+
                         # Token events: suppress for tasks the client isn't watching.
                         # perf_token events bypass the watch registry — they are
                         # always forwarded for silent metric aggregation in the frontend.
@@ -388,8 +407,9 @@ async def stream_thread(thread_id: str, request: Request) -> EventSourceResponse
                         if event_type == "done":
                             elapsed = time.perf_counter() - t_connect
                             logger.info(
-                                "[stream] done tokens_forwarded=%d suppressed=%d "
+                                "[stream] done status=%s tokens_forwarded=%d suppressed=%d "
                                 "batches=%d elapsed=%.1fs thread_id=%s",
+                                payload.get("status"),
                                 tokens_forwarded, tokens_suppressed,
                                 batches_processed, elapsed, thread_id,
                             )

@@ -32,19 +32,24 @@ from backend.graph.agents.perf_test.tasks.fanout_to_streams import (
     perf_stream_reader_gen,
     run_ingest,
 )
-from backend.graph.agents.task_keys import PERF_TEST_INGEST, PERF_TEST_PUB
+from backend.graph.agents.perf_test.tasks.locust_digest import run_locust_digest
+from backend.graph.agents.task_keys import PERF_TEST_INGEST, PERF_TEST_LOCUST, PERF_TEST_PUB
 from backend.graph.state import PerfTestState
 from backend.graph.utils.execution_log import finish_node_execution, start_node_execution
+from backend.db.redis.query_phase import set_query_phase
 from backend.sse_notifications import (
     TaskCancelledSignal,
     cancel_task,
     complete_task,
     create_task,
+    emit_locust_complete,
+    emit_perf_ingest_complete,
     emit_perf_test_complete,
     emit_perf_test_stopped,
     fail_task,
     stream_perf_text_task,
 )
+from backend.sse_notifications.perf_test import emit_query_status
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +71,7 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
 
     Args:
         state: PerfTestState with thread_id, total_tokens, timeout_secs, and
-               num_of_requests fields.
+               pub_mode fields.
 
     Returns:
         Partial state update with result summary string.
@@ -74,7 +79,7 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
     thread_id: str = state["thread_id"]
     total_tokens: int = state.get("total_tokens", 100_000)  # type: ignore[attr-defined]
     timeout_secs: int = state.get("timeout_secs", 60)  # type: ignore[attr-defined]
-    num_of_requests: int = state.get("num_of_requests", 1)  # type: ignore[attr-defined]
+    pub_mode: str = state.get("pub_mode", "browser")  # type: ignore[attr-defined]
 
     started_at = datetime.now(timezone.utc)
     t0_node = time.monotonic()
@@ -85,7 +90,6 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
         {
             "total_tokens": total_tokens,
             "timeout_secs": timeout_secs,
-            "num_of_requests": num_of_requests,
         },
         started_at,
     )
@@ -93,6 +97,9 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
     # ------------------------------------------------------------------
     # Phase 1: INGEST
     # ------------------------------------------------------------------
+    await set_query_phase(thread_id, "ingesting")
+    await emit_query_status(thread_id, "ingesting")
+
     ingest_task_id = await create_task(
         thread_id, PERF_TEST_INGEST, node_execution_id, provider="mock"
     )
@@ -132,6 +139,7 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
             "ingest_ms": ingest_ms,
         },
     )
+    await emit_perf_ingest_complete(thread_id, ingest_ms, produced, stop_reason)
     logger.info(
         "[perf_test_streamer] ingest done produced=%d stop_reason=%s "
         "ingest_ms=%d thread_id=%s",
@@ -139,61 +147,106 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
     )
 
     # ------------------------------------------------------------------
-    # Phase 2: PUB  (created after ingest — single task key in UI)
+    # Phase 2: PUB or LOCUST DIGEST  (created after ingest)
     # ------------------------------------------------------------------
-    pub_task_id = await create_task(
-        thread_id, PERF_TEST_PUB, node_execution_id, provider="mock"
-    )
-    logger.info(
-        "[perf_test_streamer] pub start pub_task=%d thread_id=%s",
-        pub_task_id, thread_id,
-    )
+    await set_query_phase(thread_id, "sending")
+    await emit_query_status(thread_id, "sending")
 
-    t_pub = time.monotonic()
-    try:
-        published = await stream_perf_text_task(
+    if pub_mode == "locust":
+        # Locust digest: drain stream without emitting per-token SSE events.
+        locust_task_id = await create_task(
+            thread_id, PERF_TEST_LOCUST, node_execution_id, provider="mock"
+        )
+        logger.info(
+            "[perf_test_streamer] locust_digest start task=%d thread_id=%s",
+            locust_task_id, thread_id,
+        )
+        t_pub = time.monotonic()
+        try:
+            consumed, tps = await run_locust_digest(thread_id)
+        except (asyncio.CancelledError, TaskCancelledSignal):
+            elapsed_ms = int((time.monotonic() - t0_node) * 1000)
+            await cancel_task(thread_id, locust_task_id, PERF_TEST_LOCUST)
+            await finish_node_execution(node_execution_id, {"cancelled": True}, elapsed_ms)
+            raise asyncio.CancelledError()
+        except Exception as exc:
+            elapsed_ms = int((time.monotonic() - t0_node) * 1000)
+            logger.exception("[perf_test_streamer] locust_digest error thread_id=%s: %s", thread_id, exc)
+            await fail_task(thread_id, locust_task_id, PERF_TEST_LOCUST, str(exc))
+            await finish_node_execution(node_execution_id, {"error": str(exc)[:500]}, elapsed_ms)
+            raise
+
+        pub_ms = int((time.monotonic() - t_pub) * 1000)
+        published = consumed
+        await complete_task(
+            thread_id,
+            locust_task_id,
+            PERF_TEST_LOCUST,
+            {
+                "consumed": consumed,
+                "digest_ms": pub_ms,
+                "tps": round(tps, 2),
+            },
+        )
+        if stop_reason == "completed":
+            await emit_perf_test_complete(thread_id, consumed, tps)
+        else:
+            await emit_perf_test_stopped(thread_id, timeout_secs)
+    else:
+        # Browser pub: read stream and emit perf_token SSE events.
+        pub_task_id = await create_task(
+            thread_id, PERF_TEST_PUB, node_execution_id, provider="mock"
+        )
+        logger.info(
+            "[perf_test_streamer] pub start pub_task=%d thread_id=%s",
+            pub_task_id, thread_id,
+        )
+
+        t_pub = time.monotonic()
+        try:
+            published = await stream_perf_text_task(
+                thread_id,
+                pub_task_id,
+                PERF_TEST_PUB,
+                perf_stream_reader_gen(thread_id),
+            )
+        except TaskCancelledSignal:
+            elapsed_ms = int((time.monotonic() - t0_node) * 1000)
+            await cancel_task(thread_id, pub_task_id, PERF_TEST_PUB)
+            await finish_node_execution(node_execution_id, {"cancelled": True}, elapsed_ms)
+            raise asyncio.CancelledError()
+        except asyncio.CancelledError:
+            elapsed_ms = int((time.monotonic() - t0_node) * 1000)
+            await cancel_task(thread_id, pub_task_id, PERF_TEST_PUB)
+            await finish_node_execution(node_execution_id, {"cancelled": True}, elapsed_ms)
+            raise
+        except Exception as exc:
+            elapsed_ms = int((time.monotonic() - t0_node) * 1000)
+            logger.exception("[perf_test_streamer] pub error thread_id=%s: %s", thread_id, exc)
+            await fail_task(thread_id, pub_task_id, PERF_TEST_PUB, str(exc))
+            await finish_node_execution(
+                node_execution_id, {"error": str(exc)[:500]}, elapsed_ms
+            )
+            raise
+
+        pub_ms = int((time.monotonic() - t_pub) * 1000)
+        tps = published / max(pub_ms / 1000, 0.001)
+
+        await complete_task(
             thread_id,
             pub_task_id,
             PERF_TEST_PUB,
-            perf_stream_reader_gen(thread_id),
+            {
+                "total_published": published,
+                "pub_ms": pub_ms,
+                "tps": round(tps, 2),
+            },
         )
-    except TaskCancelledSignal:
-        elapsed_ms = int((time.monotonic() - t0_node) * 1000)
-        await cancel_task(thread_id, pub_task_id, PERF_TEST_PUB)
-        await finish_node_execution(node_execution_id, {"cancelled": True}, elapsed_ms)
-        raise asyncio.CancelledError()
-    except asyncio.CancelledError:
-        elapsed_ms = int((time.monotonic() - t0_node) * 1000)
-        await cancel_task(thread_id, pub_task_id, PERF_TEST_PUB)
-        await finish_node_execution(node_execution_id, {"cancelled": True}, elapsed_ms)
-        raise
-    except Exception as exc:
-        elapsed_ms = int((time.monotonic() - t0_node) * 1000)
-        logger.exception("[perf_test_streamer] pub error thread_id=%s: %s", thread_id, exc)
-        await fail_task(thread_id, pub_task_id, PERF_TEST_PUB, str(exc))
-        await finish_node_execution(
-            node_execution_id, {"error": str(exc)[:500]}, elapsed_ms
-        )
-        raise
 
-    pub_ms = int((time.monotonic() - t_pub) * 1000)
-    tps = published / max(pub_ms / 1000, 0.001)
-
-    await complete_task(
-        thread_id,
-        pub_task_id,
-        PERF_TEST_PUB,
-        {
-            "total_published": published,
-            "pub_ms": pub_ms,
-            "tps": round(tps, 2),
-        },
-    )
-
-    if stop_reason == "completed":
-        await emit_perf_test_complete(thread_id, published, tps)
-    else:
-        await emit_perf_test_stopped(thread_id, timeout_secs)
+        if stop_reason == "completed":
+            await emit_perf_test_complete(thread_id, published, tps)
+        else:
+            await emit_perf_test_stopped(thread_id, timeout_secs)
 
     total_elapsed_ms = int((time.monotonic() - t0_node) * 1000)
     output = PerfTestOutput(

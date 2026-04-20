@@ -15,6 +15,9 @@ Public API
 ``build_graph``                 Constructs the fin-analysis-only graph (legacy; kept for tests).
 ``FinAnalysisState``            TypedDict for the fin-analysis pipeline.
 ``PerfTestState``               TypedDict for the perf-test node.
+
+Note: ``backend.graph.runner`` (Celery task) is intentionally NOT imported here to
+avoid a circular import.  Import it directly: ``from backend.graph.runner import ...``
 """
 
 from backend.graph.builder import (

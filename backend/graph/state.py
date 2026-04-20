@@ -17,7 +17,7 @@ class PerfTestState(TypedDict):
     thread_id: str
     total_tokens: int
     timeout_secs: int
-    num_of_requests: int
+    pub_mode: str  # "browser" | "locust" — determines publish target
     result: str  # summary string written by perf_test_streamer
 
 
@@ -74,5 +74,5 @@ class UnifiedGraphState(TypedDict):
     # --- perf test fields (optional; perf_test_streamer uses its own defaults) ---
     total_tokens: NotRequired[int]
     timeout_secs: NotRequired[int]
-    num_of_requests: NotRequired[int]
+    pub_mode: NotRequired[str]  # "browser" | "locust"
     result: NotRequired[str]

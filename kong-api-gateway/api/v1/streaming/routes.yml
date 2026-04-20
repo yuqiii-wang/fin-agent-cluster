@@ -16,6 +16,11 @@
 #
 #   GET  /api/v1/streaming/info/{stream_key}
 #       Stream metadata (length, internal name).
+#
+# Rate-limiting is overridden at route level for all streaming endpoints.
+# SSE and long-poll are long-lived or repeated GET connections that must not
+# be throttled like short-lived API calls; the global 300/min cap is replaced
+# with a very high limit so high-concurrency perf tests never hit 429s.
 routes:
   - name: route-streaming-sse
     service: fastapi
@@ -27,6 +32,19 @@ routes:
     # SSE requires response buffering disabled so events are flushed immediately
     # instead of being held in Kong's nginx buffer.
     response_buffering: false
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 10000
+          hour: 500000
+          policy: redis
+          limit_by: ip
+          hide_client_headers: false
+          redis:
+            host: "{REDIS_HOST}"
+            port: {REDIS_PORT}
+            database: 1
+            timeout: 2000
 
   - name: route-streaming-poll
     service: fastapi
@@ -38,6 +56,19 @@ routes:
     # Long-poll blocks until Redis Streams data arrives; disable buffering so
     # Kong flushes the response immediately when the upstream connection unblocks.
     response_buffering: false
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 10000
+          hour: 500000
+          policy: redis
+          limit_by: ip
+          hide_client_headers: false
+          redis:
+            host: "{REDIS_HOST}"
+            port: {REDIS_PORT}
+            database: 1
+            timeout: 2000
 
   - name: route-streaming-info
     service: fastapi
@@ -46,3 +77,16 @@ routes:
     methods: [GET, OPTIONS]
     strip_path: false
     protocols: [http, https]
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 10000
+          hour: 500000
+          policy: redis
+          limit_by: ip
+          hide_client_headers: false
+          redis:
+            host: "{REDIS_HOST}"
+            port: {REDIS_PORT}
+            database: 1
+            timeout: 2000

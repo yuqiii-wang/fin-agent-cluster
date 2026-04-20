@@ -76,6 +76,19 @@ routes:
   - http
   - https
   response_buffering: false
+  plugins:
+  - name: rate-limiting
+    config:
+      minute: 10000
+      hour: 500000
+      policy: redis
+      limit_by: ip
+      hide_client_headers: false
+      redis:
+        host: redis
+        port: 6379
+        database: 1
+        timeout: 2000
 - name: route-streaming-sse
   service: fastapi
   paths:
@@ -88,6 +101,19 @@ routes:
   - http
   - https
   response_buffering: false
+  plugins:
+  - name: rate-limiting
+    config:
+      minute: 10000
+      hour: 500000
+      policy: redis
+      limit_by: ip
+      hide_client_headers: false
+      redis:
+        host: redis
+        port: 6379
+        database: 1
+        timeout: 2000
 - name: route-streaming-poll
   service: fastapi
   paths:
@@ -100,6 +126,19 @@ routes:
   - http
   - https
   response_buffering: false
+  plugins:
+  - name: rate-limiting
+    config:
+      minute: 10000
+      hour: 500000
+      policy: redis
+      limit_by: ip
+      hide_client_headers: false
+      redis:
+        host: redis
+        port: 6379
+        database: 1
+        timeout: 2000
 - name: route-streaming-info
   service: fastapi
   paths:
@@ -111,6 +150,19 @@ routes:
   protocols:
   - http
   - https
+  plugins:
+  - name: rate-limiting
+    config:
+      minute: 10000
+      hour: 500000
+      policy: redis
+      limit_by: ip
+      hide_client_headers: false
+      redis:
+        host: redis
+        port: 6379
+        database: 1
+        timeout: 2000
 - name: route-tasks
   service: fastapi
   paths:
@@ -119,6 +171,30 @@ routes:
   protocols:
   - http
   - https
+- name: route-query-submit
+  service: fastapi
+  paths:
+  - /api/v1/users/query$
+  methods:
+  - POST
+  - OPTIONS
+  strip_path: false
+  protocols:
+  - http
+  - https
+  plugins:
+  - name: rate-limiting
+    config:
+      minute: 6000
+      hour: 100000
+      policy: redis
+      limit_by: ip
+      hide_client_headers: false
+      redis:
+        host: redis
+        port: 6379
+        database: 1
+        timeout: 2000
 - name: route-queries
   service: fastapi
   paths:
@@ -139,6 +215,19 @@ routes:
   - http
   - https
   response_buffering: false
+  plugins:
+  - name: rate-limiting
+    config:
+      minute: 6000
+      hour: 100000
+      policy: redis
+      limit_by: ip
+      hide_client_headers: false
+      redis:
+        host: redis
+        port: 6379
+        database: 1
+        timeout: 2000
 - name: route-docs
   service: fastapi
   paths:
@@ -218,3 +307,7 @@ plugins:
     latency_metrics: true
     bandwidth_metrics: true
     upstream_health_metrics: true
+- name: file-log
+  config:
+    path: /logs/kong.log
+    reopen: false

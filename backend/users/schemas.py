@@ -16,6 +16,9 @@ class QueryRequest(BaseModel):
     """
 
     query: str
+    perf_total_tokens: Optional[int] = None
+    perf_timeout_secs: Optional[int] = None
+    perf_pub_mode: Optional[str] = None  # "browser" | "locust"
 
 
 class QueryResponse(BaseModel):

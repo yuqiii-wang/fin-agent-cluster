@@ -67,3 +67,12 @@ plugins:
       latency_metrics: true       # proxy / upstream / kong latency histograms
       bandwidth_metrics: true     # ingress / egress byte counters
       upstream_health_metrics: true  # upstream target health state
+
+  # File log — writes one JSON line per request/response to /logs/kong.log
+  # (volume-mounted from ./logs on the host).  Picked up by Promtail/Loki.
+  # Logs: method, URI, status, latencies (kong/proxy/request ms), client IP,
+  # upstream service/route names, X-Request-ID correlation header.
+  - name: file-log
+    config:
+      path: /logs/kong.log
+      reopen: false

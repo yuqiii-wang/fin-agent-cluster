@@ -52,6 +52,9 @@ SseEventType = Literal[
     "perf_test_metrics",
     "perf_test_stopped",
     "perf_test_complete",
+    "perf_ingest_complete",
+    "locust_complete",
+    "query_status",
 ]
 
 # Terminal task statuses — events that carry these arrive via pg_notify after commit.
@@ -70,6 +73,9 @@ PG_NOTIFY_EVENTS: frozenset[str] = frozenset(
         "perf_test_metrics",
         "perf_test_stopped",
         "perf_test_complete",
+        "perf_ingest_complete",
+        "locust_complete",
+        "query_status",
     }
 )
 

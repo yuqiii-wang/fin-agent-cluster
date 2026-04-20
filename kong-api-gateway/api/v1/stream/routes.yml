@@ -15,3 +15,20 @@ routes:
     # SSE requires response buffering disabled so events are flushed
     # immediately instead of being held in Kong's nginx buffer.
     response_buffering: false
+    # Rate-limiting is meaningless for long-lived SSE connections: each stream
+    # is a single GET request held open for minutes. Override the global
+    # 300/min cap with a very high limit so high-concurrency perf tests
+    # (100+ streams) can open all connections without hitting 429s.
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 10000
+          hour: 500000
+          policy: redis
+          limit_by: ip
+          hide_client_headers: false
+          redis:
+            host: "{REDIS_HOST}"
+            port: {REDIS_PORT}
+            database: 1
+            timeout: 2000

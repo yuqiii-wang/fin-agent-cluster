@@ -17,37 +17,62 @@ graph TD
     B["Kong API Gateway :8888<br/>(DB-less declarative config)"]
     C["FastAPI Upstream<br/>(host.docker.internal:8432)"]
     D["FastAPI<br/>(queries.py / stream.py / auth.py)"]
-    E{"Unified graph\nrouter"}
-    F["perf_test_streamer\n(LangGraph node)"]
-    G["fin-analysis pipeline\n(query_optimizer →\nmarket_data_collector →\ndecision_maker)"]
-    I["Node Tasks<br/>(create_task / stream_text_task<br/>/ complete_task)"]
-    J["Redis Pub/Sub"]
-    K["SSE Generator<br/>(stream.py)"]
-    L["EventSource<br/>(api.ts)"]
-    M["App.tsx<br/>(onStarted/onToken<br/>onCompleted/onDone)"]
-    N["/llm/* Route"]
-    O["LLM Proxy Service"]
-    P["Kong ai-proxy Plugin"]
-    Q["Ollama /v1<br/>(OpenAI-compatible)"]
+    E["Celery broker<br/>(Redis DB 1)<br/>queue: graph:&lt;thread_id&gt;"]
+    F["Celery worker<br/>run_graph_task<br/>asyncio.run(run_graph_async)"]
+    G{"Unified graph\nrouter"}
+    H["perf_test_streamer\n(LangGraph node)"]
+    I["fin-analysis pipeline\n(query_optimizer →\nmarket_data_collector →\ndecision_maker)"]
+    J["Node Tasks<br/>(create_task / stream_text_task<br/>/ complete_task)"]
+    K["Redis Pub/Sub"]
+    L["SSE Generator<br/>(stream.py)"]
+    M["EventSource<br/>(api.ts)"]
+    N["App.tsx<br/>(onStarted/onToken<br/>onCompleted/onDone)"]
+    O["/llm/* Route"]
+    P["LLM Proxy Service"]
+    Q["Kong ai-proxy Plugin"]
+    R["Ollama /v1<br/>(OpenAI-compatible)"]
     
     A -->|POST /api/v1/*| B
     B -->|fastapi-upstream| C
     C --> D
-    D -->|apply_async graph:<thread_id>| E
-    E -->|"DO STREAMING PERFORMANCE TEST NOW"| F
-    E -->|else| G
-    F --> I
-    G --> I
+    D -->|send_task queue:graph:thread_id| E
+    E --> F
+    F --> G
+    G -->|"DO STREAMING PERFORMANCE TEST NOW"| H
+    G -->|else| I
+    H --> J
     I --> J
     J --> K
     K --> L
     L --> M
+    M --> N
     A -->|POST /llm/*| B
-    B -->|ai-proxy plugin| N
-    N --> O
+    B -->|ai-proxy plugin| O
     O --> P
     P --> Q
+    Q --> R
 ```
+
+## Query dispatch — Celery per-thread queue
+
+Every query (normal and perf-test) is dispatched to a **dedicated per-thread Celery queue**:
+
+```
+POST /api/v1/users/query
+  └─ queries.py
+       └─ celery_app.control.add_consumer("graph:<thread_id>")
+       └─ celery_app.send_task(GRAPH_TASK_NAME, queue="graph:<thread_id>")
+            └─ Celery worker: run_graph_task (asyncio.run)   [backend/graph/runner.py]
+                 └─ run_graph_async → graph.ainvoke → LangGraph nodes
+                      └─ LLM chain.astream() → stream_token() XADD tokens:<thread_id>
+```
+
+- **Per-thread isolation**: each query gets `queue="graph:<thread_id>"`. No two queries share a worker slot — a slow LLM call cannot block another query.
+- `run_graph_task` lives in `backend/graph/runner.py` (task name: `backend.graph.runner.run_graph_task`). It wraps `run_graph_async` with `asyncio.run()`.
+- The Celery app (`backend/streaming/celery_app.py`) always includes `backend.graph.runner` so `run_graph_task` is registered on every worker process.
+- Streaming workers (`backend/streaming/workers/`) only handle Redis Stream consumers (graph_events, market_data, signals). Graph execution is **not** a streaming worker.
+- Cancellation: `result.revoke(terminate=True, signal="SIGTERM")` — the `running_tasks` registry maps `thread_id → Celery AsyncResult`.
+- The `_running_tasks` registry in `backend/api/registry.py` holds `AsyncResult` (Celery) only. The `is_task_active()` helper checks `result.ready()` for lazy GC.
 
 ## Kong API Gateway
 
@@ -185,6 +210,68 @@ POST /llm/v1/chat/completions
 `strip_path: true` on route-llm-chat removes the `/llm` prefix before
 forwarding. The `kong_ai` LLM provider in `backend/llm/providers/kong_ai.py`
 targets `http://localhost:8888/llm/v1` in development.
+
+### Kong / nginx as a streaming proxy — design considerations
+
+Kong (and nginx underneath it) were designed for **short-lived HTTP request/response** cycles. They work for streaming, but require explicit configuration:
+
+| Requirement | nginx directive | Kong equivalent |
+|---|---|---|
+| Disable response buffering | `proxy_buffering off` | `response_buffering: false` on the route |
+| Long-lived connections | `proxy_read_timeout 3600` | `read_timeout: 3600000` on the service |
+| SSE `Last-Event-ID` reconnect | allow in CORS headers | `Last-Event-ID` in CORS `headers:` list |
+
+**What Kong is good for with streaming:**
+- Routing, TLS termination, CORS, rate-limiting, correlation IDs — all work correctly on streaming responses because those are applied at connection time, not per-chunk.
+- `response_buffering: false` makes Kong flush chunks immediately — no nginx proxy buffer accumulation.
+
+**What Kong is NOT appropriate for with streaming:**
+- Token-level fanout (one producer → N consumers). Kong is HTTP proxy, not a message broker. For that, use Redis Streams or Kafka directly.
+- Ultra-high connection counts (>10k concurrent SSE). nginx/Kong has connection limits. At that scale, move to a dedicated WebSocket/SSE gateway (e.g., Centrifugo, Pushpin) backed by Redis Pub/Sub.
+
+In this project: Kong handles the browser→FastAPI HTTP layer. The actual token streaming (LLM → Redis Streams → SSE) never goes through Kong — Kong only sees the initial SSE `GET` connection.
+
+### Kong AI Gateway (`ai-proxy` plugin)
+
+Kong AI Gateway is a set of Kong plugins that turn Kong into an LLM-aware reverse proxy:
+
+| Feature | Description |
+|---|---|
+| **ai-proxy** | Routes `POST /llm/v1/chat/completions` to any LLM provider (Ollama, OpenAI, Anthropic, Azure, Gemini, etc.) using an OpenAI-compatible API surface |
+| **API key injection** | Kong holds the upstream API keys; clients send a placeholder (`Bearer ollama`) — keys never leak to the client |
+| **Provider abstraction** | Change the upstream model in `kong.yml` without touching application code |
+| **Semantic caching** | (Enterprise) Cache embeddings of prompts; return cached responses for semantically similar queries |
+| **Token-based rate limiting** | (Enterprise) Rate limit by LLM token count, not just request count |
+| **Load balancing** | Round-robin across multiple LLM upstream targets |
+
+**In this project** (`llm/plugins.yml`):
+```yaml
+- name: ai-proxy
+  service: llm-proxy
+  config:
+    route_type: llm/v1/chat
+    auth:
+      header_name: Authorization
+      header_value: "Bearer ollama"   # placeholder — Ollama doesn't validate keys
+    model:
+      provider: openai                 # Ollama is OpenAI-compatible
+      name: "{OLLAMA_MODEL}"
+      options:
+        upstream_url: "http://{OLLAMA_HOST}:{OLLAMA_PORT}/v1"
+```
+
+The `kong_ai` LLM provider (`LLM_PROVIDER=kong_ai`) routes FastAPI's LangChain calls through Kong instead of directly to Ollama. This adds Kong's observability (Prometheus metrics, correlation IDs) to every LLM inference call. The `ollama` provider bypasses Kong entirely for lower latency in local dev.
+
+**LLM traffic path by provider:**
+
+| Provider | Path | Goes through Kong? |
+|---|---|---|
+| `ollama` | FastAPI → `http://127.0.0.1:11434/v1` directly | No |
+| `kong_ai` | FastAPI → Kong `:8888/llm` → Ollama | Yes |
+| `ark` | FastAPI → `https://ark.cn-beijing.volces.com/api/v3` via `HTTP_PROXY` | No |
+| `gemini` | FastAPI → Google API via `HTTP_PROXY` | No |
+
+Only `kong_ai` routes LLM traffic through Kong — the others connect directly. All four providers stream tokens in-process via `chain.astream()` and write to Redis Streams via `stream_token()`.
 
 ### Adding a new API route
 

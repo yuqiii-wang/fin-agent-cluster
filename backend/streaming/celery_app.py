@@ -60,6 +60,9 @@ def create_celery_app() -> Celery:
         for t in ACTIVE_TOPICS
         if t.task_path
     })
+    # Always include the graph runner so run_graph_task is registered on
+    # every worker process that starts up (required for per-thread queues).
+    _include.append("backend.graph.runner")
 
     app = Celery(
         "fin_streaming",

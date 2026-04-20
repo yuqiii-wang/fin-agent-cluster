@@ -7,6 +7,29 @@
 #   GET  /api/v1/users/query/{thread_id}/tasks      list agent sub-tasks
 #   GET  /api/v1/users/query/{thread_id}/nodes      node-level I/O snapshots
 routes:
+  # Dedicated route for query submission with a relaxed rate limit so
+  # high-concurrency perf-test sessions (50-100+ concurrent streams) can
+  # burst-submit all queries without hitting the global 300/min cap.
+  - name: route-query-submit
+    service: fastapi
+    paths:
+      - /api/v1/users/query$
+    methods: [POST, OPTIONS]
+    strip_path: false
+    protocols: [http, https]
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 6000
+          hour: 100000
+          policy: redis
+          limit_by: ip
+          hide_client_headers: false
+          redis:
+            host: "{REDIS_HOST}"
+            port: {REDIS_PORT}
+            database: 1
+            timeout: 2000
   - name: route-queries
     service: fastapi
     paths:

@@ -54,11 +54,52 @@ START ──(query == PERF_TEST_TRIGGER?)──► perf_test_streamer ──► 
 or perf-test-specific branching. Perf params (`total_tokens`, `timeout_secs`,
 `num_of_requests`) are passed as Celery task kwargs and end up in `UnifiedGraphState`.
 
+## Query-status phase tracking (`query_status` SSE event)
+
+Under bulk simultaneous requests, requests can appear "stuck" because Celery workers
+queue them invisibly.  A `query_status` SSE event is now emitted at every major phase
+transition so the frontend grid shows exactly where each request is:
+
+| Phase | Where emitted | Frontend status label |
+|---|---|---|
+| `received` | `queries.py` after `send_task` | Received (cyan) |
+| `preparing` | `runner.py` start of `run_graph_async` (Celery worker picked up task) | Preparing (geekblue) |
+| `ingesting` | `perf_test/node.py` before ingest phase | Ingesting (purple) |
+| `sending` | `perf_test/node.py` before pub phase | Sending (blue) |
+
+The phase is also stored in Redis (`fin:query:phase:{thread_id}`, TTL 600 s) so
+late-connecting SSE clients recover the current phase via `_replay_existing` in
+`stream.py`, even if they missed the original pg_notify event.
+
+### Cleanup
+- `runner.py`: calls `delete_query_phase` on task completion, cancellation, and error.
+- `queries.py` cancel endpoint: calls `delete_query_phase` on explicit cancel.
+
+### Key files
+| File | Role |
+|---|---|
+| `backend/db/redis/query_phase.py` | `set_query_phase`, `get_query_phase`, `delete_query_phase` |
+| `backend/sse_notifications/perf_test/notifications.py` | `emit_query_status` |
+| `backend/api/queries.py` | emits `received` |
+| `backend/graph/runner.py` | emits `preparing`, deletes phase on finish |
+| `backend/graph/agents/perf_test/node.py` | emits `ingesting` and `sending` |
+| `backend/api/stream.py` | reads Redis phase in `_replay_existing` |
+| `frontend/src/api/stream.ts` | `onQueryStatus` handler in `openStream` |
+| `frontend/src/components/StreamingPerfTestPanel/useBrowserStreamSession.ts` | phase → status mapping |
+| `frontend/src/components/StreamingPerfTestPanel/useLocustStreamSession.ts` | phase → status mapping |
+
+### Frontend status progression (ThreadSession.status)
+```
+connecting → received → preparing → ingesting → sending → completed/failed/stopped/cancelled
+```
+Status is NOT immediately set to "running" when SSE opens. It transitions via `query_status` events.
+First `perf_token` received while still in a pre-sending state auto-advances to `"sending"`.
+
 ## Per-thread Celery queue isolation
 
 Every query (normal and perf-test) gets its own Redis List on the broker:
 - `queries.py`: `celery_app.control.add_consumer("graph:<thread_id>")` → `apply_async(queue="graph:<thread_id>")`
-- `graph_runner.py` `finally`: `celery_app.control.cancel_consumer("graph:<thread_id>")` — cleans up after task ends
+- `graph_runner.py` finally: `celery_app.control.cancel_consumer("graph:<thread_id>")` — cleans up after task ends
 
 This ensures no head-of-line blocking between concurrent perf-test sessions.
 
@@ -206,7 +247,7 @@ The existing `TaskDrawer` displays:
 |---|---|
 | `backend/graph/builder.py` | `PERF_TEST_TRIGGER` constant + `build_unified_graph()` (routes fin vs perf) |
 | `backend/graph/state.py` | `UnifiedGraphState` (merged state for both branches) |
-| `backend/streaming/workers/graph_runner.py` | `run_graph` Celery task (accepts perf kwargs, uses unified graph) |
+| `backend/graph/runner.py` | `run_graph_task` Celery task (accepts perf kwargs, uses unified graph) |
 | `backend/api/queries.py` | Always dispatches via `apply_async` to per-thread queue — no asyncio.Task path |
 | `backend/graph/agents/perf_test/node.py` | Sequential ingest→pub node runner |
 | `backend/graph/agents/perf_test/tasks/fanout_to_streams.py` | `run_ingest()` + `perf_stream_reader_gen()` |
@@ -296,12 +337,6 @@ const tid = setTimeout(() => {
 | **Last Received Token** | Raw text of the most recently received token (updated every second) |
 | Thread ID | Truncated UUID |
 | Action | Per-row Stop button |
-
-## Fanout completion signal
-
-`useSessionManager` tracks a `fanoutStartMsRef` (set on initial mount) and a `fanoutElapsedMs` state.  
-When every session has `closed === true`, the hook sets `fanoutElapsedMs = Date.now() - fanoutStartMsRef.current`.  
-`StreamingPerfTestPanel` renders a **"Fanout Complete (wall-clock)"** `<Statistic>` in green below the main stats row, only when `fanoutElapsedMs !== null`.
 
 ### Dashboard stats row
 | Stat | Description |
@@ -428,12 +463,6 @@ arrives afterwards and is a no-op for already-closed sessions.
 | **Last Received Token** | Raw text of the most recently received token (updated every second) |
 | Thread ID | Truncated UUID |
 | Action | Per-row Stop button |
-
-## Fanout completion signal
-
-`useSessionManager` tracks a `fanoutStartMsRef` (set on initial mount) and a `fanoutElapsedMs` state.  
-When every session has `closed === true`, the hook sets `fanoutElapsedMs = Date.now() - fanoutStartMsRef.current`.  
-`StreamingPerfTestPanel` renders a **"Fanout Complete (wall-clock)"** `<Statistic>` in green below the main stats row, only when `fanoutElapsedMs !== null`.
 
 ## Layout in perf-test mode
 

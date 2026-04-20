@@ -17,7 +17,9 @@ scrape_configs:
           job: fin-trading
           host: backend
           # *.log* matches both the active file (api.log) and rotated files (api.log.1, api.log.2 ...)
-          __path__: /logs/*.log*
+          # Excludes kong.log which has a different JSON schema (handled below).
+          # [^k] = any first character that is NOT 'k', so kong.log is excluded.
+          __path__: /logs/[^k]*.log*
 
     pipeline_stages:
       # Extract the base component name from the filename.
@@ -58,3 +60,46 @@ scrape_configs:
       # Use the parsed message as the final log line
       - output:
           source: message
+
+  # Kong access log — separate job because Kong file-log emits its own JSON
+  # schema (request/response/latencies objects) different from our backend format.
+  - job_name: kong-access-log
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: kong
+          host: kong
+          source: kong
+          __path__: /logs/kong.log*
+
+    pipeline_stages:
+      # Extract key Kong fields for structured querying in Loki/Grafana.
+      - json:
+          expressions:
+            method:      request.method
+            uri:         request.uri
+            status:      response.status
+            client_ip:   client_ip
+            latency_req: latencies.request
+            latency_kong: latencies.kong
+            latency_proxy: latencies.proxy
+            service_name: service.name
+            route_name:  route.name
+            # x-request-id contains dashes; JMESPath requires a quoted identifier
+            # so the '-' is not misread as an arithmetic minus (tNumber token).
+            request_id:  'request.headers."x-request-id"'
+
+      - labels:
+          method:
+          status:
+          service_name:
+
+      - structured_metadata:
+          uri:
+          client_ip:
+          latency_req:
+          latency_kong:
+          latency_proxy:
+          route_name:
+          request_id:

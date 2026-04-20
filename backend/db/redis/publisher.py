@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
 import threading
 import time
 from collections import defaultdict
@@ -25,6 +26,7 @@ from backend.config import get_settings
 logger = logging.getLogger(__name__)
 
 _publish_client: aioredis.Redis | None = None
+_publish_client_loop_id: int | None = None
 
 # Per-thread token aggregation: thread_id -> (count, t_last_log)
 _token_stats: dict[str, tuple[int, float]] = defaultdict(lambda: (0, time.time()))
@@ -55,16 +57,29 @@ def stream_key(thread_id: str) -> str:
 async def _get_publish_client() -> aioredis.Redis:
     """Return (or lazily create) the shared publish Redis client.
 
+    Recreated when the running event loop changes to avoid stale connection
+    pools (e.g. Celery tasks each call ``asyncio.run()`` which closes the
+    previous loop).
+
     Returns:
         A connected ``redis.asyncio.Redis`` instance backed by a connection pool.
     """
-    global _publish_client
+    global _publish_client, _publish_client_loop_id
+    current_id = id(asyncio.get_running_loop())
+    if _publish_client is not None and _publish_client_loop_id != current_id:
+        try:
+            await _publish_client.aclose()
+        except Exception:  # noqa: BLE001
+            pass
+        _publish_client = None
+        _publish_client_loop_id = None
     if _publish_client is None:
         settings = get_settings()
         _publish_client = aioredis.from_url(
             settings.DATABASE_REDIS_URL,
             decode_responses=True,
         )
+        _publish_client_loop_id = current_id
     return _publish_client
 
 

@@ -6,8 +6,10 @@ graph_events  — ``fin:graph:events``   analytics / dead-letter logging
 market_data   — ``fin:market:ticks``   aggregate stats, DB upsert
 signals       — ``fin:signals:trade``  risk checks, strategy logging
 
-Graph execution (``graph_runner``) runs as an ``asyncio.Task`` on the FastAPI
-event loop — not a Celery task.
+Graph execution (``backend.graph.runner.run_graph_task``) is dispatched via
+Celery per-thread queues so each query is isolated; no two queries share a
+worker slot.  The runner lives in ``backend/graph/runner.py`` and is included
+in the Celery worker via ``celery_app.py``.
 """
 
 __all__ = ["graph_events", "market_data", "signals"]

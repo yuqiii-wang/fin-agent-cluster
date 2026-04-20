@@ -15,3 +15,20 @@ routes:
     # LLM streaming responses (OpenAI SSE / ndjson) require buffering off so
     # chunks are forwarded to the client as they arrive from Ollama.
     response_buffering: false
+    # Each LLM inference is a single long-lived streaming POST that can run
+    # for minutes. The global 300/min cap would throttle concurrent inference
+    # calls when multiple fin-analysis queries run in parallel. Override with
+    # a generous limit scoped to the LLM route only.
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 6000
+          hour: 100000
+          policy: redis
+          limit_by: ip
+          hide_client_headers: false
+          redis:
+            host: "{REDIS_HOST}"
+            port: {REDIS_PORT}
+            database: 1
+            timeout: 2000

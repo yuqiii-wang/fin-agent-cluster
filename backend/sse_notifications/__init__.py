@@ -80,7 +80,7 @@ from backend.sse_notifications.agent_tasks import (
     stream_text_task,
 )
 from backend.sse_notifications.node_io import emit_node_input, emit_node_output
-from backend.sse_notifications.perf_test import emit_perf_test_complete, emit_perf_test_metrics, emit_perf_test_stopped
+from backend.sse_notifications.perf_test import emit_perf_ingest_complete, emit_perf_test_complete, emit_perf_test_metrics, emit_perf_test_stopped, emit_locust_complete, emit_query_status
 
 __all__ = [
     # channel
@@ -127,4 +127,7 @@ __all__ = [
     "emit_perf_test_metrics",
     "emit_perf_test_stopped",
     "emit_perf_test_complete",
+    "emit_perf_ingest_complete",
+    "emit_locust_complete",
+    "emit_query_status",
 ]

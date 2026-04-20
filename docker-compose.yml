@@ -63,6 +63,8 @@ services:
     extra_hosts:
       # Resolve host.docker.internal on Linux (automatic on Docker Desktop only).
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./logs:/logs   # bind-mount so file-log plugin writes to host ./logs/kong.log
     depends_on:
       kong-config-import:
         condition: service_completed_successfully
@@ -74,7 +76,7 @@ services:
       KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-P@ssw0rd123}
       KONG_PG_DATABASE: ${KONG_DB:-kong}
       KONG_PROXY_ACCESS_LOG: /dev/stdout
-      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout2
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ERROR_LOG: /dev/stderr
       KONG_ADMIN_LISTEN: "0.0.0.0:8001"
@@ -90,6 +92,16 @@ services:
       KONG_DB_UPDATE_FREQUENCY: "10"
       KONG_LOG_LEVEL: debug
       KONG_NGINX_PROXY_ERROR_LOG: /dev/stderr debug
+      # DNS resolver tuning — prevents 8-second cold-start delays and 1.2-second
+      # TTL-expiry spikes seen in Kong access logs under high concurrency.
+      # 127.0.0.11 is Docker's built-in DNS that resolves host.docker.internal
+      # from /etc/hosts instantly.  Stale-TTL lets Kong keep serving the cached
+      # IP while re-resolving in the background (no thundering-herd blocking).
+      KONG_DNS_RESOLVER: "127.0.0.11"
+      KONG_DNS_STALE_TTL: "3600"       # serve stale entry for up to 1 h during re-resolve
+      KONG_DNS_NOT_FOUND_TTL: "0"      # don't cache NXDOMAIN responses
+      KONG_DNS_ERROR_TTL: "0"          # don't cache resolver errors
+      KONG_DNS_NO_SYNC: "off"          # serial re-resolve avoids concurrent DNS stampede
     ports:
       - "${KONG_PROXY_PORT:-8888}:8000"
       - "${KONG_PROXY_SSL_PORT:-8443}:8443"

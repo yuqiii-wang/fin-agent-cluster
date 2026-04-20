@@ -11,7 +11,6 @@ Mounted at ``/users`` under the parent API router, so full paths are:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import datetime
@@ -22,10 +21,13 @@ from fastapi import APIRouter, Header, HTTPException
 from sqlalchemy import select, update
 
 from backend.db import get_session_factory as _get_session_factory
+from backend.db.redis.query_phase import delete_query_phase, set_query_phase
 from backend.graph.models import AgentTask, NodeExecution
 from backend.api.registry import running_tasks as _running_tasks
 from backend.sse_notifications import emit_done
-from backend.streaming.workers.graph_runner import run_graph_async as _run_graph_async
+from backend.sse_notifications.perf_test import emit_query_status
+from backend.streaming.celery_app import celery_app as _celery_app
+from backend.graph.runner import TASK_NAME as _GRAPH_TASK_NAME
 from backend.users.auth import ensure_guest
 from backend.users.models import UserQuery
 from backend.users.schemas import QueryRequest, QueryResponse, SessionStatus, TaskInfo, NodeExecutionInfo
@@ -76,18 +78,38 @@ async def run_query(
         )
         await session.commit()
 
-    # Dispatch the unified graph as an asyncio task on the FastAPI event loop.
-    # The graph routes internally: perf-test trigger → perf_test_streamer;
-    # all other queries → fin-analysis pipeline.
-    # I/O-bound LLM / DB / Redis calls yield cooperatively so multiple
-    # concurrent requests run in parallel without blocking each other.
-    task = asyncio.create_task(_run_graph_async(thread_id, request.query))
-    _running_tasks[thread_id] = task
+    # Dispatch graph execution to a dedicated per-thread Celery queue.
+    # Using a per-thread queue gives complete isolation: no two queries share
+    # a worker slot, so a slow LLM inference cannot block another query.
+    # The queue is registered on-the-fly then cleaned up by the worker when
+    # the task finishes.
+    queue = f"graph:{thread_id}"
+    _celery_app.control.add_consumer(queue, reply=False)
+    result = _celery_app.send_task(
+        _GRAPH_TASK_NAME,
+        kwargs={
+            "thread_id": thread_id,
+            "query": request.query,
+            "perf_total_tokens": request.perf_total_tokens or 100_000,
+            "perf_timeout_secs": request.perf_timeout_secs or 60,
+            "perf_pub_mode": request.perf_pub_mode or "browser",
+        },
+        queue=queue,
+    )
+    _running_tasks[thread_id] = result
     logger.info(
-        "[queries] query_accepted thread_id=%s query=%r",
+        "[queries] query_accepted thread_id=%s celery_task_id=%s query=%r",
         thread_id,
+        result.id,
         request.query[:80],
     )
+
+    # Store phase in Redis immediately so late-connecting SSE clients can
+    # recover the current state via _replay_existing even if they missed the
+    # pg_notify event.  pg_notify is a best-effort delivery for live clients.
+    await set_query_phase(thread_id, "received")
+    await emit_query_status(thread_id, "received")
+
     return QueryResponse(thread_id=thread_id, status="running")
 
 
@@ -95,9 +117,9 @@ async def run_query(
 async def cancel_query(thread_id: str) -> QueryResponse:
     """Cancel a running query.
 
-    Cancels the asyncio.Task running the graph on the FastAPI event loop.
-    The cancel endpoint also takes ownership of the final DB status update
-    and ``done`` SSE event so the graph runner does not have to.
+    Revokes the Celery task running the graph worker.  The cancel endpoint
+    also takes ownership of the final DB status update and ``done`` SSE event
+    so the graph runner does not have to.
 
     Args:
         thread_id: The UUID returned when the query was submitted.
@@ -105,12 +127,12 @@ async def cancel_query(thread_id: str) -> QueryResponse:
     Returns:
         ``QueryResponse`` with ``status="cancelled"``.
     """
-    task = _running_tasks.pop(thread_id, None)
-    if task is None:
+    result = _running_tasks.pop(thread_id, None)
+    if result is None:
         return QueryResponse(thread_id=thread_id, status="cancelled")
 
-    # Update DB and emit done before cancelling so the graph's CancelledError
-    # handler does not race with this endpoint.
+    # Update DB and emit done before revoking so there is no race between the
+    # worker's completion path and the cancel endpoint.
     factory = _get_session_factory()
     async with factory() as session:
         await session.execute(
@@ -125,10 +147,12 @@ async def cancel_query(thread_id: str) -> QueryResponse:
         )
         await session.commit()
     await emit_done(thread_id, "cancelled", "Query cancelled by user")
+    await delete_query_phase(thread_id)
 
-    if not task.done():
-        task.cancel()
-    logger.info("[queries] task_cancelled thread_id=%s", thread_id)
+    # Revoke the Celery task — terminate=True sends SIGTERM to the worker process.
+    if not result.ready():
+        result.revoke(terminate=True, signal="SIGTERM")
+    logger.info("[queries] task_cancelled thread_id=%s celery_task_id=%s", thread_id, result.id)
 
     return QueryResponse(thread_id=thread_id, status="cancelled")
 

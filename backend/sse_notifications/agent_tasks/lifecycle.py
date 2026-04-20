@@ -140,6 +140,14 @@ async def complete_task(
             "output": output_val,
         },
     )
+    logger.info(
+        "[task_lifecycle] completed task_id=%d key=%s node=%s thread_id=%s output_keys=%s",
+        task_id,
+        task_key,
+        node,
+        thread_id,
+        list(output_val.keys()),
+    )
 
 
 async def fail_task(
@@ -183,6 +191,14 @@ async def fail_task(
             "output": output_val,
         },
     )
+    logger.warning(
+        "[task_lifecycle] failed task_id=%d key=%s node=%s error=%r thread_id=%s",
+        task_id,
+        task_key,
+        node,
+        error[:120],
+        thread_id,
+    )
 
 
 async def cancel_task(
@@ -224,6 +240,13 @@ async def cancel_task(
             "output": output_val,
         },
     )
+    logger.info(
+        "[task_lifecycle] cancelled task_id=%d key=%s node=%s thread_id=%s",
+        task_id,
+        task_key,
+        node,
+        thread_id,
+    )
 
 
 async def emit_done(thread_id: str, status: str, report: str = "") -> None:
@@ -249,6 +272,11 @@ async def emit_done(thread_id: str, status: str, report: str = "") -> None:
         },
     )
     await delete_stream(thread_id)
+    logger.info(
+        "[task_lifecycle] done_emitted status=%s thread_id=%s",
+        status,
+        thread_id,
+    )
 
 
 __all__ = [
