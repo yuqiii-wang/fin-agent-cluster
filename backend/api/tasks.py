@@ -63,13 +63,17 @@ async def get_task_type_meta() -> TaskTypeMeta:
 
 @router.post("/{task_id}/cancel", status_code=200)
 async def cancel_task_action(task_id: int) -> dict:
-    """Signal a running LLM task to cancel and mark it as cancelled.
+    """Signal a running LLM task to cancel its stream and return an empty result.
 
-    Registers a ``"cancel"`` control signal for *task_id*.  The next
-    iteration of the streaming loop in :func:`~backend.graph.utils.task_stream.stream_text_task`
-    or :func:`~backend.graph.utils.task_stream.stream_llm_task` will raise
-    :class:`~backend.graph.utils.task_stream.TaskCancelledSignal`, stop the
-    upstream LLM generator, and persist ``status="cancelled"`` to the DB.
+    Registers a ``"cancel"`` control signal for *task_id*.  The next token
+    iteration in :func:`~backend.sse_notifications.agent_tasks.token_stream.stream_text_task`
+    or :func:`~backend.sse_notifications.agent_tasks.token_stream.stream_llm_task`
+    raises :class:`~backend.sse_notifications.agent_tasks.control.TaskCancelledSignal`,
+    which the node task function catches, marks the DB row as ``cancelled`` with an
+    empty ``output={}`` and returns a default/empty value so the LangGraph node
+    can still gather and proceed.  The parent query thread is **not** cancelled.
+
+    Use ``POST /users/query/{thread_id}/cancel`` to cancel the entire query.
 
     Args:
         task_id: DB primary key of the task to cancel.

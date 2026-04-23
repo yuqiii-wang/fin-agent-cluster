@@ -5,8 +5,9 @@
 
 export { KONG_ORIGIN, BASE } from "./config";
 export { getStoredToken, getStoredUsername, guestLogin, fetchActiveThread, fetchHistory } from "./auth";
-export { submitQuery, fetchTasks, fetchNodeExecutions, cancelQuery } from "./queries";
-export { openStream, watchTask } from "./stream";
+export { submitQuery, submitPerfQuery, fetchTasks, fetchNodeExecutions, cancelQuery, ackQuery } from "./queries";
+export { createAckHandlers } from "./ack";
+export { openStream, watchTask, fetchStreamingStatus } from "./stream";
 export { cancelTask, passTask, fetchTaskMeta } from "./tasks";
 export { fetchLatestReport, fetchReportById } from "./reports";
 export { fetchQuantIndicators, fetchQuantStat, fetchSymbolCurrency } from "./quant";

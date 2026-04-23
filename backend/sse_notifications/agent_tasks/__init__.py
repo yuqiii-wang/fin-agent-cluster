@@ -4,6 +4,10 @@ Re-exports the full public API from the three sub-modules so callers can
 import from either the sub-package or the top-level ``sse_notifications``.
 """
 
+from backend.sse_notifications.agent_tasks.ack import (
+    ack_task_step,
+    increment_task_step_retry,
+)
 from backend.sse_notifications.agent_tasks.control import (
     TaskCancelledSignal,
     TaskControlAction,
@@ -32,6 +36,9 @@ __all__ = [
     "fail_task",
     "cancel_task",
     "emit_done",
+    # ack / retry tracking
+    "ack_task_step",
+    "increment_task_step_retry",
     # control
     "TaskControlAction",
     "TaskCancelledSignal",

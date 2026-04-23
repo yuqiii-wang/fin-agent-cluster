@@ -20,7 +20,6 @@ from langgraph.graph import END, START, StateGraph
 
 from backend.graph.agents.decision_maker import decision_maker
 from backend.graph.agents.market_data import market_data_collector
-from backend.graph.agents.perf_test import perf_test_streamer
 from backend.graph.agents.query_optimizer import query_optimizer
 from backend.graph.state import FinAnalysisState, PerfTestState, UnifiedGraphState
 
@@ -64,6 +63,8 @@ def build_streaming_perf_test_graph() -> StateGraph:
     Returns:
         A :class:`~langgraph.graph.StateGraph` ready to be compiled.
     """
+    from backend.graph.agents.perf_test import perf_test_streamer  # noqa: PLC0415
+
     builder = StateGraph(PerfTestState)
     builder.add_node("perf_test_streamer", perf_test_streamer)
     builder.add_edge(START, "perf_test_streamer")
@@ -81,7 +82,7 @@ def _route_query(state: UnifiedGraphState) -> str:
         ``"perf_test_streamer"`` for the perf-test trigger; otherwise
         ``"query_optimizer"`` to start the fin-analysis pipeline.
     """
-    if state.get("query", "").strip() == PERF_TEST_TRIGGER:
+    if state.get("query", "").strip().startswith(PERF_TEST_TRIGGER):
         return "perf_test_streamer"
     return "query_optimizer"
 
@@ -104,6 +105,8 @@ def build_unified_graph() -> StateGraph:
         A :class:`~langgraph.graph.StateGraph` ready to be compiled with a
         checkpointer and served via the Celery ``run_graph`` worker.
     """
+    from backend.graph.agents.perf_test import perf_test_streamer  # noqa: PLC0415
+
     builder = StateGraph(UnifiedGraphState)
 
     builder.add_node("query_optimizer", query_optimizer)

@@ -17,7 +17,8 @@ class PerfTestState(TypedDict):
     thread_id: str
     total_tokens: int
     timeout_secs: int
-    pub_mode: str  # "browser" | "locust" — determines publish target
+    test_mode: str   # "throughput" | "concurrency"
+    token_per_sec: int  # concurrency mode: target ingest rate
     result: str  # summary string written by perf_test_streamer
 
 
@@ -74,5 +75,6 @@ class UnifiedGraphState(TypedDict):
     # --- perf test fields (optional; perf_test_streamer uses its own defaults) ---
     total_tokens: NotRequired[int]
     timeout_secs: NotRequired[int]
-    pub_mode: NotRequired[str]  # "browser" | "locust"
+    test_mode: NotRequired[str]   # "throughput" | "concurrency"
+    token_per_sec: NotRequired[int]  # concurrency mode: target ingest rate
     result: NotRequired[str]

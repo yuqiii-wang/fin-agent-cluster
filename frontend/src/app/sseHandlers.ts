@@ -6,12 +6,19 @@ interface SseHandlerParams {
   asstMsgId: string;
   threadId: string;
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
-  setTokenStreams: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  /** Buffer a token delta for a task; caller flushes to state on a schedule. */
+  pushTokenStream: (taskId: number, token: string) => void;
   setTaskProviders: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   appendMessageText: (msgId: string, token: string) => void;
   updateMessage: (msgId: string, patch: Partial<ChatMessage>) => void;
   onDone: (status: string) => void;
   onClose: () => void;
+  /**
+   * Called when the SSE connection itself fails before any task events are received
+   * (e.g. TLS certificate not accepted).  Receives the human-readable error message.
+   * When omitted, falls back to calling `onClose`.
+   */
+  onConnectionFailed?: (message: string) => void;
   /** When true, fetches and attaches a StrategyReport on db_insert_report completion. */
   withReport?: boolean;
 }
@@ -24,12 +31,13 @@ export function buildSseHandlers({
   asstMsgId,
   threadId,
   setMessages,
-  setTokenStreams,
+  pushTokenStream,
   setTaskProviders,
   appendMessageText,
   updateMessage,
   onDone,
   onClose,
+  onConnectionFailed,
   withReport = false,
 }: SseHandlerParams) {
   return {
@@ -75,7 +83,7 @@ export function buildSseHandlers({
         task_id: number; task_key: string; data: string;
       };
       if (task_key === "llm_analysis") appendMessageText(asstMsgId, token);
-      setTokenStreams((prev) => ({ ...prev, [task_id]: (prev[task_id] ?? "") + token }));
+      pushTokenStream(task_id, token);
     },
 
     onCompleted: (data: unknown) => {
@@ -111,9 +119,19 @@ export function buildSseHandlers({
     },
 
     onFailed: (data: unknown) => {
-      const { task_id, node_name, output } = data as {
-        task_id: number; node_name: string; output?: Record<string, unknown>;
+      const { task_id, node_name, output, message } = data as {
+        task_id?: number; node_name?: string; output?: Record<string, unknown>; message?: string;
       };
+      // Connection-level failure (e.g. TLS cert not accepted) — no task_id present.
+      if (task_id == null) {
+        const errMsg = message ?? "SSE connection failed";
+        if (onConnectionFailed) {
+          onConnectionFailed(errMsg);
+        } else {
+          onClose();
+        }
+        return;
+      }
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== asstMsgId || !m.nodes) return m;

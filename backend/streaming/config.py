@@ -61,6 +61,18 @@ CELERY_WORKER_CONFIG: dict = {
 
 
 # ---------------------------------------------------------------------------
+# Celery queue names
+# ---------------------------------------------------------------------------
+
+#: Low-latency queue for SSE-driving streams (GRAPH_EVENTS).
+QUEUE_CRITICAL: str = "stream:critical"
+#: Default queue for regular data-ingestion streams.
+QUEUE_DEFAULT: str = "stream:default"
+#: Background queue for CPU/IO-heavy compute tasks.
+QUEUE_COMPUTE: str = "stream:compute"
+
+
+# ---------------------------------------------------------------------------
 # Per-topic configuration
 # ---------------------------------------------------------------------------
 
@@ -89,6 +101,7 @@ class StreamTopicConfig:
                            register the beat entry.  ``None`` means no Celery
                            worker is implemented yet — the topic is omitted
                            from the beat schedule and worker include list.
+        queue:             Celery queue name this task is dispatched to.
     """
 
     stream_key: str
@@ -101,6 +114,7 @@ class StreamTopicConfig:
     max_retries: int = 3
     retry_delay: float = 5.0
     task_path: str | None = None
+    queue: str = QUEUE_DEFAULT
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +130,7 @@ GRAPH_EVENTS = StreamTopicConfig(
     beat_interval=2.0,       # low latency — drives SSE UI events
     fallback_interval=2.0,
     task_path="backend.streaming.workers.graph_events.consume_batch",
+    queue=QUEUE_CRITICAL,
 )
 
 #: OHLCV market data published by resource_api.quant_api.
@@ -128,6 +143,7 @@ MARKET_TICKS = StreamTopicConfig(
     fallback_interval=5.0,
     retry_delay=10.0,
     task_path="backend.streaming.workers.market_data.consume_batch",
+    queue=QUEUE_DEFAULT,
 )
 
 #: Trade recommendations produced by the decision_maker agent.
@@ -140,6 +156,7 @@ TRADE_SIGNALS = StreamTopicConfig(
     fallback_interval=5.0,
     retry_delay=10.0,
     task_path="backend.streaming.workers.signals.consume_batch",
+    queue=QUEUE_DEFAULT,
 )
 
 #: News articles fetched by resource_api.news_api (no worker yet).
@@ -162,6 +179,22 @@ LLM_COMPLETIONS = StreamTopicConfig(
     fallback_interval=10.0,
 )
 
+#: Quant stats compute jobs — OHLCV bars published by market_data_collector;
+#: worker runs pandas-ta indicators + DB upsert in a Celery process.
+QUANT_COMPUTE = StreamTopicConfig(
+    stream_key="fin:market:quant_compute",
+    consumer_group="celery-quant-compute",
+    consumer_name="worker-quant-compute",
+    human_key="quant-compute",
+    beat_interval=5.0,
+    fallback_interval=5.0,
+    batch_size=20,
+    max_retries=3,
+    retry_delay=10.0,
+    task_path="backend.streaming.workers.quant_compute.consume_batch",
+    queue=QUEUE_COMPUTE,
+)
+
 # ---------------------------------------------------------------------------
 # Topic registry
 # ---------------------------------------------------------------------------
@@ -173,6 +206,7 @@ ALL_TOPICS: tuple[StreamTopicConfig, ...] = (
     TRADE_SIGNALS,
     NEWS_ENRICHED,
     LLM_COMPLETIONS,
+    QUANT_COMPUTE,
 )
 
 #: Topics that have a registered Celery worker (``task_path`` is set).
@@ -185,12 +219,16 @@ __all__ = [
     "CELERY_BROKER_DB",
     "CELERY_BACKEND_DB",
     "CELERY_WORKER_CONFIG",
+    "QUEUE_CRITICAL",
+    "QUEUE_DEFAULT",
+    "QUEUE_COMPUTE",
     "StreamTopicConfig",
     "GRAPH_EVENTS",
     "MARKET_TICKS",
     "TRADE_SIGNALS",
     "NEWS_ENRICHED",
     "LLM_COMPLETIONS",
+    "QUANT_COMPUTE",
     "ALL_TOPICS",
     "ACTIVE_TOPICS",
 ]

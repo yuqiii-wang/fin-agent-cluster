@@ -1,10 +1,18 @@
-"""perf_test tasks — ingest driver, pub-side stream reader, and locust digest consumer."""
+"""perf_test tasks — split ingest, rate-limited ingest, and adaptive reader."""
 
 from backend.graph.agents.perf_test.tasks.fanout_to_streams import (
-    perf_stream_reader_gen,
-    run_ingest,
+    _ConcurrentProgress,
+    dynamic_reader_gen,
+    run_ingest_first_half,
+    run_ingest_second_half,
+    run_rate_limited_ingest,
 )
-from backend.graph.agents.perf_test.tasks.locust_digest import run_locust_digest
 
-__all__ = ["run_ingest", "perf_stream_reader_gen", "run_locust_digest"]
+__all__ = [
+    "_ConcurrentProgress",
+    "run_ingest_first_half",
+    "run_ingest_second_half",
+    "run_rate_limited_ingest",
+    "dynamic_reader_gen",
+]
 

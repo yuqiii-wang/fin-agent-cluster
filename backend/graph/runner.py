@@ -1,28 +1,30 @@
-"""Graph runner — Celery task and async execution of the unified LangGraph workflow.
+"""Graph runner — async execution of the unified LangGraph workflow in the FastAPI event loop.
 
 Architecture
 ------------
-Each query is dispatched to a **dedicated per-thread Celery queue** so that
-no two queries share a worker slot and there is no head-of-line blocking:
+Each query runs as an ``asyncio.Task`` inside the FastAPI uvicorn event loop.
+All LLM calls, DB I/O, and Redis XADD are I/O-bound coroutines, so cooperative
+multitasking provides real parallelism between concurrent queries without any
+subprocess or thread pool:
 
     POST /api/v1/users/query
       └─ queries.py
-           └─ celery_app.control.add_consumer("graph:<thread_id>")
-           └─ run_graph_task.apply_async(queue="graph:<thread_id>")
-                └─ Celery worker (isolated per-thread queue)
-                     └─ asyncio.run(run_graph_async(...))
-                          └─ graph.ainvoke(...)
-                               └─ LangGraph nodes
-                                    └─ LLM chain.astream()  →  stream_token() XADD
-                                         └─ Redis Stream tokens:<thread_id>
-                                              └─ SSE generator XREAD BLOCK (independent)
+           └─ asyncio.create_task(run_graph_async(...))   [FastAPI event loop]
+                └─ graph.ainvoke(...)
+                     └─ LangGraph nodes
+                          └─ LLM chain.astream()  →  stream_token() XADD
+                               └─ Redis Stream tokens:<thread_id>
+                                    └─ SSE generator XREAD BLOCK (independent)
+
+Celery workers handle **only** the Redis Streams batch consumers
+(``backend.streaming.workers.*``).  Graph execution is NOT a Celery task.
 
 Token flow
 ----------
 LangGraph nodes write tokens to ``tokens:<thread_id>`` via ``stream_token()``
-(XADD) directly inside the asyncio coroutine running in the Celery worker.
-The SSE endpoint reads them independently via ``XREAD BLOCK`` — no coupling
-between this runner and the SSE path.
+(XADD) directly inside the asyncio coroutine.  The SSE endpoint reads them
+independently via ``XREAD BLOCK`` — no coupling between this runner and the
+SSE path.
 
 Lifecycle events
 ----------------
@@ -33,9 +35,9 @@ LangGraph agent utilities (``create_task / complete_task / fail_task``).  The
 Cancellation
 ------------
 Cancel requests come from ``POST /api/v1/users/query/{thread_id}/cancel``.
-The cancel endpoint calls ``celery_app.control.revoke(task_id, terminate=True)``
-on the Celery result stored in ``running_tasks``.  The cancel endpoint also
-updates the DB and emits ``done`` so the runner does not have to handle those.
+The cancel endpoint calls ``task.cancel()`` on the ``asyncio.Task`` stored in
+``running_tasks``.  The cancel endpoint also updates the DB and emits ``done``
+so the runner does not have to handle those.
 """
 
 from __future__ import annotations
@@ -44,77 +46,18 @@ import asyncio
 import logging
 from datetime import datetime
 
-from celery.utils.log import get_task_logger
 from sqlalchemy import select, update
 
+from backend.api.registry import running_tasks as _running_tasks
 from backend.db import checkpointer, get_session_factory as _get_session_factory
-from backend.db.redis.query_phase import delete_query_phase, set_query_phase
+from backend.db.redis.query_phase import set_query_phase
+from backend.db.redis.lock_manager.session_cleanup import cleanup_thread_session
 from backend.graph.builder import build_unified_graph
 from backend.sse_notifications import emit_done
-from backend.sse_notifications.perf_test import emit_query_status
-from backend.streaming.celery_app import celery_app
+from backend.sse_notifications.query_lifecycle import emit_query_status
 from backend.users.models import UserQuery
 
 logger = logging.getLogger(__name__)
-task_logger = get_task_logger(__name__)
-
-# ---------------------------------------------------------------------------
-# Celery task — one per query, isolated per-thread queue
-# ---------------------------------------------------------------------------
-
-#: Fully-qualified task name used by both the decorator and ``send_task``.
-TASK_NAME = "backend.graph.runner.run_graph_task"
-
-
-@celery_app.task(
-    name=TASK_NAME,
-    bind=True,
-    max_retries=0,      # LLM inference is not idempotent — never auto-retry
-    ignore_result=False,
-    acks_late=True,     # ACK only after completion so a worker crash re-queues the task
-)
-def run_graph_task(
-    self,  # type: ignore[misc]
-    thread_id: str,
-    query: str,
-    perf_total_tokens: int = 100_000,
-    perf_timeout_secs: int = 60,
-    perf_pub_mode: str = "browser",
-) -> None:
-    """Celery task: run the unified LangGraph workflow for one query.
-
-    Wraps :func:`run_graph_async` in ``asyncio.run()`` so the full async
-    LangGraph graph — including LLM ``astream()`` calls — executes inside
-    a Celery worker process.  Each invocation creates and tears down its own
-    event loop, giving complete isolation between concurrent queries.
-
-    Args:
-        thread_id:         LangGraph UUID already persisted to the DB.
-        query:             Raw user query string.
-        perf_total_tokens: Tokens per stream (perf-test only).
-        perf_timeout_secs: Hard deadline in seconds (perf-test only).
-        perf_pub_mode:     ``"browser"`` or ``"locust"`` (perf-test only).
-    """
-    task_logger.info(
-        "[graph_runner] task_start thread_id=%s query=%r",
-        thread_id,
-        query[:80],
-    )
-    asyncio.run(
-        run_graph_async(
-            thread_id,
-            query,
-            perf_total_tokens=perf_total_tokens,
-            perf_timeout_secs=perf_timeout_secs,
-            perf_pub_mode=perf_pub_mode,
-        )
-    )
-    task_logger.info("[graph_runner] task_done thread_id=%s", thread_id)
-
-
-# ---------------------------------------------------------------------------
-# Async implementation
-# ---------------------------------------------------------------------------
 
 
 async def run_graph_async(
@@ -122,13 +65,13 @@ async def run_graph_async(
     query: str,
     perf_total_tokens: int = 100_000,
     perf_timeout_secs: int = 60,
-    perf_pub_mode: str = "browser",
+    perf_test_mode: str = "throughput",
+    perf_token_per_sec: int = 500,
 ) -> None:
-    """Run the unified LangGraph workflow for one query.
+    """Run the unified LangGraph workflow for one query inside the FastAPI event loop.
 
     Routes to the fin-analysis pipeline or the perf-test node based on
-    ``query``.  Called by :func:`run_graph_task` inside the Celery worker's
-    ``asyncio.run()`` context.
+    ``query``.  Called via ``asyncio.create_task()`` from the query endpoint.
 
     Lifecycle:
         1. Build + compile the unified graph with a LangGraph checkpointer.
@@ -141,16 +84,15 @@ async def run_graph_async(
         thread_id:           LangGraph UUID already persisted to the DB.
         query:               Raw user query string.  If it equals ``PERF_TEST_TRIGGER``
                              the perf-test branch runs.
-        perf_total_tokens:   Tokens per stream (perf-test only).
-        perf_timeout_secs:   Hard deadline in seconds (perf-test only).
-        perf_pub_mode:       ``"browser"`` — emit perf_token SSE events;
-                             ``"locust"`` — write to locust digest Redis key instead.
+        perf_total_tokens:   Tokens per stream (throughput mode only).
+        perf_timeout_secs:   Hard deadline in seconds (both modes).
+        perf_test_mode:      ``"throughput"`` or ``"concurrency"``.
+        perf_token_per_sec:  Target ingest rate per second (concurrency mode only).
     """
     factory = _get_session_factory()
     try:
-        # Transition phase from "received" to "preparing" as soon as the
-        # Celery worker picks up the task.  This signals to the frontend that
-        # the request was not lost in the queue.
+        # Transition phase to "preparing" as soon as the task is scheduled.
+        # This signals to the frontend that the request is being processed.
         await set_query_phase(thread_id, "preparing")
         await emit_query_status(thread_id, "preparing")
 
@@ -182,7 +124,8 @@ async def run_graph_async(
                 # Perf-test fields — used only when query == PERF_TEST_TRIGGER.
                 "total_tokens": perf_total_tokens,
                 "timeout_secs": perf_timeout_secs,
-                "pub_mode": perf_pub_mode,
+                "test_mode": perf_test_mode,
+                "token_per_sec": perf_token_per_sec,
             }
             final_state = await graph.ainvoke(initial_state, config)
             # Perf-test branch stores its summary in ``result``; fin-analysis
@@ -193,31 +136,42 @@ async def run_graph_async(
                 or final_state.get("market_data")
                 or "No report generated"
             )
+            # Remove from running_tasks SYNCHRONOUSLY before any further awaits
+            # (including the checkpointer __aexit__).  This closes the race
+            # window where the frontend safety-timeout fires cancel_query after
+            # natural completion, which would fire a second emit_done and bulk-
+            # cancel already-completed AgentTask rows.
+            _running_tasks.pop(thread_id, None)
 
-        # Guard: only update if the cancel endpoint has not already closed this query.
+        # Atomically claim ownership of the done transition.  Using WHERE
+        # status='running' means only one writer (runner or cancel endpoint)
+        # can commit and emit done — whoever commits second touches 0 rows
+        # and skips emit_done entirely, preventing duplicate done events.
         async with factory() as session:
-            uq = await session.scalar(
-                select(UserQuery).where(UserQuery.thread_id == thread_id)
-            )
-            if uq is not None and uq.status not in ("cancelled", "failed", "completed"):
-                await session.execute(
-                    update(UserQuery)
-                    .where(UserQuery.thread_id == thread_id)
-                    .values(
-                        status="completed",
-                        answer=report,
-                        completed_at=datetime.utcnow(),
-                    )
+            result = await session.execute(
+                update(UserQuery)
+                .where(
+                    UserQuery.thread_id == thread_id,
+                    UserQuery.status == "running",
                 )
-                await session.commit()
-                await emit_done(thread_id, "completed", report)
+                .values(
+                    status="completed",
+                    answer=report,
+                    completed_at=datetime.utcnow(),
+                )
+                .returning(UserQuery.thread_id)
+            )
+            claimed = result.fetchone() is not None
+            await session.commit()
+        if claimed:
+            await emit_done(thread_id, "completed", report)
 
-        await delete_query_phase(thread_id)
+        await cleanup_thread_session(thread_id)
         logger.info("[graph_runner] completed thread_id=%s", thread_id)
 
     except asyncio.CancelledError:
         # Cancel endpoint has already updated DB + emitted done; nothing to do.
-        await delete_query_phase(thread_id)
+        await cleanup_thread_session(thread_id)
         logger.info("[graph_runner] cancelled thread_id=%s", thread_id)
         raise
 
@@ -247,4 +201,4 @@ async def run_graph_async(
                 thread_id,
                 cleanup_exc,
             )
-        await delete_query_phase(thread_id)
+        await cleanup_thread_session(thread_id)

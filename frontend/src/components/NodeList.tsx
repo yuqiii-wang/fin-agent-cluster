@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Flex, Spin, Steps, Tooltip, Typography } from "antd";
-import { StopOutlined } from "@ant-design/icons";
-import type { NodeExecutionInfo, NodeGroup } from "../types";
+import { LoadingOutlined, SyncOutlined, StopOutlined } from "@ant-design/icons";
+import type { NodeExecutionInfo, NodeGroup, TaskInfo } from "../types";
 import { fetchNodeExecutions } from "../api";
 import { JsonViewer } from "./JsonViewer";
 import { NODE_LABELS } from "./nodeLabels";
@@ -37,15 +37,43 @@ interface NodeInlinePanelProps {
   execution: NodeExecutionInfo | null | "loading";
   /** Status of the selected node — used to show a waiting spinner for non-completed nodes. */
   nodeStatus?: NodeGroup["status"];
+  /** Accumulated streaming token text for the running task in this node, if any. */
+  streamingText?: string;
 }
 
 /** Inline input/output panel for a node, showing the actual state data. */
-function NodeInlinePanel({ execution, nodeStatus }: NodeInlinePanelProps) {
+function NodeInlinePanel({ execution, nodeStatus, streamingText }: NodeInlinePanelProps) {
   if (execution === "loading") {
     return <Flex justify="center" style={{ marginTop: 8 }}><Spin size="small" /></Flex>;
   }
 
   if (!execution && (nodeStatus === "pending" || nodeStatus === "running")) {
+    if (streamingText) {
+      return (
+        <Flex vertical gap={4} style={{ marginTop: 8 }}>
+          <Flex align="center" gap={6}>
+            <SyncOutlined spin style={{ fontSize: 10, color: "#1677ff" }} />
+            <Text type="secondary" style={{ fontSize: 11, color: "#1677ff" }}>Streaming…</Text>
+          </Flex>
+          <div
+            style={{
+              fontFamily: "monospace",
+              fontSize: 12,
+              maxHeight: 200,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              background: "rgba(0,0,0,0.02)",
+              padding: "6px 8px",
+              borderRadius: 4,
+            }}
+          >
+            {streamingText}
+            <span style={{ opacity: 0.4 }}>▋</span>
+          </div>
+        </Flex>
+      );
+    }
     return (
       <Flex align="center" gap={6} style={{ marginTop: 8 }}>
         <Spin size="small" />
@@ -83,7 +111,7 @@ function NodeInlinePanel({ execution, nodeStatus }: NodeInlinePanelProps) {
 }
 
 /** Visual pipeline using antd Steps — click a node to show its input/output below. */
-export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStreams = {} }: Props) {
+export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, tokenStreams = {} }: Props) {
   const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
   const [executions, setExecutions] = useState<Record<string, NodeExecutionInfo | null>>({});
   const [loading, setLoading] = useState(false);
@@ -121,7 +149,7 @@ export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStr
       .finally(() => setLoading(false));
   }, [nodes, selectedNodeName, threadId]);
 
-  const handleClick = (node: NodeGroup) => {
+  const handleClick = useCallback((node: NodeGroup) => {
     const name = node.node_name;
     console.debug("[NodeList] click node=%s status=%s threadId=%s", name, node.status, threadId);
     if (selectedNodeName === name) {
@@ -154,20 +182,45 @@ export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStr
         })
         .finally(() => setLoading(false));
     }
-  };
+  }, [selectedNodeName, onNodeClick, executions, threadId]);
 
-  const items = nodes.map((node) => ({
-    onClick: () => handleClick(node),
-    style: { cursor: "pointer" },
-    title: (
-      <Tooltip title={`${node.tasks.length} task(s) — click to inspect`}>
-        <span style={{ fontSize: 12 }}>{NODE_LABELS[node.node_name] ?? node.node_name}</span>
-      </Tooltip>
-    ),
-    description: <span style={{ fontSize: 11 }}>{node.tasks.length} task(s)</span>,
-    status: STEP_STATUS[node.status],
-    ...(node.status === "cancelled" ? { icon: <StopOutlined style={{ color: "#faad14" }} /> } : {}),
-  }));
+  const items = useMemo(() => nodes.map((node) => {
+    // Build status-count audit: only include statuses that have at least one task.
+    const counts: Partial<Record<TaskInfo["status"], number>> = {};
+    for (const t of node.tasks) counts[t.status] = (counts[t.status] ?? 0) + 1;
+    const hasRunning = (counts.running ?? 0) > 0;
+    // Check if any running task is actively receiving tokens (streaming).
+    const isStreaming = node.tasks.some(
+      (t) => t.status === "running" && (tokenStreams[t.id] ?? "").length > 0
+    );
+    const auditParts: string[] = [];
+    if (counts.running)   auditParts.push(`${counts.running} running`);
+    if (counts.completed) auditParts.push(`${counts.completed} done`);
+    if (counts.failed)    auditParts.push(`${counts.failed} failed`);
+    if (counts.cancelled) auditParts.push(`${counts.cancelled} cancelled`);
+    if (counts.pending)   auditParts.push(`${counts.pending} pending`);
+    const descriptionText = auditParts.length > 0 ? auditParts.join(" · ") : `${node.tasks.length} task${node.tasks.length !== 1 ? "s" : ""}`;
+    return {
+      onClick: () => handleClick(node),
+      style: { cursor: "pointer" },
+      title: (
+        <Tooltip title={`${node.tasks.length} task(s) — click to inspect`}>
+          <span style={{ fontSize: 12 }}>{NODE_LABELS[node.node_name] ?? node.node_name}</span>
+        </Tooltip>
+      ),
+      description: (
+        <span style={{ fontSize: 11 }}>
+          {isStreaming
+            ? <SyncOutlined spin style={{ fontSize: 10, marginRight: 4, color: "#1677ff" }} />
+            : hasRunning && <LoadingOutlined style={{ fontSize: 10, marginRight: 4 }} />
+          }
+          {isStreaming ? <span style={{ color: "#1677ff" }}>streaming…</span> : descriptionText}
+        </span>
+      ),
+      status: STEP_STATUS[node.status],
+      ...(node.status === "cancelled" ? { icon: <StopOutlined style={{ color: "#faad14" }} /> } : {}),
+    };
+  }), [nodes, tokenStreams, handleClick]);
 
   const panelData: NodeExecutionInfo | null | "loading" =
     selectedNodeName === null
@@ -176,9 +229,22 @@ export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStr
       ? "loading"
       : executions[selectedNodeName] ?? null;
 
-  const selectedNodeStatus = selectedNodeName
-    ? nodes.find((n) => n.node_name === selectedNodeName)?.status
+  const selectedNode = selectedNodeName
+    ? nodes.find((n) => n.node_name === selectedNodeName)
     : undefined;
+  const selectedNodeStatus = selectedNode?.status;
+
+  // Accumulate streaming token text for the selected node's running tasks.
+  const selectedStreamingText = useMemo(
+    () =>
+      selectedNode
+        ? selectedNode.tasks
+            .filter((t) => t.status === "running")
+            .map((t) => tokenStreams[t.id] ?? "")
+            .join("")
+        : "",
+    [selectedNode, tokenStreams],
+  );
 
   return (
     <>
@@ -190,9 +256,13 @@ export function NodeList({ nodes, threadId, onNodeClick, tokenStreams: _tokenStr
         items={items}
       />
       {selectedNodeName !== null && (
-        <NodeInlinePanel execution={panelData} nodeStatus={selectedNodeStatus} />
+        <NodeInlinePanel
+          execution={panelData}
+          nodeStatus={selectedNodeStatus}
+          streamingText={selectedStreamingText || undefined}
+        />
       )}
     </>
   );
-}
+});
 

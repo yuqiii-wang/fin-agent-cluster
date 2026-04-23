@@ -189,19 +189,27 @@ async def stream_text_task(
     return "".join(parts)
 
 
+# Number of tokens accumulated before emitting a single ``perf_token_batch`` SSE event.
+# Batching reduces Redis XADD calls and React state updates by this factor.
+_PERF_BATCH_SIZE: int = 1_000
+
+
 async def stream_perf_text_task(
     thread_id: str,
     task_id: int,
     task_key: str,
     chunks: AsyncIterable[str],
 ) -> int:
-    """Consume a token stream and emit ``perf_token`` events for silent metric aggregation.
+    """Consume a token stream and emit ``perf_token_batch`` events for silent metric aggregation.
 
-    Unlike :func:`stream_text_task`, events emitted here use the ``perf_token``
-    SSE type.  The backend SSE gateway forwards ``perf_token`` events without
-    consulting the ``_watch_registry``, so they always reach the frontend regardless
-    of whether the TaskDrawer is open.  The frontend metrics panel counts them
-    without displaying them as task output text.
+    Tokens are accumulated in batches of :data:`_PERF_BATCH_SIZE` and flushed
+    as a single ``perf_token_batch`` SSE event carrying a ``count`` field.  This
+    reduces Redis XADD calls, SSE frames, and React state updates by
+    ``_PERF_BATCH_SIZE``-fold compared to emitting one event per token.
+
+    The backend SSE gateway always forwards ``perf_token_batch`` events (not
+    filtered by the watch registry) so the frontend metrics panel counts them
+    regardless of TaskDrawer state.
 
     Args:
         thread_id: LangGraph thread UUID.
@@ -215,6 +223,8 @@ async def stream_perf_text_task(
     received = 0
     t_start = time.perf_counter()
     aiter = chunks.__aiter__()
+    batch_count = 0
+    node = _node_name(task_key)
     try:
         while True:
             _check_signal(task_id, [])
@@ -223,17 +233,32 @@ async def stream_perf_text_task(
             except StopAsyncIteration:
                 break
             if token:
+                batch_count += 1
                 received += 1
-                await stream_token(
-                    thread_id,
-                    {
-                        "event": "perf_token",
-                        "task_id": task_id,
-                        "node_name": _node_name(task_key),
-                        "task_key": task_key,
-                        "data": token,
-                    },
-                )
+                if batch_count >= _PERF_BATCH_SIZE:
+                    await stream_token(
+                        thread_id,
+                        {
+                            "event": "perf_token_batch",
+                            "task_id": task_id,
+                            "node_name": node,
+                            "task_key": task_key,
+                            "count": batch_count,
+                        },
+                    )
+                    batch_count = 0
+        # Flush the remaining partial batch on normal completion.
+        if batch_count > 0:
+            await stream_token(
+                thread_id,
+                {
+                    "event": "perf_token_batch",
+                    "task_id": task_id,
+                    "node_name": node,
+                    "task_key": task_key,
+                    "count": batch_count,
+                },
+            )
     finally:
         _task_signals.pop(task_id, None)
         aclose = getattr(aiter, "aclose", None)

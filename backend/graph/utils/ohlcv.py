@@ -2,10 +2,18 @@
 
 Wraps ``compute_quant_stats`` + DB upsert so agent nodes can call a single
 function without duplicating infrastructure concerns.
+
+Celery offload
+--------------
+``upsert_quant_stats`` publishes a job to the ``fin:market:quant_compute``
+Redis Stream and returns immediately (fire-and-forget).  The heavy pandas-ta
+computation runs in a Celery worker process, keeping the FastAPI event loop
+and its shared thread pool free for I/O work.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Optional
@@ -13,7 +21,8 @@ from typing import Optional
 from backend.db import raw_conn
 from backend.db.postgres.queries.fin_markets_quant import OhlcvStatsSQL
 from backend.resource_api.quant_api.models import OHLCVBar
-from backend.resource_api.quant_api.ohlcv_processor import compute_quant_stats
+from backend.streaming.config import QUANT_COMPUTE
+from backend.streaming.streams import xadd
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +133,12 @@ async def upsert_quant_stats(
     region: Optional[str] = None,
     currency_code: Optional[str] = None,
 ) -> None:
-    """Compute technical indicators and upsert rows into *fin_markets.quant_stats*.
+    """Publish an OHLCV compute job to the ``fin:market:quant_compute`` stream.
+
+    Merges all bar lists into one sequence, resolves the currency code, then
+    publishes a single stream entry for the Celery quant-compute worker to
+    process (``compute_quant_stats`` + DB upsert).  Returns immediately —
+    the heavy pandas-ta computation happens out-of-process.
 
     Args:
         bar_lists:     One or more OHLCV bar sequences to merge before processing.
@@ -135,16 +149,26 @@ async def upsert_quant_stats(
         currency_code: ISO 4217 currency code override.  When ``None``, resolved
                        from ``region`` using :func:`_resolve_currency_code`.
     """
-    rows = compute_quant_stats(
-        bar_lists=bar_lists, symbol=symbol, source=source, interval=interval
-    )
-    if not rows:
+    merged: list[OHLCVBar] = [bar for lst in bar_lists for bar in lst]
+    if not merged:
         return
+
     resolved_currency = currency_code or await _resolve_currency_code(region)
-    for row in rows:
-        row["region"] = region
-        row["currency_code"] = resolved_currency
-    async with raw_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.executemany(OhlcvStatsSQL.UPSERT, rows)
-    logger.info("[upsert_quant_stats] upserted %d rows for symbol=%s", len(rows), symbol)
+
+    await xadd(
+        QUANT_COMPUTE.stream_key,
+        {
+            "symbol": symbol,
+            "source": source,
+            "interval": interval,
+            "region": region or "",
+            "currency_code": resolved_currency,
+            "bar_count": str(len(merged)),
+            "bars": json.dumps([b.model_dump() for b in merged]),
+        },
+        maxlen=500,
+    )
+    logger.debug(
+        "[upsert_quant_stats] queued %d bars for symbol=%s interval=%s",
+        len(merged), symbol, interval,
+    )

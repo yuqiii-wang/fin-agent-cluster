@@ -24,6 +24,10 @@ Node I/O service (``backend.sse_notifications.node_io``):
 Performance-test service (``backend.sse_notifications.perf_test``):
   ``perf_test_metrics``  — throughput stats after a perf-test run (pg_notify path)
   ``perf_test_complete`` — all requested tokens were streamed for this session (pg_notify path)
+
+Query lifecycle service (``backend.sse_notifications.query_lifecycle``):
+  ``query_received``       — backend accepted the query; awaiting client ACK (pg_notify + pending store)
+  ``query_ack_confirmed``  — backend received ACK; LangGraph execution starting (pg_notify path)
 """
 
 from __future__ import annotations
@@ -53,8 +57,9 @@ SseEventType = Literal[
     "perf_test_stopped",
     "perf_test_complete",
     "perf_ingest_complete",
-    "locust_complete",
     "query_status",
+    "query_received",
+    "query_ack_confirmed",
 ]
 
 # Terminal task statuses — events that carry these arrive via pg_notify after commit.
@@ -74,8 +79,9 @@ PG_NOTIFY_EVENTS: frozenset[str] = frozenset(
         "perf_test_stopped",
         "perf_test_complete",
         "perf_ingest_complete",
-        "locust_complete",
         "query_status",
+        "query_received",
+        "query_ack_confirmed",
     }
 )
 
@@ -245,29 +251,6 @@ class NodeOutputPayload(BaseModel):
     elapsed_ms: int = 0
 
 
-# ---------------------------------------------------------------------------
-# Performance-test payload model
-# ---------------------------------------------------------------------------
-
-
-class PerfTestMetricsPayload(BaseModel):
-    """Payload for the ``perf_test_metrics`` event — throughput statistics.
-
-    Attributes:
-        event: Always ``"perf_test_metrics"``.
-        total_tokens: Number of tokens produced across all requests.
-        elapsed_ms: Wall-clock time in milliseconds for the whole test.
-        tokens_per_second: Aggregate tokens per second throughput.
-        num_requests: Number of parallel mock-stream requests run.
-    """
-
-    event: Literal["perf_test_metrics"] = "perf_test_metrics"
-    total_tokens: int
-    elapsed_ms: int
-    tokens_per_second: float
-    num_requests: int
-
-
 class PerfTestStoppedPayload(BaseModel):
     """Payload for the ``perf_test_stopped`` event — emitted when the timeout fires.
 
@@ -304,6 +287,43 @@ class PerfTestCompletePayload(BaseModel):
     tps: float
 
 
+# ---------------------------------------------------------------------------
+# Query lifecycle payload models
+# ---------------------------------------------------------------------------
+
+
+class QueryReceivedPayload(BaseModel):
+    """Payload for the ``query_received`` event.
+
+    Emitted after the backend accepts a new query and persists the row with
+    ``status='received'``.  The client must respond with a POST to
+    ``/users/query/{thread_id}/ack`` to start graph execution.
+
+    Attributes:
+        event: Always ``"query_received"``.
+        thread_id: LangGraph thread UUID the query was assigned.
+    """
+
+    event: Literal["query_received"] = "query_received"
+    thread_id: str
+
+
+class QueryAckConfirmedPayload(BaseModel):
+    """Payload for the ``query_ack_confirmed`` event.
+
+    Emitted after the backend processes the client ACK and launches the
+    LangGraph execution.  On receipt the client should stop sending further
+    ACK retries.
+
+    Attributes:
+        event: Always ``"query_ack_confirmed"``.
+        thread_id: LangGraph thread UUID.
+    """
+
+    event: Literal["query_ack_confirmed"] = "query_ack_confirmed"
+    thread_id: str
+
+
 __all__ = [
     "SseEventType",
     "TERMINAL_TASK_EVENTS",
@@ -319,6 +339,7 @@ __all__ = [
     "PingPayload",
     "NodeInputPayload",
     "NodeOutputPayload",
-    "PerfTestMetricsPayload",
     "PerfTestCompletePayload",
+    "QueryReceivedPayload",
+    "QueryAckConfirmedPayload",
 ]

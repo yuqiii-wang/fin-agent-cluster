@@ -20,10 +20,6 @@ Stream keys
 ``fin:perf:ingest:state:{thread_id}``
     Redis hash tracking ingest progress per session.
 
-``fin:perf:ingest:result:{thread_id}``
-    Redis list — ingest worker RPUSH es a JSON completion record here;
-    the LangGraph node BLPOP s it to await ingest without polling.
-
 ``fin:perf:ingest:active``
     Redis sorted set.  Score = last heartbeat timestamp (Unix seconds).
     Beat recovery uses this to detect stalled sessions and restart them.
@@ -48,8 +44,6 @@ PERF_INGEST_BACKEND_DB: int = 4
 PERF_INGEST_STREAM_PREFIX: str = "fin:perf"
 #: Per-session ingest state hash: ``fin:perf:ingest:state:{thread_id}``
 PERF_INGEST_STATE_KEY_PREFIX: str = "fin:perf:ingest:state"
-#: Per-session completion signal list: ``fin:perf:ingest:result:{thread_id}``
-PERF_INGEST_RESULT_KEY_PREFIX: str = "fin:perf:ingest:result"
 #: Sorted set of all active ingest sessions (score = last heartbeat).
 PERF_INGEST_ACTIVE_SET_KEY: str = "fin:perf:ingest:active"
 
@@ -91,7 +85,6 @@ __all__ = [
     "PERF_INGEST_BACKEND_DB",
     "PERF_INGEST_STREAM_PREFIX",
     "PERF_INGEST_STATE_KEY_PREFIX",
-    "PERF_INGEST_RESULT_KEY_PREFIX",
     "PERF_INGEST_ACTIVE_SET_KEY",
     "PERF_INGEST_BATCH_SIZE",
     "PERF_INGEST_STREAM_MAXLEN",

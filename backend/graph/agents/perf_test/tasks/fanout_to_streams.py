@@ -1,14 +1,35 @@
-"""run_ingest / perf_stream_reader_gen — bulk token production via async pipeline.
+"""Split ingest + adaptive reader — concurrent Phase-2 perf-test pipeline.
 
-:func:`run_ingest` writes all mock tokens to ``fin:perf:{thread_id}`` using
-an asyncio Redis pipeline (batch XADD, no per-token round-trips) directly in
-the FastAPI event loop — no external Celery workers needed.  A cooperative
-``await asyncio.sleep(0)`` between batches yields the event loop so SSE and
-other coroutines remain responsive.
+Architecture
+------------
+Phase 1 — first-phase ingest (:func:`run_ingest_first_half`)
+    Clears the stream and bulk-writes 95 % of ``total_tokens`` via an async
+    Redis pipeline.  Does **not** append the end-of-stream sentinel —
+    that is deferred to Phase 2.  Emits ``perf_ingest_progress`` SSE events
+    approximately every second.
 
-:func:`perf_stream_reader_gen` reads back from the same stream for the pub
-phase.  Because ingest completes fully before the pub task starts, every read
-is a non-blocking XREAD against a fully populated stream.
+Phase 2 — concurrent ingest + read (same Celery worker / event loop)
+    Two coroutines are launched via ``asyncio.gather`` so that write and read
+    for the same streaming ID happen in the same worker:
+
+    * :func:`run_ingest_second_half` — bulk-writes the remaining 5 % of
+      tokens and finally appends the sentinel, updating the shared
+      :class:`_ConcurrentProgress` object with a rolling ingest TPS figure.
+
+    * :func:`dynamic_reader_gen` — async generator consumed by
+      ``stream_perf_text_task``.  Reads with an adaptive batch size:
+
+      - Initial window (first 3 s): batch_size = 1 (one token at a time).
+      - After first window: base batch_size = 3, then every 3 s:
+
+        * If ingest is active → scale batch_size so
+          ``digest_tps ≈ 1.5 × ingest_tps`` (drain faster than write).
+        * If ingest finished → gradually reduce toward 3.
+        * Stream backlog < ``_NEAR_EMPTY_THRESHOLD`` → clamp to 1.
+        * Stream exhausted + ingest done → exit.
+
+      Emits ``perf_concurrent_status`` via Redis Streams every 3 s so the
+      frontend can display live batch_size, digest TPS, ingest TPS and backlog.
 
 The dedicated :mod:`~backend.graph.agents.perf_test.celery_ingest` package
 exists for deployments that want to offload bulk writes to a separate worker
@@ -18,6 +39,7 @@ process — it is not used in the default in-process path.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from collections.abc import AsyncGenerator
@@ -25,17 +47,64 @@ from collections.abc import AsyncGenerator
 import redis.asyncio as aioredis
 
 from backend.config import get_settings
-from backend.db.redis.publisher import stream_token
+from backend.sse_notifications.perf_test.notifications import (
+    emit_perf_concurrent_status,
+    emit_perf_ingest_progress,
+)
 from backend.graph.agents.perf_test.celery_ingest.config import (
     PERF_INGEST_BATCH_SIZE,
     PERF_INGEST_SENTINEL_FIELD,
     PERF_INGEST_SENTINEL_VALUE,
     PERF_INGEST_STREAM_MAXLEN,
     PERF_INGEST_STREAM_PREFIX,
-    PERF_PUB_READ_BATCH_SIZE,
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Adaptive reader constants
+# ---------------------------------------------------------------------------
+
+#: Initial read batch size — one token at a time (first measurement window).
+_READER_INITIAL_BATCH: int = 1
+#: Batch size when entering the adaptive window phase (post warmup).
+_READER_BASE_BATCH: int = 3
+#: Target digest/ingest TPS ratio — reader aims to drain 1.5× faster than write.
+_TARGET_DIGEST_RATIO: float = 1.5
+#: Duration of each adaptive evaluation window in seconds.
+_WINDOW_SECS: float = 3.0
+#: Stream backlog below which batch is clamped to 1 (stream nearly empty).
+_NEAR_EMPTY_THRESHOLD: int = 50
+#: Hard upper bound on batch size — aggressive but bounded drain cap.
+_MAX_BATCH_SIZE: int = 1_000
+#: When stream backlog >= this, the full _MAX_BATCH_SIZE is permitted.
+_LARGE_QUEUE_THRESHOLD: int = 1_000
+#: Maximum milliseconds to block on XREAD when stream is caught up to ingest.
+_XREAD_BLOCK_MS: int = 1_000
+
+
+# ---------------------------------------------------------------------------
+# Shared mutable state (concurrent ingest ↔ reader, same event loop)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class _ConcurrentProgress:
+    """Mutable shared state updated by :func:`run_ingest_second_half` and read
+    by :func:`dynamic_reader_gen`.
+
+    Both coroutines run in the same asyncio event loop so no locking is needed.
+
+    Attributes:
+        ingest_tps:   Rolling tokens/second for the ongoing second-half ingest.
+        ingest_done:  True once the second-half ingest (including sentinel) is complete.
+        produced:     Total tokens produced so far (both halves combined).
+    """
+
+    ingest_tps: float = 0.0
+    ingest_done: bool = False
+    produced: int = 0
+
 
 # ---------------------------------------------------------------------------
 # Shared async Redis client
@@ -74,55 +143,156 @@ async def _get_client() -> aioredis.Redis:
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Phase 1: first-half ingest
 # ---------------------------------------------------------------------------
 
 
-async def run_ingest(
+async def run_ingest_first_half(
     thread_id: str,
     total_tokens: int,
     timeout_secs: float,
 ) -> tuple[int, str]:
-    """Bulk-write mock tokens to ``fin:perf:{thread_id}`` via async pipeline.
+    """Bulk-write 95 % of tokens to ``fin:perf:{thread_id}`` via async pipeline.
 
-    Writes tokens in batches of :data:`~celery_ingest.config.PERF_INGEST_BATCH_SIZE`
-    using a Redis pipeline (one round-trip per batch, not per token).
-    Between batches the event loop is yielded via ``await asyncio.sleep(0)``
-    so SSE and other coroutines remain responsive.  When done (or on timeout)
-    a sentinel entry is appended so :func:`perf_stream_reader_gen` knows to stop.
+    Clears any leftover stream before writing.  Does **not** append the
+    sentinel — that is deferred to :func:`run_ingest_second_half` so the
+    reader only terminates after all tokens are written.
+
+    Emits ``perf_ingest_progress`` SSE events approximately every second.
 
     Args:
         thread_id:    LangGraph thread UUID.
-        total_tokens: Target number of tokens to produce.
-        timeout_secs: Hard deadline; if elapsed the sentinel is still written
-                      so the pub reader terminates cleanly.
+        total_tokens: Total token budget for the full test run.
+        timeout_secs: Hard deadline measured from the start of the node.
 
     Returns:
         Tuple ``(produced, stop_reason)`` where *stop_reason* is
-        ``"completed"`` (full budget written) or ``"timeout"`` (deadline
-        fired before all tokens were written).
+        ``"half_done"`` (normal — 95 % threshold reached) or ``"timeout"``
+        (deadline fired before threshold was written).
     """
+    threshold = int(total_tokens * 0.95)
     client = await _get_client()
     stream = f"{PERF_INGEST_STREAM_PREFIX}:{thread_id}"
-    # Clean any leftover stream from a previous run.
     await client.delete(stream)
 
     produced = 0
     t_start = time.monotonic()
-    stop_reason = "completed"
-    t_last_progress = t_start  # last time a progress event was emitted
+    stop_reason = "half_done"
+    t_last_progress = t_start
 
     logger.info(
-        "[run_ingest] starting total_tokens=%d timeout_secs=%.1f thread_id=%s",
-        total_tokens, timeout_secs, thread_id,
+        "[run_ingest_first_half] starting threshold=%d total=%d timeout=%.1fs thread_id=%s",
+        threshold, total_tokens, timeout_secs, thread_id,
     )
 
-    while produced < total_tokens:
+    while produced < threshold:
         elapsed = time.monotonic() - t_start
         if elapsed > timeout_secs:
             stop_reason = "timeout"
             logger.warning(
-                "[run_ingest] timeout produced=%d/%d thread_id=%s",
+                "[run_ingest_first_half] timeout produced=%d/%d thread_id=%s",
+                produced, threshold, thread_id,
+            )
+            break
+
+        batch = min(PERF_INGEST_BATCH_SIZE, threshold - produced)
+        async with client.pipeline(transaction=False) as pipe:
+            for i in range(batch):
+                seq = produced + i + 1
+                pipe.xadd(
+                    stream,
+                    {"t": f"mock_msg_{thread_id}_{seq}"},
+                    maxlen=PERF_INGEST_STREAM_MAXLEN,
+                    approximate=True,
+                )
+            await pipe.execute()
+
+        produced += batch
+
+        now = time.monotonic()
+        if now - t_last_progress >= 1.0:
+            t_last_progress = now
+            ingest_elapsed = now - t_start
+            await emit_perf_ingest_progress(
+                thread_id,
+                produced=produced,
+                total_tokens=total_tokens,
+                elapsed_ms=int(ingest_elapsed * 1000),
+                ingest_tps=produced / max(ingest_elapsed, 0.001),
+                status="running",
+            )
+
+        await asyncio.sleep(0)
+
+    elapsed = time.monotonic() - t_start
+    await emit_perf_ingest_progress(
+        thread_id,
+        produced=produced,
+        total_tokens=total_tokens,
+        elapsed_ms=int(elapsed * 1000),
+        ingest_tps=produced / max(elapsed, 0.001),
+        status=stop_reason,
+    )
+    logger.info(
+        "[run_ingest_first_half] done produced=%d stop_reason=%s elapsed=%.2fs thread_id=%s",
+        produced, stop_reason, elapsed, thread_id,
+    )
+    return produced, stop_reason
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a: second-half ingest (concurrent with dynamic reader)
+# ---------------------------------------------------------------------------
+
+
+async def run_ingest_second_half(
+    thread_id: str,
+    first_half_produced: int,
+    total_tokens: int,
+    timeout_secs: float,
+    t_global_start: float,
+    progress: _ConcurrentProgress,
+) -> tuple[int, str]:
+    """Bulk-write the remaining 5 % of tokens then append the end-of-stream sentinel.
+
+    Runs concurrently with :func:`dynamic_reader_gen` via ``asyncio.gather``
+    in the same Celery worker event loop.  Updates *progress* each batch so
+    the reader can adjust its batch size in real time.
+
+    Emits ``perf_ingest_progress`` SSE events approximately every second.
+
+    Args:
+        thread_id:           LangGraph thread UUID.
+        first_half_produced: Tokens already written during Phase 1.
+        total_tokens:        Full token budget.
+        timeout_secs:        Hard deadline measured from ``t_global_start``.
+        t_global_start:      ``time.monotonic()`` captured at node entry.
+        progress:            Shared mutable state updated in place.
+
+    Returns:
+        Tuple ``(additional_produced, stop_reason)`` for the second half only,
+        where *stop_reason* is ``"completed"`` or ``"timeout"``.
+    """
+    client = await _get_client()
+    stream = f"{PERF_INGEST_STREAM_PREFIX}:{thread_id}"
+
+    produced = first_half_produced
+    stop_reason = "completed"
+    t_window_start = time.monotonic()
+    window_start_count = first_half_produced
+    t_last_progress = time.monotonic()
+    t_phase_start = time.monotonic()
+
+    logger.info(
+        "[run_ingest_second_half] starting from=%d to=%d thread_id=%s",
+        first_half_produced, total_tokens, thread_id,
+    )
+
+    while produced < total_tokens:
+        if time.monotonic() - t_global_start > timeout_secs:
+            stop_reason = "timeout"
+            logger.warning(
+                "[run_ingest_second_half] timeout produced=%d/%d thread_id=%s",
                 produced, total_tokens, thread_id,
             )
             break
@@ -140,90 +310,323 @@ async def run_ingest(
             await pipe.execute()
 
         produced += batch
-        logger.debug(
-            "[run_ingest] batch done produced=%d/%d thread_id=%s",
-            produced, total_tokens, thread_id,
-        )
+        progress.produced = produced
 
-        # Emit progress event approximately every second.
+        # Update rolling 1-second ingest TPS for the adaptive reader.
         now = time.monotonic()
+        window_elapsed = now - t_window_start
+        if window_elapsed >= 1.0:
+            progress.ingest_tps = (produced - window_start_count) / window_elapsed
+            t_window_start = now
+            window_start_count = produced
+
+        # Emit progress event ~every second.
         if now - t_last_progress >= 1.0:
             t_last_progress = now
-            ingest_elapsed = now - t_start
-            await stream_token(
+            total_elapsed = now - t_global_start
+            await emit_perf_ingest_progress(
                 thread_id,
-                {
-                    "event": "perf_ingest_progress",
-                    "produced": produced,
-                    "total_tokens": total_tokens,
-                    "elapsed_ms": int(ingest_elapsed * 1000),
-                    "ingest_tps": round(produced / max(ingest_elapsed, 0.001)),
-                    "status": "running",
-                },
+                produced=produced,
+                total_tokens=total_tokens,
+                elapsed_ms=int(total_elapsed * 1000),
+                ingest_tps=progress.ingest_tps,
+                status="running",
             )
 
-        # Yield the event loop between batches so other coroutines can run.
         await asyncio.sleep(0)
 
-    # Append sentinel so perf_stream_reader_gen terminates cleanly.
+    # Append sentinel so the reader knows ingest is finished.
     await client.xadd(stream, {PERF_INGEST_SENTINEL_FIELD: PERF_INGEST_SENTINEL_VALUE})
+    progress.ingest_done = True
+    progress.ingest_tps = 0.0
 
-    elapsed = time.monotonic() - t_start
-    # Emit final progress event so the UI reflects the definitive produced count.
-    await stream_token(
+    additional = produced - first_half_produced
+    phase_elapsed = time.monotonic() - t_phase_start
+    total_elapsed = time.monotonic() - t_global_start
+    await emit_perf_ingest_progress(
         thread_id,
-        {
-            "event": "perf_ingest_progress",
-            "produced": produced,
-            "total_tokens": total_tokens,
-            "elapsed_ms": int(elapsed * 1000),
-            "ingest_tps": round(produced / max(elapsed, 0.001)),
-            "status": stop_reason,
-        },
+        produced=produced,
+        total_tokens=total_tokens,
+        elapsed_ms=int(total_elapsed * 1000),
+        ingest_tps=additional / max(phase_elapsed, 0.001),
+        status=stop_reason,
     )
     logger.info(
-        "[run_ingest] done produced=%d stop_reason=%s elapsed=%.2fs thread_id=%s",
-        produced, stop_reason, elapsed, thread_id,
+        "[run_ingest_second_half] done additional=%d stop_reason=%s thread_id=%s",
+        additional, stop_reason, thread_id,
     )
-    return produced, stop_reason
+    return additional, stop_reason
 
 
-async def perf_stream_reader_gen(thread_id: str) -> AsyncGenerator[str, None]:
-    """Yield tokens from ``fin:perf:{thread_id}`` until the sentinel is reached.
+# ---------------------------------------------------------------------------
+# Phase 2b: dynamic adaptive reader (concurrent with second-half ingest)
+# ---------------------------------------------------------------------------
 
-    Designed for the pub task: after :func:`run_ingest` completes all tokens
-    are already written so every XREAD is a non-blocking fetch against a fully
-    populated stream.  Terminates when it encounters the end-of-stream sentinel
-    entry written by :func:`run_ingest`.
+
+async def dynamic_reader_gen(
+    thread_id: str,
+    progress: _ConcurrentProgress,
+) -> AsyncGenerator[str, None]:
+    """Yield tokens from ``fin:perf:{thread_id}`` with adaptive batch sizing.
+
+    Batch size control (evaluated every :data:`_WINDOW_SECS` seconds):
+
+    * **Warmup window** (first 3 s): ``batch_size = 1`` — reads one token at a
+      time to establish baseline measurements.
+    * **Adaptive windows**: base ``batch_size = 3``; scaled every 3 s:
+
+      - Ingest active → ``batch_size`` adjusted so
+        ``digest_tps ≈ _TARGET_DIGEST_RATIO × ingest_tps`` (drain 1.5× faster).
+      - Ingest done → reduce toward 3 (``max(3, size − size // 5)``).
+      - Stream backlog < ``_NEAR_EMPTY_THRESHOLD`` → clamp to 1.
+      - Stream exhausted + ingest done → exit generator.
+
+    Uses blocking XREAD (:data:`_XREAD_BLOCK_MS` ms) so the event loop is
+    yielded while waiting for new tokens rather than spinning.
+
+    Emits ``perf_concurrent_status`` via Redis Streams every window so the
+    frontend receives live batch_size, digest/ingest TPS, and stream backlog.
 
     Args:
         thread_id: LangGraph thread UUID.
+        progress:  Shared state updated by the concurrent ingest coroutine.
 
     Yields:
-        Token strings written during the ingest phase.
+        Token strings from the perf stream until the sentinel is reached.
     """
     client = await _get_client()
     stream = f"{PERF_INGEST_STREAM_PREFIX}:{thread_id}"
     last_id = "0-0"
 
+    batch_size = _READER_INITIAL_BATCH
+    window_start = time.monotonic()
+    window_published = 0
+    first_window = True
+
+    logger.info("[dynamic_reader_gen] starting thread_id=%s", thread_id)
+
     while True:
+        now = time.monotonic()
+        elapsed_window = now - window_start
+
+        # ── Current stream backlog (single XLEN per loop iteration) ─────────
+        stream_len = await client.xlen(stream)
+
+        # ── Adaptive batch-size evaluation every _WINDOW_SECS seconds ──────
+        if elapsed_window >= _WINDOW_SECS:
+            digest_tps = window_published / max(elapsed_window, 0.001)
+            ingest_tps = progress.ingest_tps
+
+            if first_window:
+                # End of warmup: if a large backlog has accumulated already,
+                # jump straight to max batch so we don't crawl at 3 for another
+                # full window while thousands of tokens sit in the stream.
+                if stream_len >= _LARGE_QUEUE_THRESHOLD:
+                    batch_size = _MAX_BATCH_SIZE
+                else:
+                    batch_size = _READER_BASE_BATCH
+                first_window = False
+            elif ingest_tps > 0:
+                # Scale to target digest_tps ≈ 1.5 × ingest_tps.
+                target_tps = _TARGET_DIGEST_RATIO * ingest_tps
+                if digest_tps > 0:
+                    ratio = target_tps / digest_tps
+                    batch_size = max(
+                        _READER_BASE_BATCH,
+                        min(_MAX_BATCH_SIZE, round(batch_size * ratio)),
+                    )
+                else:
+                    batch_size = _READER_BASE_BATCH
+            elif not progress.ingest_done:
+                # Ingest transiently at 0 TPS but not yet finished; hold base.
+                batch_size = _READER_BASE_BATCH
+            else:
+                # Ingest finished: if the backlog is still large, drain at max
+                # speed; otherwise gradually reduce toward 3.
+                if stream_len >= _LARGE_QUEUE_THRESHOLD:
+                    batch_size = _MAX_BATCH_SIZE
+                else:
+                    batch_size = max(_READER_BASE_BATCH, batch_size - max(1, batch_size // 5))
+
+            # Over-read guard: when the queue is below _LARGE_QUEUE_THRESHOLD
+            # and the computed batch exceeds what is actually in the stream,
+            # clamp to stream_len (read everything that is there) rather than
+            # snapping to an arbitrary small constant.  The near-empty clamp
+            # below still reduces effective_batch to 1 when stream_len < 50.
+            if stream_len < _LARGE_QUEUE_THRESHOLD and batch_size > stream_len:
+                batch_size = max(_READER_BASE_BATCH, stream_len)
+
+            # Stop auditing once ingest has reached 100% — no more concurrent
+            # status events are meaningful after the write side is finished.
+            if not progress.ingest_done:
+                await emit_perf_concurrent_status(
+                    thread_id,
+                    batch_size=batch_size,
+                    digest_tps=digest_tps,
+                    ingest_tps=ingest_tps,
+                    stream_len=stream_len,
+                )
+            logger.debug(
+                "[dynamic_reader_gen] window batch_size=%d digest_tps=%.1f "
+                "ingest_tps=%.1f stream_len=%d thread_id=%s",
+                batch_size, digest_tps, ingest_tps, stream_len, thread_id,
+            )
+            window_start = now
+            window_published = 0
+
+        # ── Near-empty clamp (applied per-loop, after the audit window) ────
+        effective_batch = 1 if stream_len < _NEAR_EMPTY_THRESHOLD else batch_size
+
+        # Blocking XREAD yields the event loop while waiting for new tokens.
         results = await client.xread(
             streams={stream: last_id},
-            count=PERF_PUB_READ_BATCH_SIZE,
+            count=max(1, effective_batch),
+            block=_XREAD_BLOCK_MS,
         )
+
         if not results:
-            break
+            # Timed out waiting — check if ingest is finished.
+            if progress.ingest_done:
+                break
+            continue
+
         _, messages = results[0]
         for msg_id, fields in messages:
             last_id = msg_id
             if fields.get(PERF_INGEST_SENTINEL_FIELD) == PERF_INGEST_SENTINEL_VALUE:
-                return  # sentinel reached: stop reading
+                logger.info(
+                    "[dynamic_reader_gen] sentinel reached thread_id=%s",
+                    thread_id,
+                )
+                return
             token = fields.get("t", "")
             if token:
                 yield token
-        # Yield the event loop between batches.
+                window_published += 1
+
         await asyncio.sleep(0)
 
+    logger.info("[dynamic_reader_gen] stream exhausted thread_id=%s", thread_id)
 
-__all__ = ["run_ingest", "perf_stream_reader_gen"]
+
+# ---------------------------------------------------------------------------
+# Concurrency mode: rate-limited ingest (no Phase 1 pre-load)
+# ---------------------------------------------------------------------------
+
+
+async def run_rate_limited_ingest(
+    thread_id: str,
+    token_per_sec: int,
+    timeout_secs: float,
+    t_global_start: float,
+    progress: _ConcurrentProgress,
+) -> tuple[int, str]:
+    """Write tokens at a fixed rate for *timeout_secs*, then append the sentinel.
+
+    Used in concurrency test mode: no Phase-1 pre-ingest is performed; tokens
+    are written at a steady ``token_per_sec`` rate and simultaneously consumed
+    by :func:`dynamic_reader_gen` via ``asyncio.gather``.
+
+    Batch sizing: writes ``batch_size = max(1, min(PERF_INGEST_BATCH_SIZE,
+    token_per_sec // 10))`` tokens per write, sleeping for the remaining time
+    in each 100 ms window to achieve the target rate without busy-waiting.
+
+    Emits ``perf_ingest_progress`` SSE events approximately every second.
+
+    Args:
+        thread_id:       LangGraph thread UUID.
+        token_per_sec:   Target ingest rate in tokens per second.
+        timeout_secs:    Duration to ingest for (measured from *t_global_start*).
+        t_global_start:  ``time.monotonic()`` captured at node entry.
+        progress:        Shared mutable state updated in place.
+
+    Returns:
+        Tuple ``(produced, "timeout")`` — concurrency mode always ends at timeout.
+    """
+    client = await _get_client()
+    stream = f"{PERF_INGEST_STREAM_PREFIX}:{thread_id}"
+    await client.delete(stream)
+
+    # Batch sizing: ~10 writes per second so Redis round-trip overhead is
+    # amortised while the event loop is yielded frequently.
+    batch_size = max(1, min(PERF_INGEST_BATCH_SIZE, max(1, token_per_sec) // 10))
+    delay = batch_size / max(token_per_sec, 1)  # target seconds between writes
+
+    produced = 0
+    t_phase_start = time.monotonic()
+    t_last_progress = t_phase_start
+
+    logger.info(
+        "[run_rate_limited_ingest] starting token_per_sec=%d batch_size=%d "
+        "delay=%.3fs timeout=%.1fs thread_id=%s",
+        token_per_sec, batch_size, delay, timeout_secs, thread_id,
+    )
+
+    while time.monotonic() - t_global_start < timeout_secs:
+        t_batch = time.monotonic()
+
+        async with client.pipeline(transaction=False) as pipe:
+            for i in range(batch_size):
+                seq = produced + i + 1
+                pipe.xadd(
+                    stream,
+                    {"t": f"mock_msg_{thread_id}_{seq}"},
+                    maxlen=PERF_INGEST_STREAM_MAXLEN,
+                    approximate=True,
+                )
+            await pipe.execute()
+
+        produced += batch_size
+        progress.produced = produced
+        progress.ingest_tps = float(token_per_sec)
+
+        # Rate-limit: sleep for the remaining portion of the batch window.
+        batch_elapsed = time.monotonic() - t_batch
+        sleep_secs = max(0.0, delay - batch_elapsed)
+        if sleep_secs > 0:
+            await asyncio.sleep(sleep_secs)
+        else:
+            await asyncio.sleep(0)  # always yield the event loop
+
+        # Emit progress event approximately every second.
+        now = time.monotonic()
+        if now - t_last_progress >= 1.0:
+            t_last_progress = now
+            phase_elapsed = now - t_phase_start
+            await emit_perf_ingest_progress(
+                thread_id,
+                produced=produced,
+                total_tokens=0,  # 0 signals "no fixed total" to the frontend
+                elapsed_ms=int(phase_elapsed * 1000),
+                ingest_tps=produced / max(phase_elapsed, 0.001),
+                status="running",
+            )
+
+    # Append sentinel so dynamic_reader_gen knows ingest is complete.
+    await client.xadd(stream, {PERF_INGEST_SENTINEL_FIELD: PERF_INGEST_SENTINEL_VALUE})
+    progress.ingest_done = True
+    progress.ingest_tps = 0.0
+
+    phase_elapsed = time.monotonic() - t_phase_start
+    await emit_perf_ingest_progress(
+        thread_id,
+        produced=produced,
+        total_tokens=0,
+        elapsed_ms=int(phase_elapsed * 1000),
+        ingest_tps=produced / max(phase_elapsed, 0.001),
+        status="timeout",
+    )
+    logger.info(
+        "[run_rate_limited_ingest] done produced=%d elapsed=%.2fs thread_id=%s",
+        produced, phase_elapsed, thread_id,
+    )
+    return produced, "timeout"
+
+
+__all__ = [
+    "_ConcurrentProgress",
+    "run_ingest_first_half",
+    "run_ingest_second_half",
+    "dynamic_reader_gen",
+]
 

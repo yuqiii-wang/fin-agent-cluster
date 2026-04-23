@@ -48,12 +48,14 @@ STREAM_MARKET_TICKS: str = next(t.stream_key for t in ALL_TOPICS if t.human_key 
 STREAM_TRADE_SIGNALS: str = next(t.stream_key for t in ALL_TOPICS if t.human_key == "trade-signals")
 STREAM_NEWS_ENRICHED: str = next(t.stream_key for t in ALL_TOPICS if t.human_key == "news-enriched")
 STREAM_LLM_COMPLETIONS: str = next(t.stream_key for t in ALL_TOPICS if t.human_key == "llm-completions")
+STREAM_QUANT_COMPUTE: str = next(t.stream_key for t in ALL_TOPICS if t.human_key == "quant-compute")
 
 GROUP_CELERY_GRAPH: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "graph-events")
 GROUP_CELERY_MARKET: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "market-ticks")
 GROUP_CELERY_SIGNALS: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "trade-signals")
 GROUP_CELERY_NEWS: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "news-enriched")
 GROUP_CELERY_LLM: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "llm-completions")
+GROUP_CELERY_QUANT_COMPUTE: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "quant-compute")
 
 #: stream → consumer groups to create at startup (built from config).
 STREAM_CONSUMER_GROUPS: dict[str, list[str]] = {

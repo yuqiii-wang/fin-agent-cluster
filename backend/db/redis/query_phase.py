@@ -6,7 +6,7 @@ pg_notify events that may have fired before the stream was open.
 
 Key:    ``fin:query:phase:{thread_id}`` (string)
 TTL:    600 s  (covers the longest perf-test run with a safety margin)
-Values: ``"received"`` | ``"preparing"`` | ``"ingesting"`` | ``"sending"``
+Values: ``"received"`` | ``"preparing"`` | ``"ingesting"`` | ``"digesting"``
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ async def set_query_phase(thread_id: str, phase: str) -> None:
     Args:
         thread_id: LangGraph UUID thread identifier.
         phase:     One of ``"received"``, ``"preparing"``, ``"ingesting"``,
-                   ``"sending"``.
+                   ``"digesting"``.
     """
     client = await _get_publish_client()
     await client.setex(_phase_key(thread_id), _PHASE_TTL_SECS, phase)

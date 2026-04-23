@@ -35,6 +35,15 @@ from backend.streaming.config import (
 )
 from backend.streaming.fallback import celery_workers_available, start_fallback_workers
 from backend.streaming.log_filters import CeleryTaskSummaryFilter
+from backend.streaming.sse_session import (
+    LIFECYCLE_EVENTS,
+    get_watched_task,
+    handle_orphaned_query,
+    is_thread_watching,
+    register_watch,
+    replay_existing,
+    unregister_watch,
+)
 from backend.streaming.streams import (
     GROUP_CELERY_GRAPH,
     GROUP_CELERY_MARKET,
@@ -86,4 +95,12 @@ __all__ = [
     "xack",
     "xlen",
     "ensure_group",
+    # SSE session helpers
+    "LIFECYCLE_EVENTS",
+    "register_watch",
+    "unregister_watch",
+    "get_watched_task",
+    "is_thread_watching",
+    "replay_existing",
+    "handle_orphaned_query",
 ]

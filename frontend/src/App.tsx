@@ -31,10 +31,9 @@ export default function App() {
     loading,
     tokenStreams,
     taskProviders,
-    perfTestThreadId,
-    setPerfTestThreadId,
-    perfTestGridVisible,
-    setPerfTestGridVisible,
+    perfTestKey,
+    startPerfTest,
+    exitPerfTest,
     forcePerfTestComplete,
     recoverThread,
     handleSubmit,
@@ -106,7 +105,7 @@ export default function App() {
         </Header>
 
         <Content style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          {perfTestThreadId ? (
+          {perfTestKey > 0 ? (
             <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
               <div style={{ flex: "0 0 auto" }}>
                 <MessageList messages={messages} onNodeClick={handlePerfNodeClick} />
@@ -114,9 +113,9 @@ export default function App() {
 
               <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 16px" }}>
                 <StreamingPerfTestPanel
-                  key={perfTestThreadId}
-                  initialThreadId={perfTestThreadId}
+                  key={perfTestKey}
                   userToken={userToken!}
+                  taskMeta={taskMeta}
                   onComplete={forcePerfTestComplete}
                 />
               </div>
@@ -125,10 +124,10 @@ export default function App() {
             <MessageList
               messages={messages}
               onNodeClick={(n) => {
-                // If this node belongs to a perf test message, re-enter the perf grid first
+                // If this node belongs to a perf test message, re-enter the perf grid.
                 const msg = [...messages].reverse().find((m) => m.nodes?.some((ng) => ng.node_name === n.node_name));
-                if (msg?.isPerfTest && msg.thread_id) {
-                  setPerfTestThreadId(msg.thread_id);
+                if (msg?.isPerfTest) {
+                  startPerfTest();
                 }
                 setDrawerNodeName(n.node_name);
               }}
@@ -137,9 +136,9 @@ export default function App() {
         </Content>
 
         <Footer style={{ padding: 0, background: "transparent" }}>
-          {perfTestThreadId ? (
+          {perfTestKey > 0 ? (
             <div style={{ padding: "8px 20px", display: "flex", justifyContent: "flex-end" }}>
-              <Button onClick={() => { setPerfTestThreadId(null); setPerfTestGridVisible(true); }}>
+              <Button onClick={exitPerfTest}>
                 Exit Performance Test
               </Button>
             </div>

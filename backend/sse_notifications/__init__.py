@@ -41,12 +41,11 @@ Usage example
         stream_text_task, stream_llm_task,
         signal_task_control, TaskCancelledSignal, TaskPassSignal,
         emit_node_input, emit_node_output,
-        emit_perf_test_metrics,
-        pg_notify, notify_channel,
+        pg_notify, SHARED_LIFECYCLE_CHANNEL,
     )
 """
 
-from backend.sse_notifications.channel import notify_channel, pg_notify
+from backend.sse_notifications.channel import SHARED_LIFECYCLE_CHANNEL, pg_notify
 from backend.sse_notifications.schemas import (
     CancelledPayload,
     CompletedPayload,
@@ -56,8 +55,9 @@ from backend.sse_notifications.schemas import (
     NodeInputPayload,
     NodeOutputPayload,
     PG_NOTIFY_EVENTS,
-    PerfTestMetricsPayload,
     PingPayload,
+    QueryAckConfirmedPayload,
+    QueryReceivedPayload,
     StartedPayload,
     SseEventType,
     TERMINAL_TASK_EVENTS,
@@ -80,11 +80,12 @@ from backend.sse_notifications.agent_tasks import (
     stream_text_task,
 )
 from backend.sse_notifications.node_io import emit_node_input, emit_node_output
-from backend.sse_notifications.perf_test import emit_perf_ingest_complete, emit_perf_test_complete, emit_perf_test_metrics, emit_perf_test_stopped, emit_locust_complete, emit_query_status
+from backend.sse_notifications.perf_test import emit_perf_ingest_complete, emit_perf_test_complete, emit_perf_test_stopped
+from backend.sse_notifications.query_lifecycle import emit_query_received, emit_query_ack_confirmed, emit_query_status
 
 __all__ = [
     # channel
-    "notify_channel",
+    "SHARED_LIFECYCLE_CHANNEL",
     "pg_notify",
     # schemas — agent tasks
     "SseEventType",
@@ -102,8 +103,9 @@ __all__ = [
     # schemas — node I/O
     "NodeInputPayload",
     "NodeOutputPayload",
-    # schemas — perf test
-    "PerfTestMetricsPayload",
+    # schemas — query lifecycle
+    "QueryReceivedPayload",
+    "QueryAckConfirmedPayload",
     # agent_tasks — lifecycle
     "create_task",
     "complete_task",
@@ -124,10 +126,11 @@ __all__ = [
     "emit_node_input",
     "emit_node_output",
     # perf_test
-    "emit_perf_test_metrics",
     "emit_perf_test_stopped",
     "emit_perf_test_complete",
     "emit_perf_ingest_complete",
-    "emit_locust_complete",
+    # query lifecycle
+    "emit_query_received",
+    "emit_query_ack_confirmed",
     "emit_query_status",
 ]

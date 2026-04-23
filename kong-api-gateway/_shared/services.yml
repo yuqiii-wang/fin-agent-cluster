@@ -1,14 +1,26 @@
 # Kong services — one entry per backend.
 # Routes are declared in each domain's routes.yml; not embedded here.
 services:
-  # FastAPI application — all REST + SSE routes
+  # FastAPI — short-lived REST endpoints (auth, queries, tasks, reports, quant).
+  # Regular requests complete in seconds; 30s timeouts are appropriate.
   - name: fastapi
-    host: fastapi-upstream   # references the upstream defined in upstreams.yml
+    host: fastapi-upstream
     port: 80
     protocol: http
-    # SSE streams can run for minutes; set generous timeouts.
     connect_timeout: 10000    # 10 s
-    write_timeout: 3600000    # 60 min
+    write_timeout: 30000      # 30 s — regular REST calls complete quickly
+    read_timeout: 30000       # 30 s
+
+  # FastAPI SSE — long-lived streaming connections (GET /api/v1/stream/*).
+  # Uses the dedicated fastapi-sse-upstream so SSE sockets are isolated from
+  # the regular request keepalive pool.  60-minute timeouts match SSE stream
+  # lifetimes in the perf-test panel.
+  - name: fastapi-sse
+    host: fastapi-sse-upstream
+    port: 80
+    protocol: http
+    connect_timeout: 10000    # 10 s
+    write_timeout: 3600000    # 60 min — SSE streams run for minutes
     read_timeout: 3600000     # 60 min
 
   # Kong AI proxy — intercepts LLM calls before forwarding.

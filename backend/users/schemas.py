@@ -18,7 +18,8 @@ class QueryRequest(BaseModel):
     query: str
     perf_total_tokens: Optional[int] = None
     perf_timeout_secs: Optional[int] = None
-    perf_pub_mode: Optional[str] = None  # "browser" | "locust"
+    perf_test_mode: Optional[str] = None   # "throughput" | "concurrency"
+    perf_token_per_sec: Optional[int] = None  # concurrency mode: target ingest rate
 
 
 class QueryResponse(BaseModel):

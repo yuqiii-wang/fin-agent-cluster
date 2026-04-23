@@ -6,6 +6,7 @@ Output: tuple[list[OHLCVBar], str]  — (bars, source)
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -82,6 +83,6 @@ async def fetch_window(
     bars = result.bars or []
 
     if bars and window.fetch_interval != window.interval:
-        bars = resample_bars(bars, window.interval)
+        bars = await asyncio.to_thread(resample_bars, bars, window.interval)
 
     return bars, result.source

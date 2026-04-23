@@ -202,9 +202,19 @@ class JsonFileFormatter(logging.Formatter):
 def _log_dir() -> Path:
     """Return the log directory path, creating it if necessary.
 
+    ``Path.mkdir(exist_ok=True)`` only suppresses *FileExistsError* when the
+    path is already a directory.  If the path exists but is a plain file,
+    broken symlink, or a Windows reparse point that WSL exposes as a non-
+    directory entry, it re-raises.  We handle that explicitly.
+
     Returns:
         Resolved :class:`pathlib.Path` to the ``logs/`` directory.
     """
+    if _LOG_DIR.is_dir():
+        return _LOG_DIR
+    if _LOG_DIR.exists() or _LOG_DIR.is_symlink():
+        # A file or broken symlink is blocking the directory; remove it.
+        _LOG_DIR.unlink()
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
     return _LOG_DIR
 

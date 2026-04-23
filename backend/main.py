@@ -1,5 +1,6 @@
 """FastAPI application for financial agent cluster."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -53,9 +54,22 @@ async def lifespan(app: FastAPI):
         logger.info("[startup] Ollama not reachable — using configured LLM_PROVIDER")
     await _check_db_conn()
     await init_db()
+    # Clear stale task_active:* Redis keys left by the previous server process.
+    # Without this, orphan detection (is_task_active_any_instance) would return
+    # True for old threads and SSE clients would hang indefinitely on hot switch.
+    from backend.api.registry import clear_all_task_active_flags
+    await clear_all_task_active_flags()
     # Ensure all Redis Stream consumer groups exist before workers start.
     from backend.streaming.streams import ensure_all_groups
     await ensure_all_groups()
+    # Start lifecycle fanout: single PG connection fans out to per-thread Redis Pub/Sub.
+    # Leader election ensures only one instance runs the fanout in a multi-instance setup.
+    from backend.db.redis.lifecycle_fanout import run_lifecycle_fanout
+    _fanout_task = asyncio.create_task(run_lifecycle_fanout())
+    # Start cancel signal listener: cancels local asyncio.Tasks when cancel is called on any instance.
+    from backend.db.redis.cancel_signal import run_cancel_listener
+    from backend.api.registry import running_tasks
+    _cancel_task = asyncio.create_task(run_cancel_listener(running_tasks))
     # Start stream consumers: prefer Celery workers; fall back to FastAPI threads.
     from backend.streaming.fallback import celery_workers_available, start_fallback_workers
     _fallback_tasks: list = []
@@ -64,6 +78,10 @@ async def lifespan(app: FastAPI):
     else:
         _fallback_tasks = await start_fallback_workers()
     yield
+    # Cancel lifecycle fanout on shutdown.
+    _fanout_task.cancel()
+    # Cancel the cancel-signal listener on shutdown.
+    _cancel_task.cancel()
     # Cancel fallback tasks on shutdown (no-op if Celery was used)
     for task in _fallback_tasks:
         task.cancel()

@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # Example: KONG_AI_PROXY_URL=http://localhost:8000/llm
     KONG_AI_PROXY_URL: Optional[str] = None
 
+    # Internal URL of the Kong API gateway used for perf-test SSE consumption.
+    # Use the HTTP/1.1 port (8888) — no TLS required for internal connections.
+    KONG_API_URL: str = "http://127.0.0.1:8888"
+
     # ── Web search provider selection ────────────────────────────
     # Choices: auto | ddgs | bing | google | volc
     # auto = try bing → google → ddgs in order (first configured one wins)

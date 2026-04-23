@@ -17,43 +17,6 @@ from backend.sse_notifications.channel import pg_notify
 logger = logging.getLogger(__name__)
 
 
-async def emit_perf_test_metrics(
-    thread_id: str,
-    total_tokens: int,
-    elapsed_ms: int,
-    tokens_per_second: float,
-    num_requests: int,
-) -> None:
-    """Emit a ``perf_test_metrics`` SSE event with throughput statistics.
-
-    Fired by the perf-test graph node after the full token stream completes.
-    Does not write to the database — metrics are ephemeral.
-
-    Args:
-        thread_id:         LangGraph thread UUID.
-        total_tokens:      Number of tokens produced across all requests.
-        elapsed_ms:        Wall-clock time in milliseconds for the whole test.
-        tokens_per_second: Aggregate tokens per second throughput.
-        num_requests:      Number of parallel mock-stream requests run.
-    """
-    await pg_notify(
-        thread_id,
-        {
-            "event": "perf_test_metrics",
-            "total_tokens": total_tokens,
-            "elapsed_ms": elapsed_ms,
-            "tokens_per_second": round(tokens_per_second, 2),
-            "num_requests": num_requests,
-        },
-    )
-    logger.info(
-        "[perf_test] metrics emitted tps=%.1f tokens=%d elapsed_ms=%d thread_id=%s",
-        tokens_per_second,
-        total_tokens,
-        elapsed_ms,
-        thread_id,
-    )
-
 
 async def emit_perf_test_stopped(
     thread_id: str,
@@ -157,70 +120,81 @@ async def emit_perf_ingest_complete(
     )
 
 
-async def emit_locust_complete(
+async def emit_perf_ingest_progress(
     thread_id: str,
-    consumed: int,
-    tps: float,
-    digest_ms: int,
+    produced: int,
+    total_tokens: int,
+    elapsed_ms: int,
+    ingest_tps: float,
+    status: str,
 ) -> None:
-    """Emit a ``locust_complete`` SSE event when the locust digest phase finishes.
+    """Emit a ``perf_ingest_progress`` SSE event during the ingest phase.
 
-    Fired by :func:`~backend.graph.agents.perf_test.tasks.locust_digest.run_locust_digest`
-    after all tokens in the perf stream have been consumed.  This is the single
-    aggregate event that the frontend grid uses to update session stats when
-    ``pub_mode == "locust"`` — no per-token events are emitted in this mode.
+    Fired approximately every second by :func:`~backend.graph.agents.perf_test.tasks.fanout_to_streams.run_ingest_first_half`
+    and :func:`~backend.graph.agents.perf_test.tasks.fanout_to_streams.run_ingest_second_half`.
+    Carries the running produced count and ingest TPS so the frontend can
+    display a live progress bar.  Does not write to the database.
 
     Args:
-        thread_id:  LangGraph thread UUID.
-        consumed:   Number of tokens read from the Redis perf stream.
-        tps:        Digest throughput in tokens per second.
-        digest_ms:  Wall-clock milliseconds for the digest phase.
+        thread_id:    LangGraph thread UUID.
+        produced:     Number of tokens written so far.
+        total_tokens: Total token budget for the test run.
+        elapsed_ms:   Wall-clock milliseconds elapsed since ingest started.
+        ingest_tps:   Current ingest throughput in tokens per second.
+        status:       ``"running"``, ``"half_done"``, ``"completed"``, or ``"timeout"``.
     """
     await pg_notify(
         thread_id,
         {
-            "event": "locust_complete",
-            "consumed": consumed,
-            "tps": round(tps, 2),
-            "digest_ms": digest_ms,
+            "event": "perf_ingest_progress",
+            "produced": produced,
+            "total_tokens": total_tokens,
+            "elapsed_ms": elapsed_ms,
+            "ingest_tps": round(ingest_tps),
+            "status": status,
         },
     )
-    logger.info(
-        "[perf_test] locust_complete emitted consumed=%d tps=%.1f "
-        "digest_ms=%d thread_id=%s",
-        consumed, tps, digest_ms, thread_id,
-    )
 
 
-async def emit_query_status(thread_id: str, phase: str) -> None:
-    """Emit a ``query_status`` SSE event signalling a backend phase transition.
+async def emit_perf_concurrent_status(
+    thread_id: str,
+    batch_size: int,
+    digest_tps: float,
+    ingest_tps: float,
+    stream_len: int,
+) -> None:
+    """Emit a ``perf_concurrent_status`` SSE event during the concurrent Phase-2.
 
-    Fires via pg_notify so the frontend grid can update the status column in
-    real time.  The phase is also stored in Redis by the caller so
-    late-connecting SSE clients recover the current phase via
-    :func:`~backend.api.stream._replay_existing`.
-
-    Phase progression:
-        ``received`` → ``preparing`` → ``ingesting`` → ``sending``
+    Fired every :data:`~backend.graph.agents.perf_test.tasks.fanout_to_streams._WINDOW_SECS`
+    seconds by :func:`~backend.graph.agents.perf_test.tasks.fanout_to_streams.dynamic_reader_gen`
+    while the adaptive reader and second-half ingest run concurrently.
+    Carries live batch size, throughput rates, and Redis backlog so the
+    frontend can plot the concurrent-phase metrics column.
 
     Args:
-        thread_id: LangGraph thread UUID.
-        phase:     One of ``"received"``, ``"preparing"``, ``"ingesting"``,
-                   ``"sending"``.
+        thread_id:  LangGraph thread UUID.
+        batch_size: Current adaptive XREAD batch size.
+        digest_tps: Current read throughput in tokens per second.
+        ingest_tps: Current ingest throughput in tokens per second.
+        stream_len: Number of entries currently in ``fin:perf:{thread_id}``.
     """
-    await pg_notify(thread_id, {"event": "query_status", "phase": phase})
-    logger.info(
-        "[query_status] emitted phase=%s thread_id=%s",
-        phase,
+    await pg_notify(
         thread_id,
+        {
+            "event": "perf_concurrent_status",
+            "batch_size": batch_size,
+            "digest_tps": round(digest_tps, 1),
+            "ingest_tps": round(ingest_tps, 1),
+            "stream_len": stream_len,
+        },
     )
 
 
 __all__ = [
-    "emit_query_status",
-    "emit_perf_test_metrics",
     "emit_perf_test_stopped",
     "emit_perf_test_complete",
     "emit_perf_ingest_complete",
-    "emit_locust_complete",
+    "emit_perf_ingest_half_complete",
+    "emit_perf_ingest_progress",
+    "emit_perf_concurrent_status",
 ]

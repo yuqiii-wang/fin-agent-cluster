@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from celery import Celery
 from celery.schedules import crontab  # noqa: F401 — available for callers
-from celery.signals import after_setup_logger, after_setup_task_logger
+from celery.signals import after_setup_logger, after_setup_task_logger, worker_init
 
 from backend.config import get_settings
 from backend.streaming.config import (
@@ -24,6 +24,18 @@ from backend.streaming.log_filters import CeleryTaskSummaryFilter
 # One shared filter instance per process — keeps counts consistent across
 # the celery logger and the task logger.
 _task_summary_filter = CeleryTaskSummaryFilter()
+
+
+@worker_init.connect
+def _configure_worker_logging(**kwargs) -> None:  # type: ignore[misc]
+    """Apply the project-wide logging configuration in the worker subprocess.
+
+    Called once when the Celery worker process starts, before any task is
+    executed.  This ensures graph-runner and agent logs are routed to the
+    correct log files (streaming.log, app.log) rather than stdout only.
+    """
+    from backend.log_config import configure_logging
+    configure_logging()
 
 
 @after_setup_logger.connect
@@ -60,9 +72,6 @@ def create_celery_app() -> Celery:
         for t in ACTIVE_TOPICS
         if t.task_path
     })
-    # Always include the graph runner so run_graph_task is registered on
-    # every worker process that starts up (required for per-thread queues).
-    _include.append("backend.graph.runner")
 
     app = Celery(
         "fin_streaming",
@@ -71,11 +80,13 @@ def create_celery_app() -> Celery:
         include=_include,
     )
 
-    # Build beat schedule from active topics
+    # Build beat schedule from active topics; each entry carries its queue so
+    # beat dispatches directly to the dedicated worker pool.
     _beat_schedule = {
         f"poll-{topic.human_key}": {
             "task": topic.task_path,
             "schedule": topic.beat_interval,
+            "options": {"queue": topic.queue},
         }
         for topic in ACTIVE_TOPICS
         if topic.task_path

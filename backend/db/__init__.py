@@ -2,7 +2,7 @@
 
 Sub-packages:
     backend.db.postgres  — PostgreSQL engine, sessions, checkpointer, raw connections
-    backend.db.redis     — Redis Streams token publisher / subscriber
+    backend.db.redis     — Redis Streams token publisher / subscriber; lifecycle fanout/subscriber
 
 Public surface::
 
@@ -10,7 +10,8 @@ Public surface::
     from backend.db import stream_token, delete_stream, read_stream
 
 For SSE lifecycle notifications use backend.sse_notifications.
-For pg_listen use backend.db.postgres.listener directly.
+For lifecycle fanout/subscribe use backend.db.redis.lifecycle_fanout and
+backend.db.redis.lifecycle_subscriber.
 """
 
 from backend.db.postgres.init_ import init_db

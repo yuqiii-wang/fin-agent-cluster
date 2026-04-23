@@ -26,22 +26,19 @@ Completion signalling
 When all tokens are written the task:
 
 1. Appends a sentinel entry to the stream so the pub reader knows to stop.
-2. RPUSH es a JSON completion record to ``fin:perf:ingest:result:{thread_id}``
-   so the awaiting LangGraph coroutine can BLPOP without polling.
-3. Updates the state hash to ``"completed"`` / ``"timeout"``.
-4. Removes the session from the active set.
+2. Updates the state hash to ``"completed"`` / ``"timeout"``.
+3. Removes the session from the active set.
 
 Timeout handling
 ----------------
 Each batch checks whether ``time.time() - started_at > timeout_secs``.  On
-expiry the task writes the sentinel + completion record with
+expiry the task writes the sentinel + state update with
 ``stop_reason="timeout"`` and exits — no hardcoded sleep or grace period.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from typing import Any
@@ -54,7 +51,6 @@ from backend.graph.agents.perf_test.celery_ingest.config import (
     PERF_INGEST_ACTIVE_SET_KEY,
     PERF_INGEST_BATCH_SIZE,
     PERF_INGEST_MAX_RETRIES,
-    PERF_INGEST_RESULT_KEY_PREFIX,
     PERF_INGEST_RETRY_DELAY,
     PERF_INGEST_SENTINEL_FIELD,
     PERF_INGEST_SENTINEL_VALUE,
@@ -127,11 +123,6 @@ def _state_key(thread_id: str) -> str:
     return f"{PERF_INGEST_STATE_KEY_PREFIX}:{thread_id}"
 
 
-def _result_key(thread_id: str) -> str:
-    """Return the per-session completion signal list key."""
-    return f"{PERF_INGEST_RESULT_KEY_PREFIX}:{thread_id}"
-
-
 async def _signal_done(
     client: aioredis.Redis,
     thread_id: str,
@@ -153,11 +144,6 @@ async def _signal_done(
     await client.hset(
         _state_key(thread_id),
         mapping={"status": stop_reason, "produced": produced},
-    )
-    # Signal the awaiting LangGraph BLPOP.
-    await client.rpush(
-        _result_key(thread_id),
-        json.dumps({"produced": produced, "stop_reason": stop_reason}),
     )
     # Remove from active set — no longer needs heartbeat / recovery.
     await client.zrem(PERF_INGEST_ACTIVE_SET_KEY, thread_id)

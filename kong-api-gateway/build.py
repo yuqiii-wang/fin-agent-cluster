@@ -61,6 +61,7 @@ OUTPUT = GATEWAY_DIR / "kong.yml"
 _DEFAULTS: dict[str, str] = {
     "BACKEND_HOST": "host.docker.internal",
     "BACKEND_PORT": "8432",
+    "BACKEND_PORT_2": "8433",
     "OLLAMA_HOST": "host.docker.internal",
     "OLLAMA_PORT": "11434",
     "OLLAMA_MODEL": "qwen3.5-27b",

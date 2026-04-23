@@ -1,11 +1,13 @@
 """Run the FastAPI server with proper Windows asyncio configuration."""
 import asyncio
 import atexit
+import json
 import os
 import signal
 import subprocess
 import sys
-import uvicorn
+import tempfile
+import time
 from backend.config import get_settings
 from backend.log_config import configure_logging, get_logging_config
 
@@ -63,44 +65,54 @@ def _configure_proxy(proxy: str | None) -> None:
     os.environ["no_proxy"] = no_proxy
 
 
-def _start_celery(concurrency: int = 4) -> list[subprocess.Popen]:
-    """Start Celery worker(s) and beat scheduler as subprocesses.
+def _start_celery(concurrency: int = 2) -> list[subprocess.Popen]:
+    """Start dedicated Celery workers per queue group and the beat scheduler.
 
-    Pool is ``gevent`` on Windows (prefork is unreliable there) and
-    ``prefork`` on Unix (true OS-process isolation, better CPU utilisation).
-    Beat is embedded on Unix (``--beat``) and a separate subprocess on Windows.
+    Three workers are started, each consuming a single queue:
+
+    * ``stream:critical``  — ``GRAPH_EVENTS``; higher concurrency (concurrency + 2)
+      so SSE token delivery is never starved by heavier tasks.
+    * ``stream:default``   — ``MARKET_TICKS``, ``TRADE_SIGNALS``; default concurrency.
+    * ``stream:compute``   — ``QUANT_COMPUTE``; lower concurrency (max 2) to cap
+      CPU/IO pressure from pandas-ta + DB upsert batches.
+
+    Pool is ``gevent`` on Windows and ``prefork`` on Unix.
+    Beat is embedded on Unix (``--beat`` on the critical worker) and a separate
+    subprocess on Windows.
 
     Returns:
         List of :class:`subprocess.Popen` handles to pass to :func:`_stop_celery`.
     """
-    import time
     is_windows = sys.platform == "win32"
     pool = "gevent" if is_windows else "prefork"
     env = os.environ.copy()
     procs: list[subprocess.Popen] = []
-
-    worker_cmd = [
-        sys.executable, "-m", "celery",
-        "-A", "backend.streaming.celery_app.celery_app",
-        "worker",
-        "-Q", "celery",
-        "-n", f"main-{os.getpid()}@%h",
-        f"--concurrency={concurrency}",
-        f"--pool={pool}",
-        "--loglevel=info",
-    ]
-    # Unix prefork: stateless polling workers need no cluster coordination.
-    if not is_windows:
-        worker_cmd += ["--without-gossip", "--without-mingle"]
-
-    if not is_windows:
-        worker_cmd.append("--beat")
-
-    # Windows: isolate from uvicorn's CTRL_C_EVENT on hot-reload.
     _creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if is_windows else 0
 
-    print(f"[run.py] Starting Celery worker (concurrency={concurrency}, pool={pool}) ...")
-    procs.append(subprocess.Popen(worker_cmd, env=env, creationflags=_creation_flags))
+    # Worker specs: (queue, node_name_suffix, concurrency, embed_beat_on_unix)
+    _worker_specs = [
+        ("stream:critical", "critical", concurrency + 2, True),
+        ("stream:default",  "default",  concurrency,     False),
+        ("stream:compute",  "compute",  min(concurrency, 2), False),
+    ]
+
+    for queue, suffix, n, embed_beat in _worker_specs:
+        cmd = [
+            sys.executable, "-m", "celery",
+            "-A", "backend.streaming.celery_app.celery_app",
+            "worker",
+            "-Q", queue,
+            "-n", f"worker-{suffix}-{os.getpid()}@%h",
+            f"--concurrency={n}",
+            f"--pool={pool}",
+            "--loglevel=info",
+        ]
+        if not is_windows:
+            cmd += ["--without-gossip", "--without-mingle"]
+        if not is_windows and embed_beat:
+            cmd.append("--beat")
+        print(f"[run.py] Starting Celery worker (queue={queue}, concurrency={n}, pool={pool}) ...")
+        procs.append(subprocess.Popen(cmd, env=env, creationflags=_creation_flags))
 
     # Windows requires beat as a separate process.
     if is_windows:
@@ -208,12 +220,76 @@ def _assign_to_job(job: "int | None", proc: subprocess.Popen) -> None:
         kernel32.CloseHandle(handle)
 
 
+def _write_log_config(log_config: dict) -> str:
+    """Write *log_config* dict to a temp JSON file for uvicorn CLI ``--log-config``.
+
+    Returns:
+        Absolute path to the written temp file.
+    """
+    fd, path = tempfile.mkstemp(suffix=".json", prefix="uvicorn_log_")
+    with os.fdopen(fd, "w") as f:
+        json.dump(log_config, f)
+    return path
+
+
+def _start_uvicorn_instances(
+    base_port: int,
+    count: int,
+    log_config_path: str,
+) -> list[subprocess.Popen]:
+    """Start *count* uvicorn instances on consecutive ports starting at *base_port*.
+
+    Args:
+        base_port: First port to bind; subsequent instances increment by 1.
+        count: Number of instances to start.
+        log_config_path: Path to the JSON logging config file for ``--log-config``.
+
+    Returns:
+        List of :class:`subprocess.Popen` handles.
+    """
+    procs: list[subprocess.Popen] = []
+    _creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+    for i in range(count):
+        port = base_port + i
+        cmd = [
+            sys.executable, "-m", "uvicorn",
+            "backend.main:app",
+            "--host", "127.0.0.1",
+            "--port", str(port),
+            "--reload",
+            "--reload-dir", "backend",
+            "--log-config", log_config_path,
+        ]
+        print(f"[run.py] Starting FastAPI instance {i + 1}/{count} on port {port} ...")
+        procs.append(subprocess.Popen(cmd, env=os.environ.copy(), creationflags=_creation_flags))
+    return procs
+
+
+def _stop_uvicorn_instances(procs: list[subprocess.Popen]) -> None:
+    """Terminate all uvicorn instances gracefully, then forcefully."""
+    for proc in procs:
+        if proc.poll() is None:
+            if sys.platform == "win32":
+                try:
+                    proc.send_signal(signal.CTRL_BREAK_EVENT)
+                except (OSError, PermissionError):
+                    proc.terminate()
+            else:
+                proc.terminate()
+    for proc in procs:
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run the FastAPI server.")
     parser.add_argument("--no-proxy", action="store_true", help="Disable the use of the proxy even if configured.")
     parser.add_argument("--no-celery", action="store_true", help="Skip starting Celery workers (FastAPI fallback threads will be used instead).")
-    parser.add_argument("--celery-concurrency", type=int, default=4, metavar="N", help="Number of Celery worker threads (default: 4).")
+    parser.add_argument("--celery-concurrency", type=int, default=2, metavar="N", help="Number of Celery worker threads (default: 2).")
+    parser.add_argument("--instances", type=int, default=2, metavar="N", help="Number of FastAPI/uvicorn instances to start (default: 2).")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -235,25 +311,35 @@ if __name__ == "__main__":
             _assign_to_job(_job, _p)
         atexit.register(_stop_celery, celery_procs)
 
+    log_config_path = _write_log_config(get_logging_config())
+    atexit.register(lambda: os.unlink(log_config_path) if os.path.exists(log_config_path) else None)
+
+    uvicorn_procs = _start_uvicorn_instances(
+        base_port=settings.FASTAPI_PORT,
+        count=args.instances,
+        log_config_path=log_config_path,
+    )
+    for _p in uvicorn_procs:
+        _assign_to_job(_job, _p)
+    atexit.register(_stop_uvicorn_instances, uvicorn_procs)
+
     def _shutdown(signum, frame) -> None:  # type: ignore[misc]
         """Forward SIGTERM/SIGINT to a clean sys.exit so atexit runs."""
         sys.exit(0)
 
-    # Register before uvicorn.run() as a fallback for early signals.
+    # Register before instances start as a fallback for early signals.
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
 
     try:
-        uvicorn.run(
-            "backend.main:app",
-            host="127.0.0.1",  # loopback only — Kong reaches it via host.docker.internal
-            port=settings.FASTAPI_PORT,
-            reload=True,
-            reload_dirs=["backend"],
-            workers=1,
-            log_config=get_logging_config(),
-        )
+        while True:
+            time.sleep(0.5)
+            if all(p.poll() is not None for p in uvicorn_procs):
+                break
+    except (KeyboardInterrupt, SystemExit):
+        pass
     finally:
+        _stop_uvicorn_instances(uvicorn_procs)
         if celery_procs:
             print("[run.py] Stopping Celery workers ...")
             _stop_celery(celery_procs)

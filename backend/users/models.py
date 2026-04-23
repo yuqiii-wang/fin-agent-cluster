@@ -3,11 +3,12 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Index, String, Text, func, TIMESTAMP
+from sqlalchemy import BigInteger, Boolean, Index, Integer, String, Text, func, TIMESTAMP
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.db.postgres.base import Base
+from backend.db.postgres.types import QueryStatus, query_status_sa_type
 
 
 class GuestUser(Base):
@@ -59,10 +60,6 @@ class UserQuery(Base):
     __tablename__ = "user_queries"
 
     __table_args__ = (
-        CheckConstraint(
-            "status IN ('pending', 'running', 'completed', 'failed', 'cancelled')",
-            name="ck_user_queries_status",
-        ),
         Index("fin_agents_user_queries_user_id_idx", "user_id"),
         Index("fin_agents_user_queries_status_idx", "status"),
         Index("fin_agents_user_queries_created_at_idx", "created_at"),
@@ -78,7 +75,7 @@ class UserQuery(Base):
 
     query: Mapped[str] = mapped_column(Text, nullable=False)
 
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(query_status_sa_type, nullable=False, default=QueryStatus.PENDING)
 
     answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -90,3 +87,7 @@ class UserQuery(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
 
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    is_ack: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ack_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

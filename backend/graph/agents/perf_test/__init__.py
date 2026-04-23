@@ -3,8 +3,9 @@
 Sub-modules
 -----------
 node           — ``perf_test_streamer`` LangGraph node function
-models         — ``PerfTestOutput`` Pydantic output model
-tasks          — ingest driver (``run_ingest``) and pub reader (``perf_stream_reader_gen``)
+tasks          — split ingest (``run_ingest_first_half``, ``run_ingest_second_half``),
+                 rate-limited ingest (``run_rate_limited_ingest``),
+                 adaptive reader (``dynamic_reader_gen``)
 celery_ingest  — dedicated PerfIngest Celery app for bulk token production
 """
 

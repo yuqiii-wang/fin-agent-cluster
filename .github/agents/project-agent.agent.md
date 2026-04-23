@@ -17,6 +17,11 @@ Check in fin quant trading domain for best practices and existing solutions befo
 
 * Do NOT add hardcoded time lag or grace period for any flow; if got racing or other safety concerns, implement proper locking or queuing mechanism to ensure safety without hardcoded time lag.
 
+### Backend and Frontend Communications
+
+* There are two main flows: streaming flow with celery + redis streams, and non-streaming flow with request/response or SSE; do NOT mix the two flows, implement new features in one flow or the other based on the nature of the feature, but do not mix both flows in the same feature.
+* main fast-api gathers celery worker results and pg notifies client application via SSE; do not send notifications directly from celery workers, but always go through main fast-api to send notifications to client application, to ensure all notifications are sent in a consistent manner and to avoid racing conditions or missed notifications.
+
 ### Backend
 
 * Must use `pydantic` models for all data validation and serialization.
@@ -31,6 +36,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 * In there are bulk static config or dict maps, write into sql then on backend start read from sql, do not hard code in the backend code.
 * Do not hardcode any API response, do not hardcode any dicts/maps, but to traverse project to see/import class definitions and usages to generate response.
 * streaming related flow be with redis streams with celery; others are with SSE or request/response.
+* Backend runs on WSL2 so it is prefork to celery.
 
 About agent nodes:
 
@@ -53,3 +59,7 @@ About DB and SQL:
 
 The e2e-flow skill covers the end-to-end request/response pipeline, you can reference it to understand the architecture and conventions of the project. If you observe any diffs from the e2e-flow skill, update the skill with the new code and logic.
 For diagram, draw mermaid.
+
+### Debug
+
+logs are in backend/logs, check logs for debugging and understanding the flow of the project.

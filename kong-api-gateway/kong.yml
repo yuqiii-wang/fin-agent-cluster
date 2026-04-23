@@ -29,9 +29,35 @@ upstreams:
   targets:
   - target: host.docker.internal:8432
     weight: 100
+  - target: host.docker.internal:8433
+    weight: 100
+- name: fastapi-sse-upstream
+  algorithm: round-robin
+  healthchecks:
+    active:
+      healthy:
+        interval: 60
+        successes: 1
+      unhealthy:
+        interval: 10
+        http_failures: 3
+      http_path: /health
+      timeout: 5
+  targets:
+  - target: host.docker.internal:8432
+    weight: 100
+  - target: host.docker.internal:8433
+    weight: 100
 services:
 - name: fastapi
   host: fastapi-upstream
+  port: 80
+  protocol: http
+  connect_timeout: 10000
+  write_timeout: 30000
+  read_timeout: 30000
+- name: fastapi-sse
+  host: fastapi-sse-upstream
   port: 80
   protocol: http
   connect_timeout: 10000
@@ -68,7 +94,7 @@ routes:
   - http
   - https
 - name: route-stream
-  service: fastapi
+  service: fastapi-sse
   paths:
   - /api/v1/stream
   strip_path: false
@@ -90,7 +116,7 @@ routes:
         database: 1
         timeout: 2000
 - name: route-streaming-sse
-  service: fastapi
+  service: fastapi-sse
   paths:
   - /api/v1/streaming/sse
   methods:
@@ -115,7 +141,7 @@ routes:
         database: 1
         timeout: 2000
 - name: route-streaming-poll
-  service: fastapi
+  service: fastapi-sse
   paths:
   - /api/v1/streaming/poll
   methods:

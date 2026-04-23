@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { Flex, Typography, theme } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import { NodeList } from "./NodeList";
@@ -12,13 +12,13 @@ interface Props {
   onNodeClick: (node: NodeGroup) => void;
 }
 
-export function MessageList({ messages, onNodeClick }: Props) {
+export const MessageList = memo(function MessageList({ messages, onNodeClick }: Props) {
   const { token } = theme.useToken();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages.length]);
 
   return (
     <Flex
@@ -112,4 +112,4 @@ export function MessageList({ messages, onNodeClick }: Props) {
       <div ref={bottomRef} />
     </Flex>
   );
-}
+});

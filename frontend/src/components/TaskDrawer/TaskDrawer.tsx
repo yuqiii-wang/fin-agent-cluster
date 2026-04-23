@@ -9,6 +9,7 @@ import { watchTask } from "../../api";
 import { TaskMeta } from "./TaskMeta";
 import { TaskLabel } from "./TaskLabel";
 import { LlmTaskActions } from "./LlmTaskActions";
+import { TaskCancelButton } from "./TaskCancelButton";
 
 const { Text } = Typography;
 
@@ -84,6 +85,7 @@ export function TaskDrawer({ node, tokenStreams, taskProviders, taskMeta, onClos
             return {
               key: String(task.id),
               label: <TaskLabel task={task} />,
+              extra: task.status === "running" ? <TaskCancelButton task={task} /> : undefined,
               style: { marginBottom: 6, borderRadius: 6 },
               children: (
                 <Flex vertical gap={8}>
