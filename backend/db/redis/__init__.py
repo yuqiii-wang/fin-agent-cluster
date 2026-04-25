@@ -1,24 +1,23 @@
 """Redis database management sub-package.
 
-Sub-modules:
-    backend.db.redis.publisher           — append token events to a thread Redis Stream (stream_token)
-    backend.db.redis.subscriber          — read token events from a thread Redis Stream (read_stream)
-    backend.db.redis.query_phase         — ephemeral query-phase tracking (set/get/delete_query_phase)
-    backend.db.redis.lifecycle_fanout    — single PG LISTEN → Redis PUBLISH fanout task (with leader election)
-    backend.db.redis.lifecycle_subscriber — per-SSE Redis Pub/Sub lifecycle subscriber (read_lifecycle)
-    backend.db.redis.watch_registry      — Redis-backed watch registry (register/unregister/get_watched_task)
-    backend.db.redis.cancel_signal       — Redis Pub/Sub cancel signal (publish_cancel / run_cancel_listener)
-    backend.db.redis.lock_manager        — systematic Redis lock management (RedisLock, cleanup_thread_session)
+Sub-packages:
+    backend.db.redis.streams       — Redis Streams token I/O and pending-notify bookkeeping
+    backend.db.redis.lifecycle     — Redis Pub/Sub lifecycle subscriber
+    backend.db.redis.session       — per-session state (query phase, watch registry, task ACK, cancel)
+    backend.db.redis.lock_manager  — RedisLock + canonical session-key cleanup
 
-Pending-notify ack store (publisher):
-    push_pending_notify   — record a pg_notify payload after commit
+Top-level:
+    backend.db.redis.router        — shard-consistent routing (get_redis_router)
+
+Pending-notify ack store (streams.publisher):
+    push_pending_notify   — record a lifecycle payload after commit
     ack_pending_notify    — mark a delivered event as received (HDEL)
     drain_pending_notify  — return+clear all unacked entries for recovery (returns DrainEntry list)
     clear_pending_notify  — wipe the hash on SSE teardown
     DrainEntry            — dataclass returned by drain_pending_notify
 """
 
-from backend.db.redis.publisher import (
+from backend.db.redis.streams.publisher import (
     DrainEntry,
     ack_pending_notify,
     clear_pending_notify,
@@ -27,18 +26,23 @@ from backend.db.redis.publisher import (
     push_pending_notify,
     stream_token,
 )
-from backend.db.redis.subscriber import read_stream
-from backend.db.redis.query_phase import set_query_phase, get_query_phase, delete_query_phase
-from backend.db.redis.lifecycle_fanout import lifecycle_pub_channel, run_lifecycle_fanout
-from backend.db.redis.lifecycle_subscriber import read_lifecycle
-from backend.db.redis.watch_registry import (
+from backend.db.redis.streams.subscriber import read_stream
+from backend.db.redis.session.query_phase import set_query_phase, get_query_phase, delete_query_phase
+from backend.db.redis.lifecycle.subscriber import lifecycle_pub_channel, read_lifecycle
+from backend.db.redis.session.watch_registry import (
     register_watch,
     unregister_watch,
     get_watched_task,
     is_thread_watching,
 )
-from backend.db.redis.cancel_signal import publish_cancel, run_cancel_listener
+from backend.db.redis.session.cancel_signal import publish_cancel, run_cancel_listener
 from backend.db.redis.lock_manager import RedisLock, cleanup_thread_session
+from backend.db.redis.router import RedisRouter, get_redis_router
+from backend.db.redis.session.task_ack_store import (
+    record_task_step,
+    ack_task_step,
+    increment_task_step_retry,
+)
 
 __all__ = [
     "stream_token",
@@ -53,7 +57,6 @@ __all__ = [
     "get_query_phase",
     "delete_query_phase",
     "lifecycle_pub_channel",
-    "run_lifecycle_fanout",
     "read_lifecycle",
     "register_watch",
     "unregister_watch",
@@ -63,5 +66,9 @@ __all__ = [
     "run_cancel_listener",
     "RedisLock",
     "cleanup_thread_session",
+    "RedisRouter",
+    "get_redis_router",
+    "record_task_step",
+    "ack_task_step",
+    "increment_task_step_retry",
 ]
-

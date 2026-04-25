@@ -49,10 +49,10 @@ from datetime import datetime
 from sqlalchemy import select, update
 
 from backend.api.registry import running_tasks as _running_tasks
-from backend.db import checkpointer, get_session_factory as _get_session_factory
-from backend.db.redis.query_phase import set_query_phase
+from backend.db import get_session_factory as _get_session_factory
+from backend.db.redis.session.query_phase import set_query_phase
 from backend.db.redis.lock_manager.session_cleanup import cleanup_thread_session
-from backend.graph.builder import build_unified_graph
+from backend.graph.compiled import get_compiled_graph
 from backend.sse_notifications import emit_done
 from backend.sse_notifications.query_lifecycle import emit_query_status
 from backend.users.models import UserQuery
@@ -64,7 +64,7 @@ async def run_graph_async(
     thread_id: str,
     query: str,
     perf_total_tokens: int = 100_000,
-    perf_timeout_secs: int = 60,
+    perf_timeout_secs: int = 20,
     perf_test_mode: str = "throughput",
     perf_token_per_sec: int = 500,
 ) -> None:
@@ -96,18 +96,17 @@ async def run_graph_async(
         await set_query_phase(thread_id, "preparing")
         await emit_query_status(thread_id, "preparing")
 
-        async with checkpointer() as cp:
-            graph = build_unified_graph().compile(checkpointer=cp)
-            config = {
-                "configurable": {
-                    "thread_id": thread_id,
-                    "checkpoint_ns": "",
-                }
+        graph = get_compiled_graph()
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "checkpoint_ns": "",
             }
-            # Provide defaults for every field in UnifiedGraphState so both
-            # branches (fin-analysis and perf-test) find their keys present.
-            # Fields unused by the active branch are simply ignored.
-            initial_state = {
+        }
+        # Provide defaults for every field in UnifiedGraphState so both
+        # branches (fin-analysis and perf-test) find their keys present.
+        # Fields unused by the active branch are simply ignored.
+        initial_state = {
                 "query": query,
                 "thread_id": thread_id,
                 "steps": [],
@@ -127,21 +126,19 @@ async def run_graph_async(
                 "test_mode": perf_test_mode,
                 "token_per_sec": perf_token_per_sec,
             }
-            final_state = await graph.ainvoke(initial_state, config)
-            # Perf-test branch stores its summary in ``result``; fin-analysis
-            # in ``report`` (with ``market_data`` as a fallback legacy field).
-            report = (
-                final_state.get("result")
-                or final_state.get("report")
-                or final_state.get("market_data")
-                or "No report generated"
-            )
-            # Remove from running_tasks SYNCHRONOUSLY before any further awaits
-            # (including the checkpointer __aexit__).  This closes the race
-            # window where the frontend safety-timeout fires cancel_query after
-            # natural completion, which would fire a second emit_done and bulk-
-            # cancel already-completed AgentTask rows.
-            _running_tasks.pop(thread_id, None)
+        final_state = await graph.ainvoke(initial_state, config)
+        # Perf-test branch stores its summary in ``result``; fin-analysis
+        # in ``report`` (with ``market_data`` as a fallback legacy field).
+        report = (
+            final_state.get("result")
+            or final_state.get("report")
+            or final_state.get("market_data")
+            or "No report generated"
+        )
+        # Remove from running_tasks SYNCHRONOUSLY before any further awaits.
+        # This closes the race window where the frontend safety-timeout fires
+        # cancel_query after natural completion.
+        _running_tasks.pop(thread_id, None)
 
         # Atomically claim ownership of the done transition.  Using WHERE
         # status='running' means only one writer (runner or cancel endpoint)

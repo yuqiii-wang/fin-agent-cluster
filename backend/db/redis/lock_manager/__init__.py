@@ -12,12 +12,17 @@ backend.db.redis.lock_manager.session_cleanup
     :func:`cleanup_thread_session` — deletes **all** Redis keys owned by a
     LangGraph ``thread_id`` session in one place, so runner / cancel / error
     paths share a single canonical cleanup call.
+
+    :func:`purge_stale_perf_streams` — scans all Redis shards and deletes every
+    ``fin:perf:*`` and ``watch:*`` key left by previous runs.  Called once at
+    FastAPI startup to reclaim memory after abnormal terminations.
 """
 
 from backend.db.redis.lock_manager.redis_lock import RedisLock
-from backend.db.redis.lock_manager.session_cleanup import cleanup_thread_session
+from backend.db.redis.lock_manager.session_cleanup import cleanup_thread_session, purge_stale_perf_streams
 
 __all__ = [
     "RedisLock",
     "cleanup_thread_session",
+    "purge_stale_perf_streams",
 ]

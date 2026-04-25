@@ -2,7 +2,7 @@
 
 Stores the current backend processing phase for a query so that
 late-connecting SSE clients can recover the current state without relying on
-pg_notify events that may have fired before the stream was open.
+lifecycle events that may have fired before the stream was open.
 
 Key:    ``fin:query:phase:{thread_id}`` (string)
 TTL:    600 s  (covers the longest perf-test run with a safety margin)
@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from backend.db.redis.publisher import _get_publish_client
+from backend.db.redis.router import get_redis_router
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ async def set_query_phase(thread_id: str, phase: str) -> None:
         phase:     One of ``"received"``, ``"preparing"``, ``"ingesting"``,
                    ``"digesting"``.
     """
-    client = await _get_publish_client()
+    client = get_redis_router().get_client_for_thread(thread_id)
     await client.setex(_phase_key(thread_id), _PHASE_TTL_SECS, phase)
     logger.debug("[query_phase] set thread_id=%s phase=%s", thread_id, phase)
 
@@ -52,7 +52,7 @@ async def get_query_phase(thread_id: str) -> Optional[str]:
     Returns:
         Phase string or ``None`` if the key has expired or was never set.
     """
-    client = await _get_publish_client()
+    client = get_redis_router().get_client_for_thread(thread_id)
     val: Optional[str] = await client.get(_phase_key(thread_id))
     return val
 
@@ -63,7 +63,7 @@ async def delete_query_phase(thread_id: str) -> None:
     Args:
         thread_id: LangGraph UUID thread identifier.
     """
-    client = await _get_publish_client()
+    client = get_redis_router().get_client_for_thread(thread_id)
     await client.delete(_phase_key(thread_id))
     logger.debug("[query_phase] deleted thread_id=%s", thread_id)
 

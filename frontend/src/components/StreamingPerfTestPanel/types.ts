@@ -46,6 +46,14 @@ export interface ThreadSession {
   concurrent_ingest_tps?: number;
   /** Redis stream backlog during concurrent Phase-2 (from perf_concurrent_status). */
   concurrent_stream_len?: number;
+  /** Token count of the very first perf_token_batch event received. */
+  batch_first?: number;
+  /** Maximum token count seen across all perf_token_batch events. */
+  batch_max?: number;
+  /** Running average token count across all perf_token_batch events. */
+  batch_ave?: number;
+  /** Token count of the most recent perf_token_batch event. */
+  batch_last?: number;
   /**
    * Wall-clock ms when the first `perf_token_batch` event was received.
    * Used as the authoritative digest start for accurate throughput computation —
@@ -59,7 +67,19 @@ export interface ThreadSession {
    * Used to render the per-row TPS sparkline bar chart.
    */
   tps_history?: number[];
+  /**
+   * Accumulated streaming text for the Streaming Output panel.
+   * Built by expanding each `perf_token_batch` count into `count` individual
+   * `"· "` markers — one per token — so the display flows token-by-token.
+   * Capped at 6 000 characters (oldest chars trimmed from the front).
+   */
+  stream_text?: string;
 }
+
+/** Terminal session statuses — lifecycle has ended and all metrics should be frozen. */
+export const TERMINAL_STATUSES: ReadonlySet<ThreadSession["status"]> = new Set([
+  "completed", "failed", "cancelled", "timeout",
+]);
 
 /** User-configurable parameters for a perf-test run. */
 export interface PerfTestConfig {
@@ -69,7 +89,7 @@ export interface PerfTestConfig {
   tokenCount: number;
   /** Target ingest rate per stream in tokens/sec — used in concurrency mode (default 500). */
   tokenPerSec: number;
-  /** Hard deadline in seconds passed directly to MockChatModel (default 60). */
+  /** Hard deadline in seconds passed directly to MockChatModel (default 20). */
   timeoutSecs: number;
   /** Number of concurrent streams to spawn on initial load and Restart (default 5). */
   initialRequestCount: number;
@@ -79,7 +99,7 @@ export const DEFAULT_PERF_CONFIG: PerfTestConfig = {
   testMode: "throughput",
   tokenCount: 100_000,
   tokenPerSec: 500,
-  timeoutSecs: 60,
+  timeoutSecs: 20,
   initialRequestCount: 5,
 };
 

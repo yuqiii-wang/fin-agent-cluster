@@ -14,8 +14,6 @@ from sqlalchemy import Enum as SAEnum
 __all__ = [
     "QueryStatus",
     "query_status_sa_type",
-    "StreamingStatus",
-    "streaming_status_sa_type",
 ]
 
 
@@ -40,30 +38,6 @@ class QueryStatus(StrEnum):
 query_status_sa_type = SAEnum(
     *[s.value for s in QueryStatus],
     name="query_status",
-    schema="fin_agents",
-    create_type=False,
-)
-
-
-class StreamingStatus(StrEnum):
-    """Valid values for ``fin_agents.streaming_status`` Postgres enum.
-
-    Used by ``fin_agents.streamings.status`` to record per-step SSE delivery
-    state.  ``StrEnum`` keeps backward compatibility with plain-string checks.
-    """
-
-    CONNECTING = "connecting"
-    RECEIVED = "received"
-    SENDING = "digesting"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    TIMEOUT = "timeout"
-
-
-streaming_status_sa_type = SAEnum(
-    *[s.value for s in StreamingStatus],
-    name="streaming_status",
     schema="fin_agents",
     create_type=False,
 )

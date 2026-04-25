@@ -1,6 +1,7 @@
 import { Flex, Space, Tag, Typography } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import type { TaskInfo } from "../../types";
+import { styles } from "./TaskLabel.styles";
 
 const { Text } = Typography;
 
@@ -14,11 +15,11 @@ export const STATUS_COLOR: Record<string, string> = {
 
 export function TaskLabel({ task }: { task: TaskInfo }) {
   return (
-    <Flex align="center" gap={8} style={{ width: "100%", minWidth: 0 }}>
-      <Text strong style={{ fontSize: 13, flex: 1, minWidth: 0 }}>
+    <Flex align="center" gap={8} style={styles.container}>
+      <Text strong style={styles.labelText}>
         {task.task_key}
       </Text>
-      <Tag color={STATUS_COLOR[task.status] ?? "default"} style={{ marginRight: 0, flexShrink: 0 }}>
+      <Tag color={STATUS_COLOR[task.status] ?? "default"} style={styles.statusTag}>
         {task.status === "running" ? (
           <Space size={4}><LoadingOutlined />{task.status}</Space>
         ) : task.status}

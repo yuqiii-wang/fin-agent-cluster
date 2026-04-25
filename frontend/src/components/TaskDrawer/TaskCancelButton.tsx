@@ -3,6 +3,7 @@ import { StopOutlined } from "@ant-design/icons";
 import { useState } from "react";
 import type { TaskInfo } from "../../types";
 import { cancelTask } from "../../api";
+import { styles } from "./TaskCancelButton.styles";
 
 /**
  * Cancel button shown in the task collapse header for every running task.
@@ -38,7 +39,7 @@ export function TaskCancelButton({ task }: { task: TaskInfo }) {
         loading={busy}
         icon={<StopOutlined />}
         onClick={handleCancel}
-        style={{ fontSize: 11 }}
+        style={styles.button}
       >
         Cancel
       </Button>

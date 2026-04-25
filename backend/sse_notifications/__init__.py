@@ -28,7 +28,7 @@ Service sub-packages
 Shared modules
 --------------
 ``channel``
-    Low-level PostgreSQL NOTIFY transport and channel-naming convention.
+    Direct Redis Pub/Sub publish transport for lifecycle events.
 ``schemas``
     Pydantic payload models for every SSE event type.
 
@@ -41,11 +41,11 @@ Usage example
         stream_text_task, stream_llm_task,
         signal_task_control, TaskCancelledSignal, TaskPassSignal,
         emit_node_input, emit_node_output,
-        pg_notify, SHARED_LIFECYCLE_CHANNEL,
+        publish_lifecycle,
     )
 """
 
-from backend.sse_notifications.channel import SHARED_LIFECYCLE_CHANNEL, pg_notify
+from backend.sse_notifications.channel import publish_lifecycle
 from backend.sse_notifications.schemas import (
     CancelledPayload,
     CompletedPayload,
@@ -54,7 +54,7 @@ from backend.sse_notifications.schemas import (
     FailedPayload,
     NodeInputPayload,
     NodeOutputPayload,
-    PG_NOTIFY_EVENTS,
+    LIFECYCLE_EVENTS,
     PingPayload,
     QueryAckConfirmedPayload,
     QueryReceivedPayload,
@@ -85,12 +85,11 @@ from backend.sse_notifications.query_lifecycle import emit_query_received, emit_
 
 __all__ = [
     # channel
-    "SHARED_LIFECYCLE_CHANNEL",
-    "pg_notify",
+    "publish_lifecycle",
     # schemas — agent tasks
     "SseEventType",
     "TERMINAL_TASK_EVENTS",
-    "PG_NOTIFY_EVENTS",
+    "LIFECYCLE_EVENTS",
     "ConnectedPayload",
     "StartedPayload",
     "TokenPayload",

@@ -99,3 +99,5 @@ ollama/QWen3-0.6B-Emb/*
 celerybeat-schedule.*
 
 logs
+
+pg-backup

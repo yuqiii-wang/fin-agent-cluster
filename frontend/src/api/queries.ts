@@ -88,3 +88,20 @@ export async function ackQuery(threadId: string, token: string): Promise<QueryRe
   }
   return res.json();
 }
+
+/**
+ * Signal the backend that this concurrency perf stream has reached stable TPS.
+ * The backend will conclude the ingest loop cleanly and emit `perf_test_complete`
+ * (instead of `perf_test_stopped`) so the session closes as "completed".
+ * Fire-and-forget — resolves immediately once the HTTP response returns.
+ */
+export async function stablePerfStream(threadId: string): Promise<void> {
+  const res = await fetch(`${BASE}/users/query/${threadId}/perf-stable`, {
+    method: "POST",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `HTTP ${res.status}`);
+  }
+}

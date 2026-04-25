@@ -30,7 +30,7 @@ async def get_region_by_name(region_name: str) -> Optional[tuple[str, list[str]]
         matches or the region has no indexes.
     """
     try:
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
                 "SELECT code, indexes FROM fin_markets.regions WHERE LOWER(name) = LOWER(%s)",
                 (region_name.strip(),),
@@ -52,26 +52,49 @@ class PromptCatalogs:
     sectors: str       # news_sector ENUM values
 
 
+_catalogs_cache: PromptCatalogs | None = None
+
+
+async def warm_prompt_catalogs() -> None:
+    """Force-load and cache prompt catalogs.  Call once at application startup.
+
+    Subsequent calls to :func:`get_prompt_catalogs` return the in-memory cache
+    instantly — eliminating the three raw PostgreSQL connections that would
+    otherwise be opened on the first query request.
+    """
+    global _catalogs_cache
+    _catalogs_cache = None          # discard any stale cache
+    _catalogs_cache = await get_prompt_catalogs()
+    logger.info("[get_prompt_catalogs] catalog cache warmed")
+
+
 async def get_prompt_catalogs() -> PromptCatalogs:
     """Load catalog strings for the query_optimizer prompt from the DB.
+
+    Returns cached data on all calls after :func:`warm_prompt_catalogs` has
+    run at startup.  On a cache miss (first call or after a cache reset) three
+    raw PostgreSQL connections are opened to load the static catalog data.
 
     Queries:
     - ``fin_markets.regions`` for human-readable region names (grouped by zone)
     - ``fin_markets.regions`` for index labels per region
-    - ``fin_markets.news_sector`` ENUM values for GICS sector list
+    - ``fin_markets.news_sectors`` ENUM values for GICS sector list
 
     Returns:
         A :class:`PromptCatalogs` with three pre-formatted strings ready to
         embed in the system prompt.  Falls back to empty strings on DB error
         so the caller can still proceed with a degraded prompt.
     """
+    if _catalogs_cache is not None:
+        return _catalogs_cache
+
     catalogs = PromptCatalogs()
     catalogs.regions = ""
     catalogs.indexes = ""
     catalogs.sectors = ""
 
     try:
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             # ── Region names, grouped by zone ─────────────────────────────
             cur = await conn.execute(
                 """
@@ -95,7 +118,7 @@ async def get_prompt_catalogs() -> PromptCatalogs:
             catalogs.regions += "\nAggregate: Global, Americas, EMEA, Asia-Pacific"
 
         # ── Index tickers per region ─────────────────────────────────────
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
                 """
                 SELECT name, indexes
@@ -114,7 +137,7 @@ async def get_prompt_catalogs() -> PromptCatalogs:
         catalogs.indexes = "\n".join(idx_lines)
 
         # ── news_sector values from news_sectors table ──────────────────────────
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
                 "SELECT code AS sector FROM fin_markets.news_sectors ORDER BY sort_order"
             )
@@ -141,7 +164,7 @@ async def get_region_name_to_code() -> dict[str, str]:
         Empty dict on DB error (caller falls back to empty string).
     """
     try:
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute("SELECT code, name FROM fin_markets.regions ORDER BY code")
             rows = await cur.fetchall()
         return {row["name"].lower(): row["code"] for row in rows if row["name"] and row["code"]}
@@ -168,7 +191,7 @@ async def get_region_indexes(region_code: str) -> list[str]:
         First item is the primary benchmark index.
     """
     try:
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
                 "SELECT indexes FROM fin_markets.regions WHERE code = %s",
                 (region_code.lower(),),
@@ -199,7 +222,7 @@ async def get_regions_for_validation() -> list[dict]:
         Empty list on DB error.
     """
     try:
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
                 """
                 SELECT code, name, currency_code, indexes
@@ -235,7 +258,7 @@ async def get_region_currency_map() -> dict[str, str]:
         Dict like ``{"us": "USD", "jp": "JPY", ...}``.  Empty dict on DB error.
     """
     try:
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
                 "SELECT code, currency_code FROM fin_markets.regions WHERE currency_code IS NOT NULL ORDER BY code"
             )
@@ -257,7 +280,7 @@ async def get_currency_codes() -> set[str]:
         Empty set on DB error.
     """
     try:
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute("SELECT code FROM fin_markets.currencies ORDER BY code")
             rows = await cur.fetchall()
         return {row["code"] for row in rows}
@@ -278,7 +301,7 @@ async def get_news_sector_values() -> list[str]:
         Empty list on DB error.
     """
     try:
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
                 "SELECT code AS sector FROM fin_markets.news_sectors ORDER BY sort_order"
             )
@@ -304,7 +327,7 @@ async def get_currency_for_symbol(symbol: str) -> dict | None:
         ``None`` when the symbol has no region data or the DB query fails.
     """
     try:
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
                 """
                 SELECT c.code, c.name, c.symbol, c.decimals

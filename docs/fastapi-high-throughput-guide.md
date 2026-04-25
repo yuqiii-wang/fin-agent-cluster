@@ -607,6 +607,11 @@ When a streaming system is slower than expected, check in this order:
 | 13 | `GRAPH_EVENTS` poll delayed by compute batch | All stream tasks share one Celery queue | Dedicated queues: `stream:critical`, `stream:default`, `stream:compute` |
 | 14 | UI jank / high JS CPU during token stream | `setMessages` called per token (~100 renders/sec) | Buffer tokens in refs, flush to React state every 100 ms |
 | 15 | `scrollIntoView` fires every 100 ms during streaming | Scroll dep is full `messages` array | Change dep to `messages.length`; wrap `MessageList` and `NodeList` with `React.memo` |
+| 16 | High max first-token latency despite fast LLM | Per-query graph rebuild + cold PG connect for checkpointer | Pre-compile graph once at startup with pooled `AsyncPostgresSaver` (§14.1) |
+| 17 | Prompt catalog DB queries on every request | `get_prompt_catalogs()` opens 3 connections per call | Cache catalogs at startup with `warm_prompt_catalogs()` (§14.2) |
+| 18 | Every `raw_conn()` call opens a TCP connection | No pool for general SQL queries | Shared `AsyncConnectionPool` in `raw_conn()` (§14.3) |
+| 19 | First query after restart is visibly slower | LLM client not initialised until first request | Call `get_llm()` once in FastAPI lifespan (§14.4) |
+| 20 | DB write latency sits on critical path before first LLM token | `start_node_execution` sequential before `build_chain` | `asyncio.gather(build_chain, start_node_execution)` (§14.5) |
 
 ---
 
@@ -1110,3 +1115,290 @@ const selectedStreamingText = useMemo(
 | `NodeList` re-renders/sec | ~100 | 0 (memo + stable nodes ref) |
 | `scrollIntoView` calls/sec | ~10 | 0 during streaming (length unchanged mid-stream) |
 | `items` JSX rebuilt/sec | ~100 | 0 (memo invalidates only on node status change) |
+
+---
+
+## 14. First-Token Latency — Five Critical-Path Fixes
+
+The **time to first token** (TTFT) is the wall-clock duration from the moment
+the LangGraph asyncio.Task is scheduled (POST /ack) to the moment the first SSE
+`token` event reaches the browser.  Five sequential blockers sit on this path
+before the LLM even starts streaming.
+
+### Critical path (before fixes)
+
+```
+POST /ack → asyncio.create_task(run_graph_async)
+  │
+  ├─ [1] AsyncConnection.connect()         ← NEW TCP conn every query (~10–50 ms)
+  ├─ [1] build_unified_graph().compile()   ← graph rebuild every query (~5–20 ms)
+  │       (inside async with checkpointer() as cp)
+  │
+  └─ query_optimizer node
+       ├─ [3] get_prompt_catalogs()        ← 3 raw_conn() opens (~30–150 ms total)
+       │       raw_conn() zone query
+       │       raw_conn() indexes query
+       │       raw_conn() sectors query
+       ├─ [4] get_llm()                    ← cold provider init on first call (~50–200 ms)
+       ├─ [2] start_node_execution()       ← DB write (serial before LLM) (~5–15 ms)
+       ├─ [5] create_task()                ← DB write + pg_notify (~5–15 ms)
+       └─ chain.astream()                  ← FIRST TOKEN HERE
+```
+
+Numbers in brackets map to the five fixes below.  The longest items are
+**[1] + [3]**, which compound because they are all serial.
+
+---
+
+### 14.1 Fix 1 — Pre-compile graph with pooled `AsyncPostgresSaver`
+
+**Root cause**: every `run_graph_async` call opens a fresh psycopg3
+`AsyncConnection` for the checkpointer and calls `build_unified_graph().compile()`.
+The graph topology never changes — rebuilding it per query is pure waste.
+
+**Fix**: open an `AsyncConnectionPool` at startup, create one
+`AsyncPostgresSaver` backed by it, compile the graph **once**, and store the
+compiled graph as a module-level singleton.
+
+```python
+# backend/db/postgres/pool.py
+from psycopg_pool import AsyncConnectionPool
+
+_checkpointer_pool: AsyncConnectionPool | None = None
+
+async def open_pools() -> None:
+    global _checkpointer_pool
+    _checkpointer_pool = AsyncConnectionPool(
+        conninfo=settings.DATABASE_PG_URL,
+        min_size=2, max_size=10, open=False,
+        kwargs={
+            "autocommit": True,
+            "prepare_threshold": 0,
+            "row_factory": dict_row,
+            "options": "-csearch_path=fin_agents",
+        },
+    )
+    await _checkpointer_pool.open()
+```
+
+```python
+# backend/graph/compiled.py
+_compiled_graph: CompiledStateGraph | None = None
+
+async def init_compiled_graph() -> None:
+    """Compile once at startup. All queries call get_compiled_graph()."""
+    global _compiled_graph
+    pool = get_checkpointer_pool()
+    cp = AsyncPostgresSaver(pool)
+    await cp.setup()
+    _compiled_graph = build_unified_graph().compile(checkpointer=cp)
+```
+
+```python
+# backend/graph/runner.py  (before → after)
+# Before:
+async with checkpointer() as cp:          # new TCP conn every query
+    graph = build_unified_graph().compile(checkpointer=cp)   # rebuild every query
+    final_state = await graph.ainvoke(initial_state, config)
+
+# After:
+graph = get_compiled_graph()              # cached singleton, zero cost
+final_state = await graph.ainvoke(initial_state, config)
+```
+
+**Files**:
+- `backend/db/postgres/pool.py` — NEW: `open_pools()`, `close_pools()`, pool accessors
+- `backend/graph/compiled.py` — NEW: `init_compiled_graph()`, `get_compiled_graph()`
+- `backend/graph/runner.py` — replace `async with checkpointer()` + `build_unified_graph().compile()` with `get_compiled_graph()`
+- `backend/main.py` — call `open_pools()` then `init_compiled_graph()` in lifespan
+
+**Savings**: ~15–70 ms per query (checkpointer TCP connect + graph compile, eliminated entirely).
+
+**Thread safety**: `CompiledStateGraph.ainvoke` is concurrent-safe because
+per-thread isolation is enforced via `config["configurable"]["thread_id"]`.
+The pooled checkpointer acquires/returns connections internally per checkpoint
+operation — no shared mutable state between concurrent queries.
+
+---
+
+### 14.2 Fix 2 — Cache `get_prompt_catalogs()` at startup
+
+**Root cause**: `query_optimizer/chain.py` calls `get_prompt_catalogs()` on every
+query.  This function opens **three** separate `raw_conn()` context managers,
+each incurring a full TCP connect + auth round-trip to PostgreSQL — for data
+(`fin_markets.regions`, `fin_markets.news_sectors`) that is completely static.
+
+```python
+# backend/db/postgres/queries/fin_markets_region.py  (before)
+async def get_prompt_catalogs() -> PromptCatalogs:
+    async with raw_conn() as conn:      # ← connection 1
+        ...
+    async with raw_conn() as conn:      # ← connection 2
+        ...
+    async with raw_conn() as conn:      # ← connection 3
+        ...
+```
+
+**Fix**: add a module-level `_catalogs_cache` and a `warm_prompt_catalogs()`
+function that populates it at startup.  All subsequent calls return instantly.
+
+```python
+_catalogs_cache: PromptCatalogs | None = None
+
+async def warm_prompt_catalogs() -> None:
+    global _catalogs_cache
+    _catalogs_cache = None
+    _catalogs_cache = await get_prompt_catalogs()
+
+async def get_prompt_catalogs() -> PromptCatalogs:
+    if _catalogs_cache is not None:
+        return _catalogs_cache          # ← cache hit: zero I/O
+    # ... existing 3-connection loading logic ...
+```
+
+**Files**:
+- `backend/db/postgres/queries/fin_markets_region.py` — add `_catalogs_cache`, `warm_prompt_catalogs()`
+- `backend/main.py` — call `await warm_prompt_catalogs()` in lifespan after `open_pools()`
+
+**Savings**: ~30–150 ms per query (3 TCP connections to PG, eliminated after startup).
+
+**Caution**: the cache is process-local.  If `fin_markets` static data changes
+(new region, new sector) the process must be restarted to pick up the change.
+This is acceptable for truly static configuration data.
+
+---
+
+### 14.3 Fix 3 — Shared `AsyncConnectionPool` for `raw_conn()`
+
+**Root cause**: every `async with raw_conn()` call opens a fresh TCP connection
+to PostgreSQL.  This affects all direct SQL callers throughout the codebase
+(market data queries, validation helpers, catalog lookups), not just the startup
+path.
+
+**Fix**: add a second pool (`_raw_pool`) for general queries and make
+`raw_conn()` acquire from it for the default search_path.  Non-default
+search_paths still open dedicated connections (they are rare in practice).
+
+```python
+# backend/db/postgres/connection.py  (before → after)
+@asynccontextmanager
+async def raw_conn(search_path: str = "fin_markets,fin_agents") -> ...:
+    if search_path == "fin_markets,fin_agents":
+        pool = get_raw_pool()
+        async with pool.connection() as conn:  # ← pooled: no TCP cost
+            yield conn
+    else:
+        # Rare custom search_path: dedicated connection as before
+        conn = await AsyncConnection.connect(...)
+        try:
+            yield conn
+        finally:
+            await conn.close()
+```
+
+**Files**:
+- `backend/db/postgres/pool.py` — add `_raw_pool` to `open_pools()` / `close_pools()`
+- `backend/db/postgres/connection.py` — route default search_path through pool
+
+**Savings**: ~10–50 ms per `raw_conn()` call after pool warm.  Particularly
+valuable during `validate_basics` and `market_data_collector` where several
+lookups are chained.
+
+---
+
+### 14.4 Fix 4 — Pre-warm `get_llm()` in FastAPI lifespan
+
+**Root cause**: `get_llm()` is decorated with `@lru_cache`.  The first call
+initialises the LangChain chat model (reads API keys, creates HTTP client
+objects, negotiates TLS for cloud providers).  This happens synchronously
+on the first query after startup, adding 50–200 ms to that query's TTFT.
+
+**Fix**: call `get_llm()` once in the FastAPI lifespan after the provider is
+determined so the cache is populated before any query arrives.
+
+```python
+# backend/main.py — lifespan
+from backend.llm.factory import get_llm
+try:
+    get_llm()
+    logger.info("[startup] LLM client pre-warmed provider=%s", get_active_provider())
+except Exception as exc:
+    logger.warning("[startup] LLM pre-warm failed (non-fatal): %s", exc)
+```
+
+The `get_llm()` call is non-fatal: if the provider is unreachable at startup,
+the error is logged and the first real query will pay the init cost and may then
+fail with an appropriate LLM error.
+
+**Files**: `backend/main.py` only.
+
+**Savings**: 50–200 ms on the first query after server start (one-time cost, moved off critical path).
+
+---
+
+### 14.5 Fix 5 — Parallelize `start_node_execution` + `build_chain`
+
+**Root cause**: in `query_optimizer/node.py`, `build_chain()` and
+`start_node_execution()` are called sequentially before `chain.astream()` can
+begin.  They are independent of each other — both can run concurrently.
+
+```python
+# backend/graph/agents/query_optimizer/node.py  (before — serial)
+_chain = await build_chain(_llm)                              # DB lookup (cached after Fix 2)
+node_execution_id = await start_node_execution(...)           # DB INSERT
+raw_json = await comprehend_basics(_chain, ...)               # LLM starts here
+```
+
+**Fix**: run both concurrently with `asyncio.gather`.  After Fix 2,
+`build_chain()` is a cache hit (sub-millisecond), so the gain is that
+`start_node_execution` overlaps with what is now nearly-instant chain
+construction.  When the catalog cache is cold (first startup) this saves the
+full `start_node_execution` round-trip (~5–15 ms) from the hot path.
+
+```python
+# After — parallel
+_chain, node_execution_id = await asyncio.gather(
+    build_chain(_llm),
+    start_node_execution(thread_id, "query_optimizer", {"query": query}, started_at),
+)
+raw_json = await comprehend_basics(_chain, ...)               # LLM starts here
+```
+
+`create_task()` inside `comprehend_basics` still needs `node_execution_id`, so
+that remains sequential — it cannot be parallelised without restructuring the
+task audit log.
+
+**Files**: `backend/graph/agents/query_optimizer/node.py` — add `import asyncio`, replace serial calls.
+
+**Savings**: ~5–15 ms per query (one DB round-trip moved off the serial critical path).
+
+---
+
+### 14.6 Combined critical-path after all five fixes
+
+```
+POST /ack → asyncio.create_task(run_graph_async)
+  │
+  ├─ [1] get_compiled_graph()              ← 0 ms (singleton)
+  │
+  └─ query_optimizer node
+       ├─ [3+5] asyncio.gather(
+       │     build_chain()                 ← ~0 ms (catalog cache hit)
+       │     start_node_execution()        ← ~5–15 ms DB write (parallel, hidden)
+       │   )
+       ├─ [4] get_llm()                    ← ~0 ms (lru_cache hit)
+       ├─ create_task()                    ← ~5–15 ms DB write + pg_notify
+       └─ chain.astream()                  ← FIRST TOKEN HERE
+```
+
+The only unavoidable serial DB write before `chain.astream()` is
+`create_task()` (needs `node_execution_id` from `start_node_execution`).
+
+| Fix | Latency saved (typical) | Mechanism |
+|---|---|---|
+| 1 — Pre-compile graph + pooled checkpointer | 15–70 ms | Eliminate graph rebuild + cold TCP per query |
+| 2 — Cache prompt catalogs | 30–150 ms | Eliminate 3 raw connections per query |
+| 3 — Pool for `raw_conn()` | 10–50 ms/call | Pool reuse vs new TCP per call |
+| 4 — Pre-warm `get_llm()` | 50–200 ms (first query only) | Move provider init off critical path |
+| 5 — Parallel `start_node_execution` + `build_chain` | 5–15 ms | Overlap DB write with chain prep |
+| **Total (fixes 1+2+5, per query)** | **50–235 ms** | Serial critical path compressed |

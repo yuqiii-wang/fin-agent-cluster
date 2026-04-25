@@ -31,8 +31,8 @@ SQL_FILES=(
     "kong.sql"
     "fin_users.sql"
     "fin_agents.sql"
-    "fin_markets.sql"
     "fin_markets_consts.sql"
+    "fin_markets.sql"
     "fin_strategies.sql"
 )
 

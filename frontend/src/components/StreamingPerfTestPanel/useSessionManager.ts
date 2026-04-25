@@ -1,9 +1,53 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { cancelQuery, submitPerfQuery } from "../../api";
+import { cancelQuery, submitPerfQuery, stablePerfStream } from "../../api";
+import { fetchStreamingStatus } from "../../api";
 
 const PERF_TRIGGER = "DO STREAMING PERFORMANCE TEST NOW";
 import type { PerfTestConfig, ThreadSession } from "./types";
+import { TERMINAL_STATUSES } from "./types";
 import { usePerfSession } from "../../services/streaming";
+
+/**
+ * Returns true when ≥ 20 % of the previous TPS-history buckets (excluding the
+ * most recent 2 seconds) each exceed 90 % of the target `tokenPerSec`.
+ *
+ * Rule:
+ *   1. Drop the last 2 history buckets (recent jitter / burst exclusion).
+ *   2. Of the remaining buckets, count those with TPS > 0.9 × tokenPerSec.
+ *   3. If that count / total ≥ 0.20 → stable.
+ *
+ * Requires at least 3 history entries (so that at least 1 remains after
+ * excluding the 2 most recent).
+ *
+ * Exported so columns.tsx can use the same logic for the "(stable)" display hint.
+ */
+export function isSessionStable(
+  tpsHistory: number[],
+  tokenPerSec: number,
+): boolean {
+  if (tokenPerSec <= 0 || tpsHistory.length < 3) return false;
+  const prevHistory = tpsHistory.slice(0, -2);
+  const threshold = 0.9 * tokenPerSec;
+  const above = prevHistory.filter((v) => v > threshold).length;
+  return above / prevHistory.length >= 0.20;
+}
+
+/**
+ * Determines whether a throughput-mode session should auto-terminate on the
+ * current 1-second tick.
+ *
+ * Concurrency-mode completion is handled separately as a group condition in the
+ * tick (all active concurrent streams must be stable simultaneously).
+ */
+function resolveAutoTerminal(
+  s: ThreadSession,
+  tokenCount: number,
+): ThreadSession["status"] | null {
+  if (s.test_mode === "throughput" && s.tokens >= tokenCount) {
+    return "completed";
+  }
+  return null;
+}
 
 interface UseSessionManagerReturn {
   sessions: ThreadSession[];
@@ -30,11 +74,19 @@ export function useSessionManager(
   const totalTokensRef = useRef(0);
   /** Ref mirror of config.tokenCount — used inside freezeAll without stale closure. */
   const tokenCountRef = useRef(config.tokenCount);
+  /** Ref mirror of sessions state — readable inside the tick interval without stale closure. */
+  const sessionsRef = useRef<ThreadSession[]>([]);
   /** Number of 100ms ticks elapsed (mod 10 drives the 1s sub-tick). */
   const centisTickRef = useRef(0);
   /** Per-session token snapshot at the last 1s tick — keyed by thread_id. */
   const prevSessionTokensRef = useRef<Map<string, number>>(new Map());
   const [frozen, setFrozen] = useState(false);
+
+  /** Ref mirrors of config scalars — used inside setInterval/closeSession to avoid stale closures. */
+  const tokenPerSecRef = useRef(config.tokenPerSec);
+  const timeoutSecsRef = useRef(config.timeoutSecs);
+  /** Tracks thread_ids for which a stable signal has already been sent to the backend. */
+  const stableSignaledRef = useRef<Set<string>>(new Set());
 
   // Refs so openSessionStream can call freezeAll without becoming stale —
   // avoids re-creating stream closures whenever sessions changes.
@@ -44,6 +96,9 @@ export function useSessionManager(
 
   // Keep tokenCountRef in sync whenever config.tokenCount changes.
   useEffect(() => { tokenCountRef.current = config.tokenCount; }, [config.tokenCount]);
+  useEffect(() => { tokenPerSecRef.current = config.tokenPerSec; }, [config.tokenPerSec]);
+  useEffect(() => { timeoutSecsRef.current = config.timeoutSecs; }, [config.timeoutSecs]);
+  useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
 
   const freezeAll = useCallback(() => {
     cleanups.current.forEach((fn) => fn());
@@ -85,9 +140,26 @@ export function useSessionManager(
       setSessions((prev) =>
         prev.map((s) => {
           if (s.thread_id !== thread_id) return s;
-          // If already closed (optimistic cancel), preserve existing status.
+          // If already closed (optimistic cancel or tick auto-complete), preserve existing status.
           if (s.closed) return s;
-          return { ...s, status: finalStatus, closed: true };
+
+          // Definitive timeout→completed upgrade for concurrency mode.
+          // The backend always ends concurrency sessions with `perf_test_stopped` (timeout IS the
+          // expected stop mechanism), so we check whether the session ran stably before accepting
+          // "timeout" as the displayed status.  This guard covers the race where the backend SSE
+          // event arrives before the tick fires the group-stability check.
+          let resolvedStatus = finalStatus;
+          if (finalStatus === "timeout" && s.test_mode === "concurrency") {
+            if (isSessionStable(s.tps_history ?? [], tokenPerSecRef.current)) {
+              resolvedStatus = "completed";
+            }
+          }
+
+          console.info(
+            "[perf] closeSession thread_id=%s finalStatus=%s tokens_in_state=%d",
+            thread_id, resolvedStatus, s.tokens,
+          );
+          return { ...s, status: resolvedStatus, closed: true };
         })
       );
     },
@@ -124,6 +196,7 @@ export function useSessionManager(
       closed: false,
       test_mode,
       tps_history: [],
+      stream_text: "",
     }),
     [],
   );
@@ -156,66 +229,38 @@ export function useSessionManager(
     didSpawnRef.current = true;
     submittedIdsRef.current = [];
 
-    // Submit all initial streams: Stream #1 first (sequential so logs show
-    // correct ordering), then the rest in parallel.
+    // Submit all initial streams in parallel.
     const spawnAll = async () => {
       const count = config.initialRequestCount;
-
-      // --- Stream #1 ---
-      const firstLabelNum = labelCounter.current++;
-      const firstLabel = `Stream #${firstLabelNum}`;
-      const firstSpawnedAt = Date.now();
-      let firstThreadId: string;
-      try {
-        const res = await submitPerfQuery(
-          `${PERF_TRIGGER} - ${firstLabel}`,
-          userToken,
-          {
-            perf_total_tokens: config.tokenCount,
-            perf_timeout_secs: config.timeoutSecs,
-            perf_test_mode: config.testMode,
-            perf_token_per_sec: config.tokenPerSec,
-          },
-        );
-        firstThreadId = res.thread_id;
-        submittedIdsRef.current.push(firstThreadId);
-        setSessions([makeSession(firstThreadId, firstLabel, config.testMode, firstSpawnedAt)]);
-        console.info("[perf] stream #1 spawned thread_id=%s", firstThreadId);
-        openSessionStream(firstThreadId);
-      } catch (err) {
-        console.error("[perf_panel] stream #1 spawn failed:", err);
-        return;
-      }
-
-      // --- Streams #2 … #N in parallel ---
-      if (count > 1) {
-        await Promise.all(
-          Array.from({ length: count - 1 }, async () => {
-            try {
-              const labelNum = labelCounter.current++;
-              const label = `Stream #${labelNum}`;
-              const spawnedAt = Date.now();
-              const res = await submitPerfQuery(
-                `${PERF_TRIGGER} - Stream #${labelNum}`,
-                userToken,
-                {
-                  perf_total_tokens: config.tokenCount,
-                  perf_timeout_secs: config.timeoutSecs,
-                  perf_test_mode: config.testMode,
-                  perf_token_per_sec: config.tokenPerSec,
-                },
-              );
-              const thread_id = res.thread_id;
-              submittedIdsRef.current.push(thread_id);
-              setSessions((prev) => [...prev, makeSession(thread_id, label, config.testMode, spawnedAt)]);
-              console.info("[perf] extra stream spawned thread_id=%s label=%s", thread_id, label);
-              openSessionStream(thread_id);
-            } catch (err) {
-              console.error("[perf_panel] extra spawn failed:", err);
-            }
-          })
-        );
-      }
+      await Promise.all(
+        Array.from({ length: count }, async () => {
+          const labelNum = labelCounter.current++;
+          const label = `Stream #${labelNum}`;
+          const spawnedAt = Date.now();
+          const tempId = `pending-${labelNum}`;
+          setSessions((prev) => [...prev, makeSession(tempId, label, config.testMode, spawnedAt)]);
+          try {
+            const res = await submitPerfQuery(
+              `${PERF_TRIGGER} - ${label}`,
+              userToken,
+              {
+                perf_total_tokens: config.tokenCount,
+                perf_timeout_secs: config.timeoutSecs,
+                perf_test_mode: config.testMode,
+                perf_token_per_sec: config.tokenPerSec,
+              },
+            );
+            const thread_id = res.thread_id;
+            submittedIdsRef.current.push(thread_id);
+            setSessions((prev) => prev.map((s) => s.thread_id === tempId ? { ...s, thread_id } : s));
+            console.info("[perf] stream spawned thread_id=%s label=%s", thread_id, label);
+            openSessionStream(thread_id);
+          } catch (err) {
+            console.error("[perf_panel] spawn failed:", err);
+            setSessions((prev) => prev.map((s) => s.thread_id === tempId ? { ...s, status: "failed" as const, closed: true } : s));
+          }
+        })
+      );
     };
     spawnAll();
 
@@ -244,6 +289,7 @@ export function useSessionManager(
     setFrozen(false);
     centisTickRef.current = 0;
     prevSessionTokensRef.current.clear();
+    stableSignaledRef.current.clear();
     totalTokensRef.current = 0;
     setSessions([]);
     // Reset counters for a clean restart.
@@ -252,10 +298,12 @@ export function useSessionManager(
     // 4. Spawn config.initialRequestCount fresh concurrent streams.
     await Promise.all(
       Array.from({ length: config.initialRequestCount }, async () => {
+        const labelNum = labelCounter.current++;
+        const label = `Stream #${labelNum}`;
+        const spawnedAt = Date.now();
+        const tempId = `pending-${labelNum}`;
+        setSessions((prev) => [...prev, makeSession(tempId, label, config.testMode, spawnedAt)]);
         try {
-          const labelNum = labelCounter.current++;
-          const label = `Stream #${labelNum}`;
-          const spawnedAt = Date.now();
           const res = await submitPerfQuery(
             `${PERF_TRIGGER} - Stream #${labelNum}`,
             userToken,
@@ -268,14 +316,12 @@ export function useSessionManager(
           );
           const thread_id = res.thread_id;
           submittedIdsRef.current.push(thread_id);
-          setSessions((prev) => [
-            ...prev,
-            makeSession(thread_id, label, config.testMode, spawnedAt),
-          ]);
+          setSessions((prev) => prev.map((s) => s.thread_id === tempId ? { ...s, thread_id } : s));
           console.info("[perf] restart stream spawned thread_id=%s label=%s", thread_id, label);
           openSessionStream(thread_id);
         } catch (err) {
           console.error("[perf_panel] restart spawn failed:", err);
+          setSessions((prev) => prev.map((s) => s.thread_id === tempId ? { ...s, status: "failed" as const, closed: true } : s));
         }
       })
     );
@@ -288,10 +334,12 @@ export function useSessionManager(
     console.info("[perf] adding %d request(s)", count);
     await Promise.all(
       Array.from({ length: count }, async () => {
+        const labelNum = labelCounter.current++;
+        const label = `Stream #${labelNum}`;
+        const spawnedAt = Date.now();
+        const tempId = `pending-${labelNum}`;
+        setSessions((prev) => [...prev, makeSession(tempId, label, config.testMode, spawnedAt)]);
         try {
-          const labelNum = labelCounter.current++;
-          const label = `Stream #${labelNum}`;
-          const spawnedAt = Date.now();
           const res = await submitPerfQuery(
             `${PERF_TRIGGER} - Stream #${labelNum}`,
             userToken,
@@ -303,11 +351,12 @@ export function useSessionManager(
             },
           );
           const thread_id = res.thread_id;
-          setSessions((prev) => [...prev, makeSession(thread_id, label, config.testMode, spawnedAt)]);
+          setSessions((prev) => prev.map((s) => s.thread_id === tempId ? { ...s, thread_id } : s));
           console.info("[perf] add stream spawned thread_id=%s label=%s", thread_id, label);
           openSessionStream(thread_id);
         } catch (err) {
           console.error("[perf_panel] add request failed:", err);
+          setSessions((prev) => prev.map((s) => s.thread_id === tempId ? { ...s, status: "failed" as const, closed: true } : s));
         }
       }),
     );
@@ -320,7 +369,9 @@ export function useSessionManager(
         // Optimistically show "cancelled" immediately; the EventSource stays open
         // until onCancelled (or onDone) fires from the backend and calls closeSession.
         patch(s.thread_id, { status: "cancelled", closed: true });
-        cancelQuery(s.thread_id).catch(() => {});
+        if (!s.thread_id.startsWith("pending-")) {
+          cancelQuery(s.thread_id).catch(() => {});
+        }
       }
     });
   }, [sessions, patch]);
@@ -331,7 +382,9 @@ export function useSessionManager(
       // Optimistically show "cancelled" immediately; the EventSource stays open
       // until onCancelled (or onDone) fires from the backend and calls closeSession.
       patch(thread_id, { status: "cancelled", closed: true });
-      cancelQuery(thread_id).catch(() => {});
+      if (!thread_id.startsWith("pending-")) {
+        cancelQuery(thread_id).catch(() => {});
+      }
     },
     [patch],
   );
@@ -352,44 +405,130 @@ export function useSessionManager(
       // jitter that inflates short windows: a late 100ms tick could appear to
       // carry 300ms worth of tokens, tripling the apparent rate.
       if (centisTickRef.current % 10 === 0) {
-        // Append per-second TPS bucket only to sessions that are actively
-        // sending tokens. Closed, completed, cancelled, failed, and
-        // timeout sessions are excluded — their token count is frozen so the
-        // delta would be 0 anyway, but more importantly we must not keep
-        // growing their history after they are done.
+        // ── Concurrency stable signal ────────────────────────────────────────
+        // Read sessions via ref (avoids stale closure) and send the backend
+        // stable signal BEFORE setSessions so it is dispatched even when the
+        // state update marks sessions as completed in this same tick.
+        const activeConcurrentNow = sessionsRef.current.filter(
+          (s) => !s.closed && !TERMINAL_STATUSES.has(s.status) &&
+                 s.test_mode === "concurrency" && s.digest_start_ms != null,
+        );
+        if (activeConcurrentNow.length > 0) {
+          const allStableNow = activeConcurrentNow.every(
+            (s) => isSessionStable(s.tps_history ?? [], tokenPerSecRef.current),
+          );
+          if (allStableNow) {
+            activeConcurrentNow.forEach((s) => {
+              if (!stableSignaledRef.current.has(s.thread_id)) {
+                stableSignaledRef.current.add(s.thread_id);
+                console.info("[perf] stable → backend thread_id=%s", s.thread_id);
+                stablePerfStream(s.thread_id)
+                  .then(() => {
+                    // Evidence: probe backend immediately after signalling to confirm
+                    // whether the lifecycle has already ended or is still running.
+                    fetchStreamingStatus(s.thread_id).then((probe) => {
+                      console.info(
+                        "[perf] stable-probe thread_id=%s query_status=%s is_active=%s " +
+                        "last_token_ms_ago=%s running_tasks=%s",
+                        s.thread_id,
+                        probe.query_status,
+                        probe.is_active,
+                        probe.last_token_ms_ago == null ? "n/a" : `${probe.last_token_ms_ago}ms`,
+                        probe.running_tasks.map((t) => t.task_key).join(",") || "none",
+                      );
+                    }).catch((e) =>
+                      console.warn("[perf] stable-probe failed thread_id=%s", s.thread_id, e),
+                    );
+                  })
+                  .catch((e) =>
+                    console.warn("[perf] stable signal failed", s.thread_id, e),
+                  );
+              }
+            });
+          }
+        }
+
+        // Append per-second TPS bucket and evaluate auto-terminal conditions.
         //
-        // Also auto-advance browser-mode sessions that have received all tokens
-        // to "completed" — the backend perf_test_complete / done event may lag
-        // by up to one tick after the last perf_token_batch.
-        setSessions((prev) =>
-          prev.map((s) => {
-            // Auto-complete: throughput mode reached 100% but backend event not yet arrived.
-            // Concurrency mode sessions always end via timeout (perf_test_stopped).
-            if (
-              !s.closed &&
-              config.testMode === "throughput" &&
-              s.tokens >= config.tokenCount &&
-              s.status !== "completed" && s.status !== "failed" &&
-              s.status !== "cancelled" && s.status !== "timeout"
-            ) {
-              prevSessionTokensRef.current.delete(s.thread_id);
-              return { ...s, status: "completed" as const, closed: true };
-            }
-            const sending = !s.closed && s.digest_start_ms != null &&
-              (s.status === "digesting" || s.status === "running") &&
-              s.tokens < config.tokenCount;
-            if (!sending) {
-              // Remove stale snapshot so the entry doesn't linger in the map.
+        // Two-pass design:
+        //   Pass 1 — accumulate: build the new tps_history for every active session
+        //            (regardless of transient status bounces like "ingesting").
+        //   Pass 2 — terminate:
+        //     • Throughput sessions close individually once all tokens are delivered.
+        //     • Concurrency sessions mark as "completed" (freezing the UI) as a GROUP
+        //       once all are stable.  closed:true is NOT set here — the EventSource
+        //       stays open to receive the backend perf_test_complete ack, which drives
+        //       the final closeSession → closed:true transition.
+        setSessions((prev) => {
+          // ── Pass 1: accumulate TPS histories ──────────────────────────────────
+          const withHistory = prev.map((s) => {
+            if (s.closed || TERMINAL_STATUSES.has(s.status)) {
               prevSessionTokensRef.current.delete(s.thread_id);
               return s;
             }
-            // Use 0 as the initial baseline so the first bucket captures all tokens received since streaming started.
+            if (s.digest_start_ms == null) {
+              // Streaming not started yet; keep snapshot untouched.
+              return s;
+            }
             const prevTok = prevSessionTokensRef.current.get(s.thread_id) ?? 0;
-            const sessionDelta = Math.max(0, s.tokens - prevTok);
+            const delta = Math.max(0, s.tokens - prevTok);
             prevSessionTokensRef.current.set(s.thread_id, s.tokens);
-            return { ...s, tps_history: [...(s.tps_history ?? []), sessionDelta] };
-          })
-        );
+            return { ...s, tps_history: [...(s.tps_history ?? []), delta] };
+          });
+
+          // ── Pass 2: group stability check for concurrency ─────────────────────
+          // If ALL active concurrency sessions are individually stable, close every
+          // one as "completed" immediately (optimistic UI — backend signal also sent
+          // by the useEffect below).
+          const activeConcurrent = withHistory.filter(
+            (s) => !s.closed && !TERMINAL_STATUSES.has(s.status) &&
+                   s.test_mode === "concurrency" && s.digest_start_ms != null,
+          );
+          const concurrencyGroupStable =
+            activeConcurrent.length > 0 &&
+            activeConcurrent.every((s) =>
+              isSessionStable(s.tps_history ?? [], tokenPerSecRef.current),
+            );
+
+          // ── Pass 2: apply terminal conditions ────────────────────────────────
+          return withHistory.map((s) => {
+            if (s.closed || TERMINAL_STATUSES.has(s.status)) return s;
+
+            // Throughput: individual completion via tick.
+            // Note: usePerfSession.onPerfTokenBatch also fires terminate() at 100%,
+            // setting sessionClosed=true in the closure.  This tick path is a
+            // belt-and-suspenders guard for the case where the EventSource already
+            // closed cleanly and the session just needs React state to reflect completion.
+            // It intentionally does NOT call dequeue() — the EventSource was already
+            // closed by usePerfSession's terminate() when tokensReceived hit the target.
+            if (s.test_mode === "throughput") {
+              const terminalStatus = resolveAutoTerminal(s, tokenCountRef.current);
+              if (terminalStatus !== null) {
+                console.info(
+                  "[perf] tick auto-complete thread_id=%s tokens=%d target=%d",
+                  s.thread_id, s.tokens, tokenCountRef.current,
+                );
+                prevSessionTokensRef.current.delete(s.thread_id);
+                return { ...s, status: terminalStatus, closed: true };
+              }
+              return s;
+            }
+
+            // Concurrency: freeze UI as "completed" once the whole group is stable.
+            // closed:true is withheld so the EventSource remains open to receive the
+            // backend perf_test_complete ack — that event drives closeSession → closed:true.
+            if (s.test_mode === "concurrency" && concurrencyGroupStable) {
+              console.info(
+                "[perf] concurrency stable → completed (awaiting backend ack) thread_id=%s",
+                s.thread_id,
+              );
+              prevSessionTokensRef.current.delete(s.thread_id);
+              return { ...s, status: "completed" as const };
+            }
+
+            return s;
+          });
+        });
 
       }
 

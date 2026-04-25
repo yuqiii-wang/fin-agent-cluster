@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from backend.db.redis.publisher import _get_publish_client
+from backend.db.redis.router import get_redis_router
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ async def register_watch(thread_id: str, task_id: int) -> None:
     """
     _local_cache[thread_id] = task_id
     try:
-        client = await _get_publish_client()
+        client = get_redis_router().get_client_for_thread(thread_id)
         await client.setex(_watch_key(thread_id), _WATCH_TTL, task_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[watch_registry] register failed thread_id=%s: %s", thread_id, exc)
@@ -61,7 +61,7 @@ async def unregister_watch(thread_id: str) -> None:
     """
     _local_cache.pop(thread_id, None)
     try:
-        client = await _get_publish_client()
+        client = get_redis_router().get_client_for_thread(thread_id)
         await client.delete(_watch_key(thread_id))
     except Exception as exc:  # noqa: BLE001
         logger.warning("[watch_registry] unregister failed thread_id=%s: %s", thread_id, exc)
@@ -84,7 +84,7 @@ async def get_watched_task(thread_id: str) -> Optional[int]:
     if cached is not None:
         return cached
     try:
-        client = await _get_publish_client()
+        client = get_redis_router().get_client_for_thread(thread_id)
         val = await client.get(_watch_key(thread_id))
         if val is not None:
             task_id = int(val)

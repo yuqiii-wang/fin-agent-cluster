@@ -1,42 +1,78 @@
 services:
-  postgres:
+  postgres-primary:
     image: postgres:18.3-trixie
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-P@ssw0rd123}
       POSTGRES_DB: ${POSTGRES_DB:-fin_trading}
+      POSTGRES_REPLICATION_USER: ${POSTGRES_REPLICATION_USER:-replicator}
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:-replpassword}
     command: postgres -c max_connections=300
     ports:
       - "${POSTGRES_PORT:-6543}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql
+      - postgres_primary_data:/var/lib/postgresql
+      - ./sql/postgres/primary/init-replication.sh:/docker-entrypoint-initdb.d/init-replication.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  redis:
+  postgres-replica:
+    image: postgres:18.3-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-P@ssw0rd123}
+      POSTGRES_DB: ${POSTGRES_DB:-fin_trading}
+      POSTGRES_REPLICATION_USER: ${POSTGRES_REPLICATION_USER:-replicator}
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:-replpassword}
+      PRIMARY_HOST: postgres-primary
+      PGDATA: /var/lib/postgresql/18/docker
+    user: root
+    entrypoint: ["/bin/bash", "/replica-setup.sh"]
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql
+      - ./sql/postgres/replica/setup.sh:/replica-setup.sh:ro
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis-0:
     image: redis:8.6.2-trixie
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-3456}:6379"
     volumes:
-      - redis_data:/data
+      - redis_0_data:/data
+
+  redis-1:
+    image: redis:8.6.2-trixie
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT_1:-3457}:6379"
+    volumes:
+      - redis_1_data:/data
 
   kong-migrations:
     image: kong/kong-gateway:3.12.0.5-20260415-rhel-fips
     command: kong migrations bootstrap
     environment:
       KONG_DATABASE: postgres
-      KONG_PG_HOST: postgres
+      KONG_PG_HOST: postgres-primary
       KONG_PG_PORT: "5432"
       KONG_PG_USER: ${POSTGRES_USER:-admin}
       KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-P@ssw0rd123}
       KONG_PG_DATABASE: ${KONG_DB:-kong}
     depends_on:
-      postgres:
+      postgres-primary:
         condition: service_healthy
     restart: "no"
 
@@ -45,7 +81,7 @@ services:
     command: kong config db_import /etc/kong/kong.yml
     environment:
       KONG_DATABASE: postgres
-      KONG_PG_HOST: postgres
+      KONG_PG_HOST: postgres-primary
       KONG_PG_PORT: "5432"
       KONG_PG_USER: ${POSTGRES_USER:-admin}
       KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-P@ssw0rd123}
@@ -71,7 +107,7 @@ services:
         condition: service_completed_successfully
     environment:
       KONG_DATABASE: postgres
-      KONG_PG_HOST: postgres
+      KONG_PG_HOST: postgres-primary
       KONG_PG_PORT: "5432"
       KONG_PG_USER: ${POSTGRES_USER:-admin}
       KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-P@ssw0rd123}
@@ -182,8 +218,10 @@ services:
       - loki
 
 volumes:
-  postgres_data:
-  redis_data:
+  postgres_primary_data:
+  postgres_replica_data:
+  redis_0_data:
+  redis_1_data:
   prometheus_data:
   grafana_data:
   loki_data:

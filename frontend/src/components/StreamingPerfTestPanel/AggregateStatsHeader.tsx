@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import { Col, Row, Statistic, Tooltip } from "antd";
+import { Col, Row, Statistic, Tooltip, theme } from "antd";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import type { ThreadSession } from "./types";
 import { computeAggregateStats } from "./aggregateStats";
+import { styles } from "./AggregateStatsHeader.styles";
 
 export interface AggregateStatsHeaderProps {
   sessions: ThreadSession[];
@@ -23,7 +24,9 @@ export interface AggregateStatsHeaderProps {
  * Hidden when no session has per-second history yet.
  */
 export function AggregateStatsHeader({ sessions }: AggregateStatsHeaderProps) {
+  const { token } = theme.useToken();
   const stats = useMemo(() => computeAggregateStats(sessions), [sessions]);
+  const infoIconStyle = { color: token.colorTextTertiary, cursor: "help" as const };
 
   if (stats.sampleCount === 0) return null;
 
@@ -34,62 +37,67 @@ export function AggregateStatsHeader({ sessions }: AggregateStatsHeaderProps) {
     return `${(v / 1000).toFixed(1)}s`;
   };
 
+  const valueStyle = styles.valueStyle;
+
   return (
-    <Row gutter={12} style={{ marginTop: 8 }}>
-      <Col span={6}>
+    <Row gutter={12} style={styles.row}>
+      <Col span={4}>
         <Statistic
           title={
             <span>
-              Peak Sum Concurrent{" "}
-              <Tooltip title="Max total tokens/s summed across all concurrent streams in any single 1-second window. Each second, all stream tps_history values are summed; the peak of those sums is reported.">
-                <InfoCircleOutlined style={{ color: "#8c8c8c", cursor: "help" }} />
+              Peak Sum Read Batch{" "}
+              <Tooltip title="Max total tokens/s summed across all read-batch streams in any single 1-second window. Each second, all stream tps_history values are summed; the peak of those sums is reported.">
+                <InfoCircleOutlined style={infoIconStyle} />
               </Tooltip>
             </span>
           }
           value={fmt(stats.peakSumConcurrent)}
           suffix="tps"
+          valueStyle={valueStyle}
         />
       </Col>
-      <Col span={6}>
+      <Col span={4}>
         <Statistic
           title={
             <span>
               Peak Single Stream{" "}
               <Tooltip title="Max tokens/s achieved by any single stream in any 1-second window. peak = max(max(tps_history) for each stream).">
-                <InfoCircleOutlined style={{ color: "#8c8c8c", cursor: "help" }} />
+                <InfoCircleOutlined style={infoIconStyle} />
               </Tooltip>
             </span>
           }
           value={fmt(stats.peakSingleStream)}
           suffix="tps"
+          valueStyle={valueStyle}
         />
       </Col>
-      <Col span={6}>
+      <Col span={4}>
         <Statistic
           title={
             <span>
-              Ave Concurrent{" "}
+              Ave Read Batch{" "}
               <Tooltip title="Mean total tokens/s across all 1-second windows. Per-second sums (across all streams) are averaged over every bucket that had at least one stream active.">
-                <InfoCircleOutlined style={{ color: "#8c8c8c", cursor: "help" }} />
+                <InfoCircleOutlined style={infoIconStyle} />
               </Tooltip>
             </span>
           }
           value={fmt(stats.aveConcurrent)}
           suffix="tps"
+          valueStyle={valueStyle}
         />
       </Col>
-      <Col span={6}>
+      <Col span={4}>
         <Statistic
           title={
             <span>
               Max First-Token Latency{" "}
               <Tooltip title="Maximum time from stream start until the first perf_token_batch event, across all sessions. Measures how long the slowest stream waited before tokens began flowing.">
-                <InfoCircleOutlined style={{ color: "#8c8c8c", cursor: "help" }} />
+                <InfoCircleOutlined style={infoIconStyle} />
               </Tooltip>
             </span>
           }
           value={fmtMs(stats.maxFirstTokenLatencyMs)}
-          valueStyle={{ fontSize: 20 }}
+          valueStyle={valueStyle}
         />
       </Col>
     </Row>

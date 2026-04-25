@@ -25,7 +25,7 @@ async def _check_db_conn() -> None:
         RuntimeError: If the database connection cannot be established.
     """
     try:
-        async with raw_conn() as conn:
+        async with raw_conn(readonly=True) as conn:
             cur = await conn.execute("SELECT 1")
             await cur.fetchone()
         logger.info("[startup] database connection OK")
@@ -52,24 +52,49 @@ async def lifespan(app: FastAPI):
             logger.info("[startup] Ollama embedding not reachable — using configured EMBEDDING_PROVIDER")
     else:
         logger.info("[startup] Ollama not reachable — using configured LLM_PROVIDER")
+    # Open shared PostgreSQL connection pools first — raw_conn() and the
+    # checkpointer both draw from these pools; must be open before any DB call.
+    from backend.db.postgres.pool import open_pools, close_pools as _close_pools
+    await open_pools()
     await _check_db_conn()
     await init_db()
+    # Pre-compile the unified LangGraph graph with a pooled AsyncPostgresSaver.
+    # Eliminates per-query graph rebuild (~5–20 ms) and cold PG connect (~10–50 ms).
+    from backend.graph.compiled import init_compiled_graph
+    await init_compiled_graph()
+    # Warm static catalog strings used by the query_optimizer prompt.
+    # Eliminates 3 raw DB connections on every first query after startup.
+    from backend.db.postgres.queries.fin_markets_region import warm_prompt_catalogs
+    await warm_prompt_catalogs()
+    # Pre-warm the LLM client so @lru_cache is populated before the first query.
+    # Eliminates cold provider initialisation (~50–200 ms) on the first request.
+    from backend.llm.factory import get_llm
+    try:
+        get_llm()
+        logger.info("[startup] LLM client pre-warmed provider=%s", get_active_provider())
+    except Exception as exc:
+        logger.warning("[startup] LLM pre-warm failed (non-fatal): %s", exc)
     # Clear stale task_active:* Redis keys left by the previous server process.
     # Without this, orphan detection (is_task_active_any_instance) would return
     # True for old threads and SSE clients would hang indefinitely on hot switch.
     from backend.api.registry import clear_all_task_active_flags
     await clear_all_task_active_flags()
+    # Purge leftover fin:perf:* and watch:* Redis keys from previous runs.
+    # Perf-test streams carry no TTL; without this they accumulate (≈1–2 MB
+    # per stream key) and survive across restarts.
+    from backend.db.redis.lock_manager.session_cleanup import purge_stale_perf_streams
+    await purge_stale_perf_streams()
     # Ensure all Redis Stream consumer groups exist before workers start.
     from backend.streaming.streams import ensure_all_groups
     await ensure_all_groups()
-    # Start lifecycle fanout: single PG connection fans out to per-thread Redis Pub/Sub.
-    # Leader election ensures only one instance runs the fanout in a multi-instance setup.
-    from backend.db.redis.lifecycle_fanout import run_lifecycle_fanout
-    _fanout_task = asyncio.create_task(run_lifecycle_fanout())
     # Start cancel signal listener: cancels local asyncio.Tasks when cancel is called on any instance.
-    from backend.db.redis.cancel_signal import run_cancel_listener
+    from backend.db.redis.session.cancel_signal import run_cancel_listener
     from backend.api.registry import running_tasks
     _cancel_task = asyncio.create_task(run_cancel_listener(running_tasks))
+    # Start transmission QoS auditor: detects perf-test streams stalled without
+    # a first token for ≥ 3 s and signals them to flush immediately.
+    from backend.streaming.transmission_qos import transmission_qos as _qos
+    _qos.start()
     # Start stream consumers: prefer Celery workers; fall back to FastAPI threads.
     from backend.streaming.fallback import celery_workers_available, start_fallback_workers
     _fallback_tasks: list = []
@@ -78,13 +103,15 @@ async def lifespan(app: FastAPI):
     else:
         _fallback_tasks = await start_fallback_workers()
     yield
-    # Cancel lifecycle fanout on shutdown.
-    _fanout_task.cancel()
+    # Stop transmission QoS auditor.
+    _qos.stop()
     # Cancel the cancel-signal listener on shutdown.
     _cancel_task.cancel()
     # Cancel fallback tasks on shutdown (no-op if Celery was used)
     for task in _fallback_tasks:
         task.cancel()
+    # Close shared PostgreSQL connection pools.
+    await _close_pools()
 
 
 app = FastAPI(title="Financial Agent Cluster", version="1.0.0", lifespan=lifespan)

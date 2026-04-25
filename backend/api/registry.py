@@ -19,6 +19,11 @@ To support multi-instance deployments two additional helpers are provided:
 * :func:`is_task_active_any_instance` — checks the local dict first, then
   falls back to the Redis flag so any instance can determine whether the query
   is being processed somewhere in the cluster.
+
+All Redis operations use the router so every ``task_active:{thread_id}`` key
+lands on the same shard as the rest of the thread's data.  The startup sweep
+(:func:`clear_all_task_active_flags`) scans **all** shards to avoid leaving
+orphan flags on nodes that weren't covered by a single-client SCAN.
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
+
+from backend.db.redis.router import get_redis_router
 
 logger = logging.getLogger(__name__)
 
@@ -61,16 +68,15 @@ def is_task_active(thread_id: str) -> bool:
 async def mark_task_active(thread_id: str) -> None:
     """Set the Redis ``task_active:{thread_id}`` flag when a task starts.
 
-    Called by the ACK endpoint immediately after ``asyncio.create_task``.
-    Allows any FastAPI instance to determine whether the query is being
-    processed via :func:`is_task_active_any_instance`.
+    Routes to the shard determined by *thread_id* so the key is co-located
+    with all other session data for the same thread.  Called by the ACK
+    endpoint immediately after ``asyncio.create_task``.
 
     Args:
         thread_id: LangGraph thread UUID.
     """
     try:
-        from backend.db.redis.publisher import _get_publish_client  # noqa: PLC0415
-        client = await _get_publish_client()
+        client = get_redis_router().get_client_for_thread(thread_id)
         await client.setex(f"{_TASK_ACTIVE_PREFIX}{thread_id}", _TASK_ACTIVE_TTL, "1")
     except Exception as exc:  # noqa: BLE001
         logger.warning("[registry] mark_task_active failed thread_id=%s: %s", thread_id, exc)
@@ -79,25 +85,30 @@ async def mark_task_active(thread_id: str) -> None:
 async def clear_all_task_active_flags() -> None:
     """Delete every ``task_active:*`` Redis key left by previous server processes.
 
-    Called once at FastAPI startup — before any task can legitimately be
-    active — so orphan detection in the SSE generator correctly identifies
-    queries whose server process was killed mid-run.  If the keys are not
-    cleared, ``is_task_active_any_instance`` returns ``True`` for stale
-    threads and the SSE stream waits forever for a ``done`` event that will
-    never arrive (the Redis deadlock caused by orphan tasks on hot switch).
+    Scans **all** Redis shards managed by the router so no orphan flags are
+    missed when keys are distributed across multiple nodes.  Called once at
+    FastAPI startup — before any task can legitimately be active — so orphan
+    detection in the SSE generator correctly identifies queries whose server
+    process was killed mid-run.
+
+    Without this, ``is_task_active_any_instance`` would return ``True`` for
+    stale threads and the SSE stream would wait forever for a ``done`` event.
     """
     try:
-        from backend.db.redis.publisher import _get_publish_client  # noqa: PLC0415
-        client = await _get_publish_client()
-        cursor: int = 0
+        router = get_redis_router()
         total = 0
-        while True:
-            cursor, keys = await client.scan(cursor, match=f"{_TASK_ACTIVE_PREFIX}*", count=100)
-            if keys:
-                await client.delete(*keys)
-                total += len(keys)
-            if cursor == 0:
-                break
+        for shard_idx in range(router.node_count):
+            client = router.get_client_at(shard_idx)
+            cursor: int = 0
+            while True:
+                cursor, keys = await client.scan(
+                    cursor, match=f"{_TASK_ACTIVE_PREFIX}*", count=100
+                )
+                if keys:
+                    await client.delete(*keys)
+                    total += len(keys)
+                if cursor == 0:
+                    break
         if total:
             logger.info("[registry] cleared %d stale task_active flag(s) on startup", total)
     except Exception as exc:  # noqa: BLE001
@@ -107,14 +118,18 @@ async def clear_all_task_active_flags() -> None:
 async def clear_task_active(thread_id: str) -> None:
     """Delete the Redis ``task_active:{thread_id}`` flag when the task ends.
 
-    Called by the graph runner on all exit paths (completed, cancelled, failed).
+    Routes to the correct shard via *thread_id*.  Called by the graph runner
+    on all exit paths (completed, cancelled, failed).  Note that
+    :func:`~backend.db.redis.lock_manager.session_cleanup.cleanup_thread_session`
+    also deletes this key as part of the full session teardown pipeline; this
+    function is retained as a standalone fallback for callers that don't go
+    through the full cleanup.
 
     Args:
         thread_id: LangGraph thread UUID.
     """
     try:
-        from backend.db.redis.publisher import _get_publish_client  # noqa: PLC0415
-        client = await _get_publish_client()
+        client = get_redis_router().get_client_for_thread(thread_id)
         await client.delete(f"{_TASK_ACTIVE_PREFIX}{thread_id}")
     except Exception as exc:  # noqa: BLE001
         logger.warning("[registry] clear_task_active failed thread_id=%s: %s", thread_id, exc)
@@ -125,7 +140,7 @@ async def is_task_active_any_instance(thread_id: str) -> bool:
 
     Checks the local ``running_tasks`` dict first (fast path for the owning
     instance), then falls back to the Redis ``task_active:{thread_id}`` flag
-    (set by the ACK endpoint, cleared by the runner on completion).
+    routed to the correct shard for *thread_id*.
 
     Used for orphan detection in the SSE generator: a query whose DB status is
     ``'running'`` but whose flag is absent is considered orphaned (all instances
@@ -140,8 +155,7 @@ async def is_task_active_any_instance(thread_id: str) -> bool:
     if is_task_active(thread_id):
         return True
     try:
-        from backend.db.redis.publisher import _get_publish_client  # noqa: PLC0415
-        client = await _get_publish_client()
+        client = get_redis_router().get_client_for_thread(thread_id)
         return bool(await client.exists(f"{_TASK_ACTIVE_PREFIX}{thread_id}"))
     except Exception:  # noqa: BLE001
         return False

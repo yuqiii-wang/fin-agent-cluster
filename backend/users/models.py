@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, Index, Integer, String, Text, func, TIMESTAMP
+from sqlalchemy import BigInteger, Boolean, Index, String, Text, func, TIMESTAMP
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -89,5 +89,3 @@ class UserQuery(Base):
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     is_ack: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    ack_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
-    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

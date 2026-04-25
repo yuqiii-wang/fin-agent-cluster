@@ -62,9 +62,18 @@ def _broker_url(base_url: str, db: int) -> str:
 
 
 def create_celery_app() -> Celery:
-    """Build and configure the Celery application from :data:`ACTIVE_TOPICS`."""
+    """Build and configure the Celery application from :data:`ACTIVE_TOPICS`.
+
+    Celery broker and backend always use **shard 0** of the Redis cluster so
+    task dispatch is isolated from application-level hash-routed data.  When
+    ``DATABASE_REDIS_NODES`` is not set, shard 0 falls back to
+    ``DATABASE_REDIS_URL``, making single-instance deployments work unchanged.
+    """
     settings = get_settings()
-    base = settings.DATABASE_REDIS_URL
+
+    # Celery uses shard 0 exclusively — task queues are not key-sharded.
+    from backend.db.redis.router import get_redis_router  # noqa: PLC0415
+    base = get_redis_router().get_url_at(0)
 
     # Derive worker module paths from active topic task_paths.
     _include = list({

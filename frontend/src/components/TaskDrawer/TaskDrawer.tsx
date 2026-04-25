@@ -10,6 +10,7 @@ import { TaskMeta } from "./TaskMeta";
 import { TaskLabel } from "./TaskLabel";
 import { LlmTaskActions } from "./LlmTaskActions";
 import { TaskCancelButton } from "./TaskCancelButton";
+import { styles } from "./TaskDrawer.styles";
 
 const { Text } = Typography;
 
@@ -73,7 +74,7 @@ export function TaskDrawer({ node, tokenStreams, taskProviders, taskMeta, onClos
           activeKey={activeKey !== undefined ? [activeKey] : []}
           onChange={handleCollapseChange}
           size="small"
-          style={{ background: "transparent", border: "none" }}
+          style={styles.collapse}
           items={node.tasks.map((task) => {
             const stream = tokenStreams[task.id];
             const hasInput = task.input && Object.keys(task.input).length > 0;
@@ -86,21 +87,21 @@ export function TaskDrawer({ node, tokenStreams, taskProviders, taskMeta, onClos
               key: String(task.id),
               label: <TaskLabel task={task} />,
               extra: task.status === "running" ? <TaskCancelButton task={task} /> : undefined,
-              style: { marginBottom: 6, borderRadius: 6 },
+              style: styles.collapseItem,
               children: (
                 <Flex vertical gap={8}>
                   <TaskMeta task={task} />
 
                   {hasInput && (
                     <Flex vertical gap={4}>
-                      <Text type="secondary" style={{ fontSize: 11, fontWeight: 500 }}>INPUT</Text>
+                      <Text type="secondary" style={styles.sectionLabel}>INPUT</Text>
                       <JsonViewer data={task.input} maxHeight={300} />
                     </Flex>
                   )}
 
                   <Flex vertical gap={4}>
                     <Flex align="center" justify="space-between">
-                      <Text type="secondary" style={{ fontSize: 11, fontWeight: 500 }}>OUTPUT</Text>
+                      <Text type="secondary" style={styles.sectionLabel}>OUTPUT</Text>
                       {isLlmRunning && <LlmTaskActions task={task} />}
                     </Flex>
                     <OutputViewer
@@ -112,12 +113,12 @@ export function TaskDrawer({ node, tokenStreams, taskProviders, taskMeta, onClos
                   </Flex>
 
                   <Space size={16}>
-                    <Text type="secondary" style={{ fontSize: 11 }}>
-                      <ClockCircleOutlined style={{ marginRight: 4 }} />
+                    <Text type="secondary" style={styles.timeText}>
+                      <ClockCircleOutlined style={styles.clockIcon} />
                       started {new Date(task.created_at).toLocaleTimeString()}
                     </Text>
                     {task.status !== "running" && (
-                      <Text type="secondary" style={{ fontSize: 11 }}>
+                      <Text type="secondary" style={styles.timeText}>
                         updated {new Date(task.updated_at).toLocaleTimeString()}
                       </Text>
                     )}

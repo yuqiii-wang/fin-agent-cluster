@@ -2,16 +2,13 @@
 
 Wraps :func:`~backend.graph.utils.execution_log.start_node_execution` and
 :func:`~backend.graph.utils.execution_log.finish_node_execution` with
-pg_notify calls so the frontend can display node I/O in real time.
+Redis Pub/Sub publishes so the frontend can display node I/O in real time.
 
 Event flow:
   1. Node starts  → :func:`emit_node_input`  → inserts ``node_executions`` row
-     → fires ``node_input``  pg_notify.
+     → publishes ``node_input`` to Redis Pub/Sub.
   2. Node finishes → :func:`emit_node_output` → updates ``node_executions`` row
-     → fires ``node_output`` pg_notify.
-
-These events travel via the same PostgreSQL NOTIFY channel as task lifecycle
-events so the existing SSE listener picks them up without extra plumbing.
+     → publishes ``node_output`` to Redis Pub/Sub.
 """
 
 from __future__ import annotations
@@ -19,7 +16,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from backend.sse_notifications.channel import pg_notify
+from backend.sse_notifications.channel import publish_lifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +49,7 @@ async def emit_node_input(
         input_data,
         started_at,
     )
-    await pg_notify(
+    await publish_lifecycle(
         thread_id,
         {
             "event": "node_input",
@@ -91,7 +88,7 @@ async def emit_node_output(
     from backend.graph.utils.execution_log import finish_node_execution  # deferred
 
     await finish_node_execution(node_execution_id, output_data, elapsed_ms)
-    await pg_notify(
+    await publish_lifecycle(
         thread_id,
         {
             "event": "node_output",

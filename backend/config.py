@@ -32,7 +32,16 @@ class Settings(BaseSettings):
 
     # ── Database / API keys ─────────────────────────────────────
     DATABASE_PG_URL: str
-    DATABASE_REDIS_URL: str = "redis://127.0.0.1:6379"
+    # Read replica URL.  When set, SELECT queries are routed here; writes
+    # always go to DATABASE_PG_URL (the primary).  Leave empty to use the
+    # primary for both reads and writes (single-instance fallback).
+    DATABASE_PG_READ_URL: str = ""
+    DATABASE_REDIS_URL: str = "redis://127.0.0.1:3456"
+    # Ordered list of Redis node URLs for hash-based shard routing.
+    # Comma-separated when provided via environment variable, e.g.:
+    #   DATABASE_REDIS_NODES=redis://redis-0:6379,redis://redis-1:6379
+    # When empty, the router falls back to DATABASE_REDIS_URL as a single node.
+    DATABASE_REDIS_NODES: list[str] = []
     DB_CONNECT_TIMEOUT_SECONDS: int = 8
     ALPHAVANTAGE_API_KEY: Optional[str] = None
     FMP_API_KEY: Optional[str] = None
@@ -79,6 +88,19 @@ class Settings(BaseSettings):
     STREAM_MAX_LEN: int = 10000
 
     model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8", "extra": "ignore"}
+
+    from pydantic import field_validator as _fv
+
+    @_fv("DATABASE_REDIS_NODES", mode="before")
+    @classmethod
+    def _coerce_redis_nodes(cls, v: object) -> object:
+        """Coerce a comma-separated string into a list before validation."""
+        if isinstance(v, str):
+            stripped = v.strip()
+            if not stripped:
+                return []
+            return [node.strip() for node in stripped.split(",") if node.strip()]
+        return v
 
 
 @lru_cache

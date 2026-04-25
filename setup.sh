@@ -1,48 +1,39 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
+# setup.sh — Entry point for full environment setup.
+#
+# Sources each setup module from setup/ and runs its function in order.
+# All modules are independently executable (bash setup/tls.sh --force) and
+# can also be sourced for programmatic use.
+#
+# Usage: bash setup.sh [OPTIONS]
+#
+# Options:
+#   --keep-volumes       Keep existing postgres volumes (skip stale-version check).
+#                        Default: remove any volume whose PG version ≠ 18.
+#   --force-tls          Regenerate TLS cert even if it already exists.
+#   --force-frontend     Overwrite frontend/.env.local even if it already exists.
+#   --skip-db-schema     Skip SQL schema setup (useful when DB is already up to date).
+#   --skip-ollama        Skip Ollama model creation and warm-up.
+#   -h, --help           Print this help message and exit.
 set -e
 
-# ---------------------------------------------------------------------------
-# TLS certificate — enables HTTP/2 on Kong's SSE port 8889.
-# HTTP/2 multiplexes all EventSource connections over a single TCP connection,
-# removing the browser's hard 6-connection-per-origin limit so bulk launch of
-# 10+ streams all open immediately instead of queuing behind the cap.
-# The cert is self-signed for localhost/127.0.0.1; Kong presents it on 8889.
-# First-time setup: visit https://localhost:8889 in your browser and accept
-# the cert warning once (Chrome: "Advanced → Proceed to localhost (unsafe)").
-# ---------------------------------------------------------------------------
-CERT_DIR="certs"
-CERT_FILE="$CERT_DIR/localhost.crt"
-KEY_FILE="$CERT_DIR/localhost.key"
-
-if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
-  echo "[setup] Generating self-signed TLS certificate for localhost (HTTP/2 SSE port 8889)"
-  mkdir -p "$CERT_DIR"
-  openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
-    -keyout "$KEY_FILE" -out "$CERT_FILE" \
-    -subj "/CN=localhost" \
-    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-  echo "[setup] Certificate written to $CERT_FILE"
-  echo "[setup] ACTION REQUIRED: visit https://localhost:8889 in your browser and"
-  echo "[setup]   accept the cert warning once before using the perf-test panel."
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------------------------------------------------------------------------
-# Frontend .env.local — configure SSE to use Kong's HTTPS+HTTP/2 port 8889.
-# HTTP/2 allows unlimited concurrent SSE streams from the browser to Kong
-# without hitting the HTTP/1.1 6-connection-per-origin cap.
+# Source all setup modules
 # ---------------------------------------------------------------------------
-if [ ! -f frontend/.env.local ]; then
-  echo "[setup] Writing frontend/.env.local (VITE_SSE_URL=https://localhost:8889)"
-  printf 'VITE_SSE_URL=https://localhost:8889\n' > frontend/.env.local
-fi
+source "$SCRIPT_DIR/setup/tls.sh"
+source "$SCRIPT_DIR/setup/frontend_env.sh"
+source "$SCRIPT_DIR/setup/kong_config.sh"
+source "$SCRIPT_DIR/setup/postgres_volumes.sh"
+source "$SCRIPT_DIR/setup/docker_services.sh"
+source "$SCRIPT_DIR/setup/db_schema.sh"
+source "$SCRIPT_DIR/setup/ollama_models.sh"
 
-python kong-api-gateway/build.py
-docker compose up -d
-./sql/setup_db_schema.sh
-
-# Start all processes
-ollama serve
-ollama create qwen3.5-27b-instruct -f ollama/Modelfile
-ollama create qwen3-0.6b-emb -f ollama/Modelfile.embed
-ollama run qwen3.5-27b-instruct "ok" >/dev/null
-ollama run qwen3-0.6b-emb "hello from startup health check" >/dev/null
+setup_tls              "$@"
+setup_frontend_env     "$@"
+setup_kong_config      "$@"
+setup_postgres_volumes "$@"
+setup_docker_services  "$@"
+setup_db_schema        "$@"
+setup_ollama_models    "$@"

@@ -34,8 +34,11 @@ from backend.streaming.config import (
     StreamTopicConfig,
 )
 from backend.streaming.fallback import celery_workers_available, start_fallback_workers
+from backend.streaming.generator import build_sse_generator
 from backend.streaming.log_filters import CeleryTaskSummaryFilter
-from backend.streaming.sse_session import (
+from backend.streaming.status import get_session_status
+from backend.streaming.transmission_qos import TransmissionQoS, transmission_qos
+from backend.streaming.lifecycle import (
     LIFECYCLE_EVENTS,
     get_watched_task,
     handle_orphaned_query,
@@ -43,6 +46,7 @@ from backend.streaming.sse_session import (
     register_watch,
     replay_existing,
     unregister_watch,
+    ack_done,
 )
 from backend.streaming.streams import (
     GROUP_CELERY_GRAPH,
@@ -77,6 +81,9 @@ __all__ = [
     "start_fallback_workers",
     # Log filters
     "CeleryTaskSummaryFilter",
+    # SSE generator + session health
+    "build_sse_generator",
+    "get_session_status",
     # Stream name constants (aliases — derived from config)
     "STREAM_GRAPH_EVENTS",
     "STREAM_MARKET_TICKS",
@@ -103,4 +110,8 @@ __all__ = [
     "is_thread_watching",
     "replay_existing",
     "handle_orphaned_query",
+    "ack_done",
+    # Transmission QoS
+    "TransmissionQoS",
+    "transmission_qos",
 ]

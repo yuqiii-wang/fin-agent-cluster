@@ -44,11 +44,9 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 
-import redis.asyncio as aioredis
-
-from backend.config import get_settings
+from backend.db.redis.streams.publisher import stream_token
+from backend.db.redis.router import get_redis_router
 from backend.sse_notifications.perf_test.notifications import (
-    emit_perf_concurrent_status,
     emit_perf_ingest_progress,
 )
 from backend.graph.agents.perf_test.celery_ingest.config import (
@@ -72,7 +70,7 @@ _READER_BASE_BATCH: int = 3
 #: Target digest/ingest TPS ratio — reader aims to drain 1.5× faster than write.
 _TARGET_DIGEST_RATIO: float = 1.5
 #: Duration of each adaptive evaluation window in seconds.
-_WINDOW_SECS: float = 3.0
+_WINDOW_SECS: float = 1.0
 #: Stream backlog below which batch is clamped to 1 (stream nearly empty).
 _NEAR_EMPTY_THRESHOLD: int = 50
 #: Hard upper bound on batch size — aggressive but bounded drain cap.
@@ -99,47 +97,65 @@ class _ConcurrentProgress:
         ingest_tps:   Rolling tokens/second for the ongoing second-half ingest.
         ingest_done:  True once the second-half ingest (including sentinel) is complete.
         produced:     Total tokens produced so far (both halves combined).
+        stable:       Set to True by :func:`signal_stable_ingest` when the frontend
+                      signals that TPS has stabilised and the stream should conclude
+                      cleanly with ``perf_test_complete`` instead of a timeout.
     """
 
     ingest_tps: float = 0.0
     ingest_done: bool = False
     produced: int = 0
+    stable: bool = False
 
 
 # ---------------------------------------------------------------------------
-# Shared async Redis client
+# In-process stable-signal registry (FastAPI event loop only)
 # ---------------------------------------------------------------------------
 
-_client: aioredis.Redis | None = None
-_client_loop_id: int | None = None
+# Maps thread_id → active _ConcurrentProgress for ongoing concurrency sessions.
+# Populated by node.py before asyncio.gather; cleared when the gather returns.
+_active_ingest: dict[str, _ConcurrentProgress] = {}
 
 
-async def _get_client() -> aioredis.Redis:
-    """Return (or lazily create) the shared async Redis client.
+def register_concurrency_ingest(thread_id: str, progress: _ConcurrentProgress) -> None:
+    """Register an active concurrency ingest so the stable-signal endpoint can reach it.
 
-    Recreated when the running event loop changes to avoid stale connection
-    pools.
+    Args:
+        thread_id: LangGraph thread UUID.
+        progress:  Shared progress object for this session.
+    """
+    _active_ingest[thread_id] = progress
+
+
+def unregister_concurrency_ingest(thread_id: str) -> None:
+    """Remove the active ingest entry once the concurrency gather completes.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+    """
+    _active_ingest.pop(thread_id, None)
+
+
+def signal_stable_ingest(thread_id: str) -> bool:
+    """Signal that the frontend has detected stable TPS for this concurrency session.
+
+    Sets :attr:`_ConcurrentProgress.stable` to True so that
+    :func:`run_rate_limited_ingest` exits its loop at the next batch boundary,
+    appends the sentinel, and returns ``(produced, "stable")`` instead of
+    ``(produced, "timeout")``.
+
+    Args:
+        thread_id: LangGraph thread UUID.
 
     Returns:
-        A ``redis.asyncio.Redis`` instance.
+        True if the session was found and signalled; False if not found
+        (e.g. the timeout already fired and the gather has returned).
     """
-    global _client, _client_loop_id
-    current_id = id(asyncio.get_running_loop())
-    if _client is not None and _client_loop_id != current_id:
-        try:
-            await _client.aclose()
-        except Exception:  # noqa: BLE001
-            pass
-        _client = None
-        _client_loop_id = None
-    if _client is None:
-        settings = get_settings()
-        _client = aioredis.from_url(
-            settings.DATABASE_REDIS_URL,
-            decode_responses=True,
-        )
-        _client_loop_id = current_id
-    return _client
+    progress = _active_ingest.get(thread_id)
+    if progress is None:
+        return False
+    progress.stable = True
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +187,7 @@ async def run_ingest_first_half(
         (deadline fired before threshold was written).
     """
     threshold = int(total_tokens * 0.95)
-    client = await _get_client()
+    client = get_redis_router().get_client_for_thread(thread_id)
     stream = f"{PERF_INGEST_STREAM_PREFIX}:{thread_id}"
     await client.delete(stream)
 
@@ -273,7 +289,7 @@ async def run_ingest_second_half(
         Tuple ``(additional_produced, stop_reason)`` for the second half only,
         where *stop_reason* is ``"completed"`` or ``"timeout"``.
     """
-    client = await _get_client()
+    client = get_redis_router().get_client_for_thread(thread_id)
     stream = f"{PERF_INGEST_STREAM_PREFIX}:{thread_id}"
 
     produced = first_half_produced
@@ -394,7 +410,7 @@ async def dynamic_reader_gen(
     Yields:
         Token strings from the perf stream until the sentinel is reached.
     """
-    client = await _get_client()
+    client = get_redis_router().get_client_for_thread(thread_id)
     stream = f"{PERF_INGEST_STREAM_PREFIX}:{thread_id}"
     last_id = "0-0"
 
@@ -404,6 +420,21 @@ async def dynamic_reader_gen(
     first_window = True
 
     logger.info("[dynamic_reader_gen] starting thread_id=%s", thread_id)
+
+    # Emit an initial status immediately so the UI shows batch_size=1 even for
+    # very fast throughput-mode Phase-2 runs that complete in < _WINDOW_SECS.
+    # Uses stream_token (Redis Streams) for the same low-latency path as
+    # perf_token_batch, avoiding the lifecycle channel roundtrip.
+    await stream_token(
+        thread_id,
+        {
+            "event": "perf_concurrent_status",
+            "batch_size": batch_size,
+            "digest_tps": 0.0,
+            "ingest_tps": round(progress.ingest_tps, 1),
+            "stream_len": 0,
+        },
+    )
 
     while True:
         now = time.monotonic()
@@ -458,13 +489,18 @@ async def dynamic_reader_gen(
 
             # Stop auditing once ingest has reached 100% — no more concurrent
             # status events are meaningful after the write side is finished.
+            # Uses stream_token (Redis Streams) for sub-millisecond delivery
+            # via the same path as perf_token_batch events.
             if not progress.ingest_done:
-                await emit_perf_concurrent_status(
+                await stream_token(
                     thread_id,
-                    batch_size=batch_size,
-                    digest_tps=digest_tps,
-                    ingest_tps=ingest_tps,
-                    stream_len=stream_len,
+                    {
+                        "event": "perf_concurrent_status",
+                        "batch_size": batch_size,
+                        "digest_tps": round(digest_tps, 1),
+                        "ingest_tps": round(ingest_tps, 1),
+                        "stream_len": stream_len,
+                    },
                 )
             logger.debug(
                 "[dynamic_reader_gen] window batch_size=%d digest_tps=%.1f "
@@ -543,7 +579,7 @@ async def run_rate_limited_ingest(
     Returns:
         Tuple ``(produced, "timeout")`` — concurrency mode always ends at timeout.
     """
-    client = await _get_client()
+    client = get_redis_router().get_client_for_thread(thread_id)
     stream = f"{PERF_INGEST_STREAM_PREFIX}:{thread_id}"
     await client.delete(stream)
 
@@ -562,6 +598,7 @@ async def run_rate_limited_ingest(
         token_per_sec, batch_size, delay, timeout_secs, thread_id,
     )
 
+    stop_reason = "timeout"
     while time.monotonic() - t_global_start < timeout_secs:
         t_batch = time.monotonic()
 
@@ -588,6 +625,11 @@ async def run_rate_limited_ingest(
         else:
             await asyncio.sleep(0)  # always yield the event loop
 
+        # Check stable signal from frontend — exit early with "stable" reason.
+        if progress.stable:
+            stop_reason = "stable"
+            break
+
         # Emit progress event approximately every second.
         now = time.monotonic()
         if now - t_last_progress >= 1.0:
@@ -608,25 +650,30 @@ async def run_rate_limited_ingest(
     progress.ingest_tps = 0.0
 
     phase_elapsed = time.monotonic() - t_phase_start
+    final_status = "completed" if stop_reason == "stable" else "timeout"
     await emit_perf_ingest_progress(
         thread_id,
         produced=produced,
         total_tokens=0,
         elapsed_ms=int(phase_elapsed * 1000),
         ingest_tps=produced / max(phase_elapsed, 0.001),
-        status="timeout",
+        status=final_status,
     )
     logger.info(
-        "[run_rate_limited_ingest] done produced=%d elapsed=%.2fs thread_id=%s",
-        produced, phase_elapsed, thread_id,
+        "[run_rate_limited_ingest] done produced=%d elapsed=%.2fs stop_reason=%s thread_id=%s",
+        produced, phase_elapsed, stop_reason, thread_id,
     )
-    return produced, "timeout"
+    return produced, stop_reason
 
 
 __all__ = [
     "_ConcurrentProgress",
     "run_ingest_first_half",
     "run_ingest_second_half",
+    "run_rate_limited_ingest",
     "dynamic_reader_gen",
+    "register_concurrency_ingest",
+    "unregister_concurrency_ingest",
+    "signal_stable_ingest",
 ]
 

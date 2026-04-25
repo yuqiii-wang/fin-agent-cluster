@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Layout, Tag, Typography, theme } from "antd";
+import { Button, Layout, Tag, Typography } from "antd";
 import { FileTextOutlined, HistoryOutlined } from "@ant-design/icons";
 import { ChatInput } from "./components/ChatInput";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -10,13 +10,14 @@ import { fetchActiveThread, fetchHistory, fetchTaskMeta } from "./api";
 import { useGuestAuth } from "./hooks/useGuestAuth";
 import { useStreamSession } from "./app/useStreamSession";
 import { ReportDrawerPanel } from "./app/ReportDrawerPanel";
+import { useStyles } from "./App.styles";
 import type { NodeGroup, TaskTypeMeta, ThreadSummary } from "./types";
 
 const { Header, Content, Footer } = Layout;
 const { Title } = Typography;
 
 export default function App() {
-  const { token } = theme.useToken();
+  const styles = useStyles();
   const { token: userToken, username } = useGuestAuth();
 
   const [drawerNodeName, setDrawerNodeName] = useState<string | null>(null);
@@ -68,18 +69,11 @@ export default function App() {
 
   return (
     <>
-      <Layout style={{ height: "100vh", background: token.colorBgLayout, display: "flex", flexDirection: "column" }}>
+      <Layout style={styles.layout}>
         <Header
-          style={{
-            background: token.colorBgContainer,
-            borderBottom: `1px solid ${token.colorBorder}`,
-            padding: "0 20px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
+          style={styles.header}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={styles.headerLeft}>
             <Button
               icon={<HistoryOutlined />}
               loading={historyLoading}
@@ -94,24 +88,24 @@ export default function App() {
                 }
               }}
             />
-            <Title level={4} style={{ color: token.colorText, margin: 0 }}>
+            <Title level={4} style={styles.title}>
               🤖 Fin Agent
             </Title>
-            {username && <Tag color="blue" style={{ margin: 0 }}>{username}</Tag>}
+            {username && <Tag color="blue" style={styles.tag}>{username}</Tag>}
           </div>
           <Button icon={<FileTextOutlined />} onClick={() => setReportDrawerOpen(true)}>
             Strategy Report
           </Button>
         </Header>
 
-        <Content style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <Content style={styles.content}>
           {perfTestKey > 0 ? (
-            <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-              <div style={{ flex: "0 0 auto" }}>
+            <div style={styles.perfOuter}>
+              <div style={styles.perfTopSection}>
                 <MessageList messages={messages} onNodeClick={handlePerfNodeClick} />
               </div>
 
-              <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 16px" }}>
+              <div style={styles.perfScrollSection}>
                 <StreamingPerfTestPanel
                   key={perfTestKey}
                   userToken={userToken!}
@@ -135,9 +129,9 @@ export default function App() {
           )}
         </Content>
 
-        <Footer style={{ padding: 0, background: "transparent" }}>
+        <Footer style={styles.footer}>
           {perfTestKey > 0 ? (
-            <div style={{ padding: "8px 20px", display: "flex", justifyContent: "flex-end" }}>
+            <div style={styles.footerExit}>
               <Button onClick={exitPerfTest}>
                 Exit Performance Test
               </Button>

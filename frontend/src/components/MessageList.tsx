@@ -1,9 +1,10 @@
 import { memo, useEffect, useRef } from "react";
-import { Flex, Typography, theme } from "antd";
+import { Flex, Typography } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import { NodeList } from "./NodeList";
 import { ReportView } from "./ReportView";
 import type { ChatMessage, NodeGroup } from "../types";
+import { useStyles } from "./MessageList.styles";
 
 const { Text } = Typography;
 
@@ -13,7 +14,7 @@ interface Props {
 }
 
 export const MessageList = memo(function MessageList({ messages, onNodeClick }: Props) {
-  const { token } = theme.useToken();
+  const styles = useStyles();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -24,11 +25,7 @@ export const MessageList = memo(function MessageList({ messages, onNodeClick }: 
     <Flex
       vertical
       gap={16}
-      style={{
-        flex: 1,
-        overflowY: "auto",
-        padding: "16px 20px",
-      }}
+      style={styles.list}
     >
       {messages.map((msg) => (
         <Flex
@@ -36,14 +33,11 @@ export const MessageList = memo(function MessageList({ messages, onNodeClick }: 
           justify={msg.role === "user" ? "flex-end" : "flex-start"}
         >
           <div
-            style={{
-              maxWidth: msg.role === "assistant" ? "85%" : "72%",
-              background: msg.role === "user" ? token.colorPrimary : token.colorBgContainer,
-              border: msg.role === "assistant" ? `1px solid ${token.colorBorder}` : "none",
-              borderRadius: token.borderRadiusLG,
-              padding: "10px 14px",
-              color: token.colorText,
-            }}
+            style={
+              msg.role === "assistant"
+                ? styles.assistantBubble
+                : styles.userBubble
+            }
           >
             {msg.role === "assistant" ? (
               <>
@@ -54,18 +48,14 @@ export const MessageList = memo(function MessageList({ messages, onNodeClick }: 
 
                 {/* 2. Report viewer — replaces raw text once DB insert completes */}
                 {msg.report ? (
-                  <div style={{ marginTop: msg.nodes?.length ? 12 : 0 }}>
+                  <div style={styles.reportWrapper}>
                     <ReportView report={msg.report} />
                   </div>
                 ) : msg.text ? (
                   <div
                     style={{
-                      fontSize: 14,
-                      lineHeight: 1.75,
-                      color: token.colorText,
+                      ...styles.messageText,
                       marginTop: msg.nodes?.length ? 12 : 0,
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
                     }}
                   >
                     {msg.text}
@@ -79,9 +69,8 @@ export const MessageList = memo(function MessageList({ messages, onNodeClick }: 
                     align="center"
                     gap={8}
                     style={{
+                      ...styles.loadingState,
                       marginTop: 8,
-                      color: token.colorTextSecondary,
-                      fontSize: 13,
                     }}
                   >
                     <LoadingOutlined />
@@ -93,9 +82,8 @@ export const MessageList = memo(function MessageList({ messages, onNodeClick }: 
                     align="center"
                     gap={8}
                     style={{
+                      ...styles.loadingState,
                       marginTop: 0,
-                      color: token.colorTextSecondary,
-                      fontSize: 13,
                     }}
                   >
                     <LoadingOutlined />
@@ -104,7 +92,7 @@ export const MessageList = memo(function MessageList({ messages, onNodeClick }: 
                 ) : null}
               </>
             ) : (
-              <Text style={{ color: "#fff", fontSize: 14 }}>{msg.text}</Text>
+              <Text style={styles.userText}>{msg.text}</Text>
             )}
           </div>
         </Flex>

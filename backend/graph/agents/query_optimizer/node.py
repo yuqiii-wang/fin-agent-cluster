@@ -14,6 +14,7 @@ Sequential tasks (delegated to :mod:`tasks` sub-package):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -51,10 +52,16 @@ async def query_optimizer(state: FinAnalysisState) -> dict:
 
     _provider = get_active_provider()
     _llm = get_llm(temperature=0.1)
-    _chain = await build_chain(_llm)
 
-    node_execution_id = await start_node_execution(
-        thread_id, "query_optimizer", {"query": query}, started_at
+    # Parallelise chain build + node execution insert — both are independent.
+    # build_chain() is a cache-hit after warm_prompt_catalogs() at startup so
+    # the overlap effectively means start_node_execution pays zero wall-clock
+    # time before chain.astream() begins.
+    _chain, node_execution_id = await asyncio.gather(
+        build_chain(_llm),
+        start_node_execution(
+            thread_id, "query_optimizer", {"query": query}, started_at
+        ),
     )
 
     # ── Task 1: stream LLM JSON ──────────────────────────────────────────────

@@ -12,7 +12,7 @@ Mounted at ``/users`` under the parent API router, so full paths are:
 Query handshake flow
 --------------------
 1. ``POST /query`` — creates a ``user_queries`` row with ``status='received'``,
-   fires ``query_received`` via pg_notify (+ pending-notify store for retry),
+   fires ``query_received`` via Redis Pub/Sub (+ pending-notify store for retry),
    and returns ``{thread_id, status='received'}``.  The graph is **not** started.
 
 2. Client subscribes to ``GET /stream/{thread_id}`` and waits for the
@@ -28,7 +28,7 @@ Duplicate-submission guard
 --------------------------
 If the same ``user_id`` submits the same ``query`` text while an existing row
 is still in ``received/pending/running`` state and was created within the last
-60 seconds, the backend returns a NACK with ``status='cancelled'`` and the
+20 seconds, the backend returns a NACK with ``status='cancelled'`` and the
 existing ``thread_id`` so the client can re-attach to the live SSE stream.
 """
 
@@ -46,9 +46,9 @@ from sqlalchemy import and_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from backend.db import get_session_factory as _get_session_factory
-from backend.db.redis.publisher import ack_pending_notify
-from backend.db.redis.cancel_signal import publish_cancel
-from backend.db.redis.query_phase import delete_query_phase, set_query_phase
+from backend.db.redis.streams.publisher import ack_pending_notify
+from backend.db.redis.session.cancel_signal import publish_cancel
+from backend.db.redis.session.query_phase import delete_query_phase, set_query_phase
 from backend.graph.models import AgentTask, NodeExecution
 from backend.api.registry import running_tasks as _running_tasks, mark_task_active
 from backend.sse_notifications import emit_done
@@ -77,7 +77,7 @@ async def run_query(
     """Accept a financial analysis query and await client ACK before processing.
 
     Creates a ``user_queries`` row with ``status='received'``, fires a
-    ``query_received`` pg_notify event (with pending-notify retry), and returns
+    ``query_received`` event (with pending-notify retry), and returns
     ``{thread_id, status='received'}``.  The LangGraph execution is **not**
     started until the client ACKs via ``POST /query/{thread_id}/ack``.
 
@@ -135,7 +135,7 @@ async def run_query(
                 extra={
                                     "perf_params": {
                         "perf_total_tokens": request.perf_total_tokens or 100_000,
-                        "perf_timeout_secs": request.perf_timeout_secs or 60,
+                        "perf_timeout_secs": request.perf_timeout_secs or 20,
                         "perf_test_mode": request.perf_test_mode or "throughput",
                         "perf_token_per_sec": request.perf_token_per_sec or 500,
                     }
@@ -182,7 +182,7 @@ async def run_query(
     await set_query_phase(thread_id, "received")
     # Emit query_status for the existing query_status replay channel.
     await emit_query_status(thread_id, "received")
-    # Emit query_received via pg_notify + push to pending-notify store for retry.
+    # Emit query_received via Redis Pub/Sub + push to pending-notify store for retry.
     await emit_query_received(thread_id)
 
     return QueryResponse(thread_id=thread_id, status="received")
@@ -243,7 +243,6 @@ async def ack_query(
 
         uq.status = "running"
         uq.is_ack = True
-        uq.ack_at = datetime.now(timezone.utc)
         await session.commit()
 
     # Ack the pending query_received notify so the drain cycle stops retrying.
@@ -255,7 +254,7 @@ async def ack_query(
             thread_id,
             query_text,
             perf_total_tokens=perf_params.get("perf_total_tokens", 100_000),
-            perf_timeout_secs=perf_params.get("perf_timeout_secs", 60),
+            perf_timeout_secs=perf_params.get("perf_timeout_secs", 20),
             perf_test_mode=perf_params.get("perf_test_mode", "throughput"),
             perf_token_per_sec=perf_params.get("perf_token_per_sec", 500),
         ),
@@ -347,6 +346,37 @@ async def cancel_query(
         thread_id, reason, claimed,
     )
     return QueryResponse(thread_id=thread_id, status=done_status)
+
+
+@router.post("/query/{thread_id}/perf-stable", status_code=200)
+async def perf_stable_signal(thread_id: str) -> dict[str, str]:
+    """Signal that the concurrency perf stream has reached stable TPS.
+
+    Sets the ``stable`` flag on the active :class:`~backend.graph.agents.perf_test.tasks.fanout_to_streams._ConcurrentProgress`
+    for this thread.  :func:`~backend.graph.agents.perf_test.tasks.fanout_to_streams.run_rate_limited_ingest`
+    will then exit its loop at the next batch boundary, append the sentinel,
+    and return ``(produced, "stable")`` so that the node emits
+    ``perf_test_complete`` (not ``perf_test_stopped``) to the SSE client.
+
+    Fire-and-forget — returns immediately without waiting for shutdown.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+
+    Returns:
+        ``{"thread_id": ..., "status": "stable_signaled"}`` if found,
+        or ``{"thread_id": ..., "status": "not_found"}`` if the timeout
+        already fired and the gather has returned.
+    """
+    # Lazy import — only loaded when a concurrency perf test is active.
+    from backend.graph.agents.perf_test.tasks.fanout_to_streams import signal_stable_ingest  # noqa: PLC0415
+
+    found = signal_stable_ingest(thread_id)
+    logger.info(
+        "[queries] perf_stable_signal thread_id=%s found=%s",
+        thread_id, found,
+    )
+    return {"thread_id": thread_id, "status": "stable_signaled" if found else "not_found"}
 
 
 @router.get("/query/{thread_id}", response_model=QueryResponse)

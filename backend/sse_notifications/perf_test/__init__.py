@@ -5,7 +5,6 @@ Re-exports all notification helpers for use by the perf-test graph node and runn
 """
 
 from backend.sse_notifications.perf_test.notifications import (
-    emit_perf_concurrent_status,
     emit_perf_ingest_complete,
     emit_perf_ingest_progress,
     emit_perf_test_complete,
@@ -17,5 +16,4 @@ __all__ = [
     "emit_perf_test_complete",
     "emit_perf_ingest_complete",
     "emit_perf_ingest_progress",
-    "emit_perf_concurrent_status",
 ]

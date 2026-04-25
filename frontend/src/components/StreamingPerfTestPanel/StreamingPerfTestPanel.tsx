@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { Button, Col, Divider, Dropdown, Form, InputNumber, Row, Segmented, Space, Statistic, Table, Tag, Typography, theme } from "antd";
 import { CheckCircleOutlined, DownOutlined, PauseCircleOutlined, ReloadOutlined, SyncOutlined } from "@ant-design/icons";
 import { useSessionManager } from "./useSessionManager";
 import { buildColumns } from "./columns";
 import { StreamTaskDrawer } from "./StreamTaskDrawer";
 import { AggregateStatsHeader } from "./AggregateStatsHeader";
+import { useStyles } from "./StreamingPerfTestPanel.styles";
 import type { PerfTestConfig, ThreadSession } from "./types";
 import type { TaskTypeMeta } from "../../types";
 import { DEFAULT_PERF_CONFIG } from "./types";
@@ -26,12 +27,31 @@ export function StreamingPerfTestPanel({
   onComplete,
 }: StreamingPerfTestPanelProps) {
   const { token } = theme.useToken();
+  const styles = useStyles();
   const [config, setConfig] = useState<PerfTestConfig>(DEFAULT_PERF_CONFIG);
   const [addCount, setAddCount] = useState<number>(2);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [customAddVal, setCustomAddVal] = useState<number | null>(null);
   const [customAddError, setCustomAddError] = useState<string>("");
   const [taskDrawerThreadId, setTaskDrawerThreadId] = useState<string | null>(null);
+  /** thread_id of the session whose streaming token log is currently visible.
+   *  At most one session may be expanded at a time. */
+  const [expandedTokenLogId, setExpandedTokenLogId] = useState<string | null>(null);
+
+  const handleToggleTokenLog = useCallback((thread_id: string) => {
+    setExpandedTokenLogId((prev) => (prev === thread_id ? null : thread_id));
+  }, []);
+
+  /** Measured height of the sticky control-panel header — used as offsetHeader for the Table. */
+  const stickyHeaderRef = useRef<HTMLDivElement>(null);
+  const [stickyHeaderH, setStickyHeaderH] = useState(0);
+  useEffect(() => {
+    const el = stickyHeaderRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver(() => setStickyHeaderH(el.offsetHeight));
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
 
   // Presets differ by mode: Concurrency tests need 10× more streams.
   const ADD_PRESETS = config.testMode === "concurrency"
@@ -77,29 +97,22 @@ export function StreamingPerfTestPanel({
   const isActive = activeCount > 0;
 
   const columns = useMemo(
-    () => buildColumns(handleCancelOne, config.tokenCount, frozen, setTaskDrawerThreadId, config.testMode, config.timeoutSecs),
-    [handleCancelOne, config.tokenCount, config.testMode, config.timeoutSecs, frozen],
+    () => buildColumns(handleCancelOne, config.tokenCount, frozen, setTaskDrawerThreadId, config.testMode, config.timeoutSecs, token, config.tokenPerSec, expandedTokenLogId, handleToggleTokenLog),
+    [handleCancelOne, config.tokenCount, config.testMode, config.timeoutSecs, config.tokenPerSec, frozen, token, expandedTokenLogId, handleToggleTokenLog],
   );
 
   return (
-    <div style={{ width: "100%" }}>
+    <div style={styles.outerContainer}>
       {/* ── Sticky header pane (title + buttons + config + stats) ── */}
-      <div style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 20,
-        background: token.colorBgContainer,
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        padding: "12px 16px 10px",
-      }}>
+      <div style={styles.stickyHeader} ref={stickyHeaderRef}>
         {/* Title row + action buttons */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={styles.titleRow}>
+          <div style={styles.titleLeft}>
             <SyncOutlined spin={isActive} />
             <Title level={5} style={{ margin: 0 }}>Performance Test</Title>
             {isActive && <Tag color="blue">{activeCount} active</Tag>}
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={styles.titleRight}>
             <Dropdown.Button
               type="primary"
               disabled={isActive}
@@ -113,10 +126,10 @@ export function StreamingPerfTestPanel({
                 onClick: handlePresetSelect,
               }}
               dropdownRender={(menu) => (
-                <div style={{ background: token.colorBgElevated, borderRadius: token.borderRadiusLG, boxShadow: token.boxShadowSecondary }}>
+                <div style={styles.dropdownContent}>
                   {menu}
-                  <Divider style={{ margin: "4px 0" }} />
-                  <Space direction="vertical" size={4} style={{ padding: "4px 12px 8px", width: "100%" }}>
+                  <Divider style={styles.dropdownDivider} />
+                  <Space direction="vertical" size={4} style={styles.dropdownCustomArea}>
                     <Space>
                       <InputNumber
                         size="small"
@@ -126,12 +139,12 @@ export function StreamingPerfTestPanel({
                         status={customAddError ? "error" : ""}
                         onChange={(v) => { setCustomAddVal(v); setCustomAddError(""); }}
                         onPressEnter={handleCustomSet}
-                        style={{ width: 90 }}
+                        style={styles.customInputNumber}
                       />
                       <Button size="small" type="primary" onClick={handleCustomSet}>Set</Button>
                     </Space>
                     {customAddError && (
-                      <Typography.Text type="danger" style={{ fontSize: 12 }}>{customAddError}</Typography.Text>
+                      <Typography.Text type="danger" style={styles.errorText}>{customAddError}</Typography.Text>
                     )}
                   </Space>
                 </div>
@@ -165,7 +178,7 @@ export function StreamingPerfTestPanel({
         </div>
 
         {/* Config inputs */}
-        <Form layout="inline" style={{ marginBottom: 10 }}>
+        <Form layout="inline" style={styles.configForm}>
           <Form.Item label="Test Mode">
             <Segmented
               options={[
@@ -192,7 +205,7 @@ export function StreamingPerfTestPanel({
                 formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}
                 parser={(v) => parseInt((v ?? "").replace(/,/g, ""), 10) as unknown as 100000}
                 onChange={(v) => v !== null && setConfig((c) => ({ ...c, tokenCount: v }))}
-                style={{ width: 130 }}
+                style={styles.tokenInputNumber}
               />
             </Form.Item>
           ) : (
@@ -206,7 +219,7 @@ export function StreamingPerfTestPanel({
                 formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}
                 parser={(v) => parseInt((v ?? "").replace(/,/g, ""), 10) as unknown as 500}
                 onChange={(v) => v !== null && setConfig((c) => ({ ...c, tokenPerSec: v }))}
-                style={{ width: 120 }}
+                style={styles.tpsInputNumber}
               />
             </Form.Item>
           )}
@@ -219,7 +232,7 @@ export function StreamingPerfTestPanel({
               disabled={isActive}
               addonAfter="s"
               onChange={(v) => v !== null && setConfig((c) => ({ ...c, timeoutSecs: v }))}
-              style={{ width: 100 }}
+              style={styles.timeoutInputNumber}
             />
           </Form.Item>
         </Form>
@@ -234,7 +247,7 @@ export function StreamingPerfTestPanel({
       </div>
 
       {/* ── Scrollable grid ── */}
-      <div style={{ padding: "12px 16px 16px" }}>
+      <div style={styles.tableSection}>
         <Table<ThreadSession>
           rowKey="thread_id"
           columns={columns}
@@ -242,6 +255,7 @@ export function StreamingPerfTestPanel({
           pagination={false}
           size="small"
           bordered
+          sticky={{ offsetHeader: stickyHeaderH }}
         />
       </div>
 

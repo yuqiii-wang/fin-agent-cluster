@@ -99,7 +99,7 @@ async def _fetch_reference_tasks(task_ids: list[int] | None) -> list[TaskInfo]:
     """
     if not task_ids:
         return []
-    async with raw_conn(search_path=_SEARCH_PATH) as conn:
+    async with raw_conn(search_path=_SEARCH_PATH, readonly=True) as conn:
         cur = await conn.execute(TaskSQL.GET_BY_IDS, (task_ids,))
         rows = await cur.fetchall()
     return [_row_to_task(r) for r in rows]
@@ -115,7 +115,7 @@ async def get_latest_report(symbol: str) -> StrategyReport:
     Raises:
         HTTPException 404: No report exists for the symbol.
     """
-    async with raw_conn(search_path=_SEARCH_PATH) as conn:
+    async with raw_conn(search_path=_SEARCH_PATH, readonly=True) as conn:
         cur = await conn.execute(ReportSQL.GET_LATEST_BY_SYMBOL, (symbol.upper(),))
         row = await cur.fetchone()
     if row is None:
@@ -134,7 +134,7 @@ async def get_report_by_id(report_id: int) -> StrategyReport:
     Raises:
         HTTPException 404: Report with given id does not exist.
     """
-    async with raw_conn(search_path=_SEARCH_PATH) as conn:
+    async with raw_conn(search_path=_SEARCH_PATH, readonly=True) as conn:
         cur = await conn.execute(ReportSQL.GET_BY_ID, (report_id,))
         row = await cur.fetchone()
     if row is None:
@@ -159,7 +159,7 @@ async def list_reports(
     Returns:
         StrategyReportList with reports and total count.
     """
-    async with raw_conn(search_path=_SEARCH_PATH) as conn:
+    async with raw_conn(search_path=_SEARCH_PATH, readonly=True) as conn:
         cur = await conn.execute(ReportSQL.LIST_BY_SYMBOL, (symbol.upper(), limit, offset))
         rows = await cur.fetchall()
     reports: list[StrategyReport] = []

@@ -86,7 +86,7 @@ def _make_cache_key(source: str, query: QuantQuery) -> str:
 async def _get_cached(cache_key: str) -> Optional[dict[str, Any]]:
     """Return the cached output JSONB dict if a fresh record exists, otherwise None."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=_CACHE_TTL_HOURS)
-    async with raw_conn() as conn:
+    async with raw_conn(readonly=True) as conn:
         cur = await conn.execute(QuantRawSQL.GET_CACHED, (cache_key, cutoff))
         row = await cur.fetchone()
     return row["output"] if row else None
@@ -372,7 +372,7 @@ def _make_cache_key(source: str, query: QuantQuery) -> str:
 async def _get_cached(cache_key: str) -> Optional[dict[str, Any]]:
     """Return the cached output JSONB dict if a fresh record exists, otherwise None."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=_CACHE_TTL_HOURS)
-    async with raw_conn() as conn:
+    async with raw_conn(readonly=True) as conn:
         cur = await conn.execute(QuantRawSQL.GET_CACHED, (cache_key, cutoff))
         row = await cur.fetchone()
     return row["output"] if row else None

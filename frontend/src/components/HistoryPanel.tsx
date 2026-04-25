@@ -1,6 +1,7 @@
 import { Badge, Drawer, List, Tag, Tooltip, Typography } from "antd";
 import { HistoryOutlined } from "@ant-design/icons";
 import type { ThreadSummary } from "../types";
+import { useStyles } from "./HistoryPanel.styles";
 
 const { Text } = Typography;
 
@@ -27,6 +28,7 @@ interface HistoryPanelProps {
  * ``onRecover`` so the parent can reload the thread into the main UI.
  */
 export function HistoryPanel({ open, items, onClose, onRecover }: HistoryPanelProps) {
+  const styles = useStyles();
   return (
     <Drawer
       title={
@@ -42,7 +44,7 @@ export function HistoryPanel({ open, items, onClose, onRecover }: HistoryPanelPr
       styles={{ body: { padding: "8px 0" } }}
     >
       {items.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--ant-color-text-secondary)" }}>
+        <div style={styles.emptyState}>
           No previous sessions
         </div>
       ) : (
@@ -50,28 +52,28 @@ export function HistoryPanel({ open, items, onClose, onRecover }: HistoryPanelPr
           dataSource={items}
           renderItem={(item) => (
             <List.Item
-              style={{ padding: "10px 16px", cursor: "pointer" }}
+              style={styles.listItem}
               onClick={() => onRecover(item)}
             >
               <List.Item.Meta
                 title={
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={styles.titleRow}>
                     <Tooltip title={item.query}>
                       <Text
-                        style={{ maxWidth: 230, display: "inline-block" }}
+                        style={styles.titleText}
                         ellipsis
                         strong
                       >
                         {item.query}
                       </Text>
                     </Tooltip>
-                    <Tag color={STATUS_COLOR[item.status] ?? "default"} style={{ flexShrink: 0 }}>
+                    <Tag color={STATUS_COLOR[item.status] ?? "default"} style={styles.titleTag}>
                       {item.status}
                     </Tag>
                   </div>
                 }
                 description={
-                  <Text type="secondary" style={{ fontSize: 12 }}>
+                  <Text type="secondary" style={styles.timeText}>
                     {new Date(item.created_at).toLocaleString()}
                   </Text>
                 }

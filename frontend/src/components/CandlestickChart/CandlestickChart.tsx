@@ -14,6 +14,7 @@ import {
   toChartTime,
 } from "./chartHelpers";
 import { PanelChart } from "./PanelChart";
+import { styles } from "./CandlestickChart.styles";
 
 const { Text } = Typography;
 
@@ -178,7 +179,7 @@ export function CandlestickChart({ bars, symbol, taskKey, height = 340 }: Candle
 
   if (bars.length === 0) {
     return (
-      <Text type="secondary" style={{ fontSize: 12 }}>
+      <Text type="secondary" style={styles.noDataText}>
         No OHLCV bars in output.
       </Text>
     );
@@ -190,13 +191,13 @@ export function CandlestickChart({ bars, symbol, taskKey, height = 340 }: Candle
     <Flex vertical gap={8}>
       <Flex align="center" justify="space-between">
         <Flex align="center" gap={6}>
-          <Text strong style={{ fontSize: 12 }}>{symbol || "—"}</Text>
+          <Text strong style={styles.symbolText}>{symbol || "—"}</Text>
           {currencyInfo && (
-            <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>
+            <Tag color="blue" style={styles.currencyTag}>
               {currencyInfo.symbol} {currencyInfo.code}
             </Tag>
           )}
-          <Text type="secondary" style={{ fontSize: 11 }}>
+          <Text type="secondary" style={styles.metaText}>
             {intervalLabel(taskKey)}&nbsp;
             ({filteredBars.length}{filteredBars.length !== bars.length ? ` / ${bars.length}` : ""} bars)
           </Text>
@@ -211,15 +212,15 @@ export function CandlestickChart({ bars, symbol, taskKey, height = 340 }: Candle
         )}
       </Flex>
 
-      <div ref={containerRef} style={{ width: "100%", height }} />
+      <div ref={containerRef} style={{ ...styles.chartContainer, height }} />
 
       {canShowIndicators && (
         <Flex align="center" gap={8} wrap="wrap">
-          <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>Indicators</Text>
+          <Text type="secondary" style={styles.indicatorLabel}>Indicators</Text>
           <Select
             mode="multiple"
             size="small"
-            style={{ flex: 1, minWidth: 200 }}
+            style={styles.indicatorSelect}
             placeholder="Add indicator…"
             value={selectedIds}
             onChange={setSelectedIds}
@@ -250,13 +251,13 @@ export function CandlestickChart({ bars, symbol, taskKey, height = 340 }: Candle
         <Flex key={series.indicator} vertical gap={2}>
           <Flex gap={12}>
             {series.meta.keys.map((k, i) => (
-              <Text key={k} style={{ fontSize: 11, color: indicatorColor(series.indicator, i) }}>
+              <Text key={k} style={{ ...styles.panelIndicatorKey, color: indicatorColor(series.indicator, i) }}>
                 {series.meta.label}{series.meta.keys.length > 1 ? ` (${k})` : ""}
               </Text>
             ))}
           </Flex>
           {series.all_null ? (
-            <Text type="warning" style={{ fontSize: 11 }}>
+            <Text type="warning" style={styles.panelIndicatorMissing}>
               <InfoCircleOutlined /> Missing data
             </Text>
           ) : (

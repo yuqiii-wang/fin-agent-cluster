@@ -5,7 +5,7 @@
 
 export { KONG_ORIGIN, BASE } from "./config";
 export { getStoredToken, getStoredUsername, guestLogin, fetchActiveThread, fetchHistory } from "./auth";
-export { submitQuery, submitPerfQuery, fetchTasks, fetchNodeExecutions, cancelQuery, ackQuery } from "./queries";
+export { submitQuery, submitPerfQuery, fetchTasks, fetchNodeExecutions, cancelQuery, ackQuery, stablePerfStream } from "./queries";
 export { createAckHandlers } from "./ack";
 export { openStream, watchTask, fetchStreamingStatus } from "./stream";
 export { cancelTask, passTask, fetchTaskMeta } from "./tasks";

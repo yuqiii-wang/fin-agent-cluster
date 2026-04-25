@@ -1,7 +1,6 @@
 CREATE SCHEMA IF NOT EXISTS fin_agents;
 
 CREATE TYPE fin_agents.query_status AS ENUM ('received', 'pending', 'running', 'completed', 'failed', 'cancelled');
-CREATE TYPE fin_agents.streaming_status AS ENUM ('connecting', 'received', 'digesting', 'completed', 'failed', 'cancelled', 'timeout');
 
 
 CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
@@ -12,10 +11,6 @@ CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
     answer TEXT,
     status fin_agents.query_status NOT NULL DEFAULT 'pending',
     is_ack      BOOLEAN NOT NULL DEFAULT FALSE,
-    ack_at      TIMESTAMPTZ,
-    -- Number of times the pg_notify was re-sent before the client acked.
-    -- Incremented each drain cycle; stops growing once is_ack=TRUE or after 10 retries.
-    retry_count INTEGER NOT NULL DEFAULT 0,
     extra JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
@@ -105,24 +100,3 @@ CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_execution_id_idx ON fin_agents.
 
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_thread_id_idx ON fin_agents.tasks (thread_id);
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_name_idx ON fin_agents.tasks (node_name);
-
--- One row per status transition of a task — audit trail of task lifecycle steps.
--- Does NOT store query text, tokens, or I/O payloads; only status and timing metadata.
-CREATE TABLE IF NOT EXISTS fin_agents.streamings (
-    id          BIGSERIAL PRIMARY KEY,
-    task_id     BIGINT NOT NULL
-                REFERENCES fin_agents.tasks (id) ON DELETE CASCADE,
-    thread_id   TEXT NOT NULL
-                REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
-    status      fin_agents.streaming_status NOT NULL,
-    is_ack      BOOLEAN NOT NULL DEFAULT FALSE,
-    ack_at      TIMESTAMPTZ,
-    -- Number of times the pg_notify was re-sent before the client acked.
-    -- Incremented each drain cycle; stops growing once is_ack=TRUE or after 10 retries.
-    retry_count INTEGER NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS fin_agents_streamings_task_id_idx    ON fin_agents.streamings (task_id);
-CREATE INDEX IF NOT EXISTS fin_agents_streamings_thread_id_idx  ON fin_agents.streamings (thread_id);
-

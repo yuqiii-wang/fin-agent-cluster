@@ -7,8 +7,8 @@ Two-phase architecture
     :func:`~backend.graph.agents.perf_test.tasks.fanout_to_streams.run_ingest_first_half`
     bulk-writes 95 % of ``total_tokens`` to ``fin:perf:{thread_id}``.
     When done the ``mock_ingest`` AgentTask is marked *completed* and a
-    ``perf_ingest_half_complete`` pg_notify event is sent so the frontend
-    knows the first-phase milestone was reached.
+    ``perf_ingest_complete`` event is sent so the frontend
+    knows the first-phase milestone was reached and can set ``pub_start_ms``.
 
 **Phase 2 — concurrent final-5 % ingest + adaptive read** (``mock_pub`` task)
     Two coroutines are launched via ``asyncio.gather`` *in the same Celery
@@ -36,12 +36,13 @@ from datetime import datetime, timezone
 from backend.graph.agents.task_keys import PERF_TEST_INGEST, PERF_TEST_PUB
 from backend.graph.state import PerfTestState
 from backend.graph.utils.execution_log import finish_node_execution, start_node_execution
-from backend.db.redis.query_phase import set_query_phase
+from backend.db.redis.session.query_phase import set_query_phase
 from backend.sse_notifications import (
     TaskCancelledSignal,
     cancel_task,
     complete_task,
     create_task,
+    emit_perf_ingest_complete,
     emit_perf_test_complete,
     emit_perf_test_stopped,
     fail_task,
@@ -93,6 +94,8 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
         run_ingest_first_half,
         run_ingest_second_half,
         run_rate_limited_ingest,
+        register_concurrency_ingest,
+        unregister_concurrency_ingest,
     )
 
     thread_id: str = state["thread_id"]
@@ -135,7 +138,9 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
 
         t_pub = time.monotonic()
         published = 0
+        stop_reason = "timeout"
 
+        register_concurrency_ingest(thread_id, progress)
         try:
             ingest_result, pub_result = await asyncio.gather(
                 run_rate_limited_ingest(
@@ -146,15 +151,17 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
                     dynamic_reader_gen(thread_id, progress),
                 ),
             )
-            produced, _ = ingest_result
+            produced, stop_reason = ingest_result
             published = pub_result
 
         except (asyncio.CancelledError, TaskCancelledSignal):
+            unregister_concurrency_ingest(thread_id)
             elapsed_ms = int((time.monotonic() - t0_node) * 1000)
             await cancel_task(thread_id, pub_task_id, PERF_TEST_PUB)
             await finish_node_execution(node_execution_id, {"cancelled": True}, elapsed_ms)
             raise asyncio.CancelledError()
         except Exception as exc:
+            unregister_concurrency_ingest(thread_id)
             elapsed_ms = int((time.monotonic() - t0_node) * 1000)
             logger.exception(
                 "[perf_test_streamer] concurrency error thread_id=%s: %s", thread_id, exc
@@ -165,14 +172,20 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
             )
             raise
 
+        unregister_concurrency_ingest(thread_id)
+
         pub_ms = int((time.monotonic() - t_pub) * 1000)
         tps_val = published / max(pub_ms / 1000, 0.001)
         await complete_task(
             thread_id, pub_task_id, PERF_TEST_PUB,
             {"total_published": published, "pub_ms": pub_ms, "tps": round(tps_val, 2)},
         )
-        # Concurrency mode always ends on timeout.
-        await emit_perf_test_stopped(thread_id, timeout_secs)
+        # Emit perf_test_complete when the frontend signalled stability (clean
+        # early exit); emit perf_test_stopped for the normal timeout path.
+        if stop_reason == "stable":
+            await emit_perf_test_complete(thread_id, published, tps_val)
+        else:
+            await emit_perf_test_stopped(thread_id, timeout_secs, total_published=published)
 
         total_elapsed_ms = int((time.monotonic() - t0_node) * 1000)
         await finish_node_execution(
@@ -226,6 +239,7 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
         )
         raise
 
+    t_ingest_ms = int((time.monotonic() - t0_node) * 1000)
     await complete_task(
         thread_id,
         ingest_task_id,
@@ -234,6 +248,12 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
             "total_generated": produced,
             "stop_reason": first_stop_reason,
         },
+    )
+    await emit_perf_ingest_complete(
+        thread_id,
+        ingest_ms=t_ingest_ms,
+        produced=produced,
+        stop_reason=first_stop_reason,
     )
     logger.info(
         "[perf_test_streamer] phase1 done produced=%d stop_reason=%s thread_id=%s",
@@ -335,10 +355,16 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
             "tps": round(tps_val, 2),
         },
     )
+    if published < total_tokens:
+        logger.warning(
+            "[perf_test_streamer] short publish published=%d total=%d "
+            "final_stop=%s thread_id=%s",
+            published, total_tokens, final_stop, thread_id,
+        )
     if final_stop == "completed":
         await emit_perf_test_complete(thread_id, published, tps_val)
     else:
-        await emit_perf_test_stopped(thread_id, timeout_secs)
+        await emit_perf_test_stopped(thread_id, timeout_secs, total_published=published)
 
     total_elapsed_ms = int((time.monotonic() - t0_node) * 1000)
     output = _PerfTestOutput(

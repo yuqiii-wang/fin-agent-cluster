@@ -1,10 +1,10 @@
 """Query lifecycle SSE notification emitters.
 
-Both functions use :func:`backend.sse_notifications.channel.pg_notify` for
-live delivery.  ``emit_query_received`` additionally calls
-:func:`backend.db.redis.publisher.push_pending_notify` so the SSE generator's
-drain cycle retries delivery if the client was not yet subscribed when the
-notification fired.
+Both functions use :func:`backend.sse_notifications.channel.publish_lifecycle`
+for live delivery via Redis Pub/Sub.  ``emit_query_received`` additionally
+calls :func:`backend.db.redis.publisher.push_pending_notify` so the SSE
+generator's drain cycle retries delivery if the client was not yet subscribed
+when the notification fired.
 
 ``emit_query_status`` emits phase-transition events used by both regular and
 perf-test queries.  It lives here (not in the perf_test sub-package) because
@@ -16,14 +16,14 @@ from __future__ import annotations
 import json
 import logging
 
-from backend.db.redis.publisher import push_pending_notify
-from backend.sse_notifications.channel import pg_notify
+from backend.db.redis.streams.publisher import push_pending_notify
+from backend.sse_notifications.channel import publish_lifecycle
 
 logger = logging.getLogger(__name__)
 
 
 async def emit_query_received(thread_id: str) -> None:
-    """Emit ``query_received`` via pg_notify and push to the pending-notify store.
+    """Emit ``query_received`` via Redis Pub/Sub and push to the pending-notify store.
 
     The pending-notify store ensures the event is retried by the SSE generator's
     drain cycle (every ~1–300 s with exponential back-off) until the client
@@ -35,12 +35,12 @@ async def emit_query_received(thread_id: str) -> None:
     payload = {"event": "query_received", "thread_id": thread_id}
     raw = json.dumps(payload)
     await push_pending_notify(thread_id, "query_received", None, raw)
-    await pg_notify(thread_id, payload)
+    await publish_lifecycle(thread_id, payload)
     logger.info("[query_lifecycle] query_received emitted thread_id=%s", thread_id)
 
 
 async def emit_query_ack_confirmed(thread_id: str) -> None:
-    """Emit ``query_ack_confirmed`` via pg_notify.
+    """Emit ``query_ack_confirmed`` via Redis Pub/Sub.
 
     No pending-notify store entry is created because this event is the
     terminal confirmation — the client stops retrying ACKs on receipt, and
@@ -49,7 +49,7 @@ async def emit_query_ack_confirmed(thread_id: str) -> None:
     Args:
         thread_id: LangGraph thread UUID.
     """
-    await pg_notify(
+    await publish_lifecycle(
         thread_id,
         {"event": "query_ack_confirmed", "thread_id": thread_id},
     )
@@ -59,7 +59,7 @@ async def emit_query_ack_confirmed(thread_id: str) -> None:
 async def emit_query_status(thread_id: str, phase: str) -> None:
     """Emit a ``query_status`` SSE event signalling a backend phase transition.
 
-    Fires via pg_notify so the frontend can update status in real time.  The
+    Fires via Redis Pub/Sub so the frontend can update status in real time.  The
     phase is stored in Redis by the caller so late-connecting SSE clients
     recover the current phase via :func:`~backend.api.stream._replay_existing`.
 
@@ -77,7 +77,7 @@ async def emit_query_status(thread_id: str, phase: str) -> None:
         phase:     One of ``"received"``, ``"preparing"``, ``"ingesting"``,
                    ``"sending"``.
     """
-    await pg_notify(thread_id, {"event": "query_status", "phase": phase})
+    await publish_lifecycle(thread_id, {"event": "query_status", "phase": phase})
     logger.info("[query_lifecycle] query_status emitted phase=%s thread_id=%s", phase, thread_id)
 
 

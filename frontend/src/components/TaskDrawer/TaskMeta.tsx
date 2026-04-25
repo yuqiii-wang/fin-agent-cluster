@@ -1,6 +1,7 @@
 import { Descriptions, Flex, Tooltip, Typography } from "antd";
 import { CopyOutlined } from "@ant-design/icons";
 import type { TaskInfo } from "../../types";
+import { styles } from "./TaskMeta.styles";
 
 const { Text } = Typography;
 
@@ -20,22 +21,15 @@ export function TaskMeta({ task }: { task: TaskInfo }) {
           label: "thread",
           children: (
             <Tooltip title={task.thread_id}>
-              <Flex align="center" gap={4} style={{ minWidth: 0 }}>
+                <Flex align="center" gap={4} style={styles.threadFlex}>
                 <Text
                   code
-                  style={{
-                    fontSize: 11,
-                    maxWidth: 200,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    display: "inline-block",
-                  }}
+                  style={styles.threadCode}
                 >
                   {task.thread_id}
                 </Text>
                 <CopyOutlined
-                  style={{ fontSize: 10, cursor: "pointer", flexShrink: 0 }}
+                  style={styles.copyIcon}
                   onClick={() => navigator.clipboard.writeText(task.thread_id)}
                 />
               </Flex>
@@ -45,17 +39,17 @@ export function TaskMeta({ task }: { task: TaskInfo }) {
         {
           key: "node",
           label: "node",
-          children: <Text code style={{ fontSize: 11 }}>{task.node_name}</Text>,
+          children: <Text code style={styles.codeText}>{task.node_name}</Text>,
         },
         {
           key: "task_key",
           label: "task_key",
-          children: <Text code style={{ fontSize: 11 }}>{task.task_key}</Text>,
+          children: <Text code style={styles.codeText}>{task.task_key}</Text>,
         },
         {
           key: "id",
           label: "id",
-          children: <Text code style={{ fontSize: 11 }}>{task.id}</Text>,
+          children: <Text code style={styles.codeText}>{task.id}</Text>,
         },
       ]}
     />

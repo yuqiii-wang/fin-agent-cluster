@@ -5,6 +5,7 @@ import type { NodeExecutionInfo, NodeGroup, TaskInfo } from "../types";
 import { fetchNodeExecutions } from "../api";
 import { JsonViewer } from "./JsonViewer";
 import { NODE_LABELS } from "./nodeLabels";
+import { useStyles } from "./NodeList.styles";
 
 const { Text } = Typography;
 
@@ -25,9 +26,10 @@ interface Props {
 
 /** Field with label + JsonViewer (copy button is built into JsonViewer). */
 function LabelledField({ label, data }: { label: string; data: unknown }) {
+  const styles = useStyles();
   return (
     <div>
-      <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>{label}</Text>
+      <Text type="secondary" style={styles.labelText}>{label}</Text>
       <JsonViewer data={data} maxHeight={400} />
     </div>
   );
@@ -43,41 +45,30 @@ interface NodeInlinePanelProps {
 
 /** Inline input/output panel for a node, showing the actual state data. */
 function NodeInlinePanel({ execution, nodeStatus, streamingText }: NodeInlinePanelProps) {
+  const styles = useStyles();
   if (execution === "loading") {
-    return <Flex justify="center" style={{ marginTop: 8 }}><Spin size="small" /></Flex>;
+    return <Flex justify="center" style={styles.loadingCenter}><Spin size="small" /></Flex>;
   }
 
   if (!execution && (nodeStatus === "pending" || nodeStatus === "running")) {
     if (streamingText) {
       return (
-        <Flex vertical gap={4} style={{ marginTop: 8 }}>
+        <Flex vertical gap={4} style={styles.streamingContainer}>
           <Flex align="center" gap={6}>
-            <SyncOutlined spin style={{ fontSize: 10, color: "#1677ff" }} />
-            <Text type="secondary" style={{ fontSize: 11, color: "#1677ff" }}>Streaming…</Text>
+            <SyncOutlined spin style={styles.streamingIcon} />
+            <Text type="secondary" style={styles.streamingLabel}>Streaming…</Text>
           </Flex>
-          <div
-            style={{
-              fontFamily: "monospace",
-              fontSize: 12,
-              maxHeight: 200,
-              overflow: "auto",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              background: "rgba(0,0,0,0.02)",
-              padding: "6px 8px",
-              borderRadius: 4,
-            }}
-          >
+          <div style={styles.streamingText}>
             {streamingText}
-            <span style={{ opacity: 0.4 }}>▋</span>
+            <span style={styles.cursorOpacity}>▋</span>
           </div>
         </Flex>
       );
     }
     return (
-      <Flex align="center" gap={6} style={{ marginTop: 8 }}>
+      <Flex align="center" gap={6} style={styles.waitingContainer}>
         <Spin size="small" />
-        <Text type="secondary" style={{ fontSize: 12, fontStyle: "italic" }}>
+        <Text type="secondary" style={styles.waitingText}>
           Waiting for node to complete…
         </Text>
       </Flex>
@@ -85,13 +76,12 @@ function NodeInlinePanel({ execution, nodeStatus, streamingText }: NodeInlinePan
   }
 
   return (
-    <Flex vertical gap={6} style={{ marginTop: 8 }}>
+    <Flex vertical gap={6} style={styles.ioContainer}>
       <div>
         {execution ? (
           <LabelledField label="Input" data={execution.input} />
         ) : (
-          <>
-            <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>Input</Text>
+          <>\n            <Text type="secondary" style={styles.labelText}>Input</Text>
             <div>—</div>
           </>
         )}
@@ -101,7 +91,7 @@ function NodeInlinePanel({ execution, nodeStatus, streamingText }: NodeInlinePan
           <LabelledField label="Output" data={execution.output} />
         ) : (
           <>
-            <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>Output</Text>
+            <Text type="secondary" style={styles.labelText}>Output</Text>
             <div>—</div>
           </>
         )}
@@ -112,6 +102,7 @@ function NodeInlinePanel({ execution, nodeStatus, streamingText }: NodeInlinePan
 
 /** Visual pipeline using antd Steps — click a node to show its input/output below. */
 export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, tokenStreams = {} }: Props) {
+  const styles = useStyles();
   const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
   const [executions, setExecutions] = useState<Record<string, NodeExecutionInfo | null>>({});
   const [loading, setLoading] = useState(false);
@@ -205,20 +196,20 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
       style: { cursor: "pointer" },
       title: (
         <Tooltip title={`${node.tasks.length} task(s) — click to inspect`}>
-          <span style={{ fontSize: 12 }}>{NODE_LABELS[node.node_name] ?? node.node_name}</span>
+          <span style={styles.stepTitle}>{NODE_LABELS[node.node_name] ?? node.node_name}</span>
         </Tooltip>
       ),
       description: (
-        <span style={{ fontSize: 11 }}>
+        <span style={styles.stepDesc}>
           {isStreaming
-            ? <SyncOutlined spin style={{ fontSize: 10, marginRight: 4, color: "#1677ff" }} />
-            : hasRunning && <LoadingOutlined style={{ fontSize: 10, marginRight: 4 }} />
+            ? <SyncOutlined spin style={styles.streamingRunningIcon} />
+            : hasRunning && <LoadingOutlined style={styles.runningIcon} />
           }
-          {isStreaming ? <span style={{ color: "#1677ff" }}>streaming…</span> : descriptionText}
+          {isStreaming ? <span style={styles.streamingColorText}>streaming…</span> : descriptionText}
         </span>
       ),
       status: STEP_STATUS[node.status],
-      ...(node.status === "cancelled" ? { icon: <StopOutlined style={{ color: "#faad14" }} /> } : {}),
+      ...(node.status === "cancelled" ? { icon: <StopOutlined style={styles.cancelledIcon} /> } : {}),
     };
   }), [nodes, tokenStreams, handleClick]);
 
@@ -252,7 +243,7 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
         size="small"
         direction="horizontal"
         responsive={false}
-        style={{ marginTop: 8 }}
+        style={styles.steps}
         items={items}
       />
       {selectedNodeName !== null && (

@@ -17,17 +17,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from collections.abc import AsyncIterable
 
 from langchain_core.messages import AIMessageChunk
 
-from backend.db.redis.publisher import stream_token
+from backend.db.redis.streams.publisher import stream_token
 from backend.sse_notifications.agent_tasks.control import (
     TaskCancelledSignal,
     TaskPassSignal,
     _check_signal,
     _task_signals,
 )
+from backend.streaming.transmission_qos import transmission_qos
 
 logger = logging.getLogger(__name__)
 
@@ -189,9 +191,10 @@ async def stream_text_task(
     return "".join(parts)
 
 
-# Number of tokens accumulated before emitting a single ``perf_token_batch`` SSE event.
-# Batching reduces Redis XADD calls and React state updates by this factor.
-_PERF_BATCH_SIZE: int = 1_000
+# Maximum tokens accumulated before emitting a ``perf_token_batch`` SSE event.
+# The actual flush threshold grows exponentially (1 → 2 → 4 → … → _PERF_BATCH_SIZE)
+# per stream so early tokens are flushed immediately and later batches are large.
+_PERF_BATCH_SIZE: int = 1024
 
 
 async def stream_perf_text_task(
@@ -206,6 +209,15 @@ async def stream_perf_text_task(
     as a single ``perf_token_batch`` SSE event carrying a ``count`` field.  This
     reduces Redis XADD calls, SSE frames, and React state updates by
     ``_PERF_BATCH_SIZE``-fold compared to emitting one event per token.
+
+    **First-token priority**: the very first token is always flushed immediately
+    (batch_count == 1) so the client receives a signal as soon as data starts
+    flowing, regardless of :data:`_PERF_BATCH_SIZE`.
+
+    **Transmission QoS integration**: a :class:`~backend.streaming.transmission_qos.TransmissionQoS`
+    flush event is monitored inside the accumulation loop.  If the QoS auditor
+    detects that this stream has been running for ≥ 3 s without emitting a first
+    token it sets the event, causing an immediate partial-batch flush.
 
     The backend SSE gateway always forwards ``perf_token_batch`` events (not
     filtered by the watch registry) so the frontend metrics panel counts them
@@ -225,6 +237,21 @@ async def stream_perf_text_task(
     aiter = chunks.__aiter__()
     batch_count = 0
     node = _node_name(task_key)
+    first_token_marked = False
+
+    # Exponential flush threshold: starts at 1 (first token flushed immediately),
+    # then doubles after each flush — 1, 2, 4, 8, 16, … capped at _PERF_BATCH_SIZE.
+    # This minimises first-token latency while amortising XADD overhead for later
+    # tokens once the stream is flowing.
+    flush_threshold: int = 1
+
+    # Register with QoS registry; returns the flush-request event.
+    flush_event = transmission_qos.register(thread_id)
+    # Rolling window of the last 10 token strings across the full stream.
+    # Snapshotted into ``recent_tokens`` on each batch flush so the browser
+    # can display the most recently seen tokens without storing every token.
+    token_window: deque[str] = deque(maxlen=10)
+
     try:
         while True:
             _check_signal(task_id, [])
@@ -233,9 +260,16 @@ async def stream_perf_text_task(
             except StopAsyncIteration:
                 break
             if token:
+                token_window.append(token.strip())
                 batch_count += 1
                 received += 1
-                if batch_count >= _PERF_BATCH_SIZE:
+
+                # Flush when:
+                #   1. Exponential threshold reached (covers first-token case when threshold=1).
+                #   2. QoS auditor flagged this stream as stalled — flush partial immediately.
+                should_flush = batch_count >= flush_threshold or flush_event.is_set()
+
+                if should_flush:
                     await stream_token(
                         thread_id,
                         {
@@ -244,10 +278,18 @@ async def stream_perf_text_task(
                             "node_name": node,
                             "task_key": task_key,
                             "count": batch_count,
+                            "recent_tokens": list(token_window),
                         },
                     )
                     batch_count = 0
-        # Flush the remaining partial batch on normal completion.
+                    flush_event.clear()
+                    # Double the threshold after each flush, capped at _PERF_BATCH_SIZE.
+                    flush_threshold = min(flush_threshold * 2, _PERF_BATCH_SIZE)
+                    if not first_token_marked:
+                        first_token_marked = True
+                        transmission_qos.mark_first_token(thread_id)
+
+        # Flush any remaining partial batch on normal completion.
         if batch_count > 0:
             await stream_token(
                 thread_id,
@@ -257,9 +299,11 @@ async def stream_perf_text_task(
                     "node_name": node,
                     "task_key": task_key,
                     "count": batch_count,
+                    "recent_tokens": list(token_window),
                 },
             )
     finally:
+        transmission_qos.unregister(thread_id)
         _task_signals.pop(task_id, None)
         aclose = getattr(aiter, "aclose", None)
         if aclose is not None:

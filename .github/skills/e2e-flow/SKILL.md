@@ -1,317 +1,337 @@
----
-name: e2e-flow
-description: >
-  Use when working on the end-to-end request/response pipeline: user submits a
-  query → Kong API Gateway → FastAPI → LangGraph nodes → SSE token streaming →
-  React UI. Covers Kong routing, adding new query types, new LLM providers, new
-  graph nodes, SSE event wiring, and frontend message handling.
+# E2E Flow Guide — fin-trading-cluster
+
+This skill describes the end-to-end request/response and streaming pipeline.
+Reference it whenever adding new features, debugging SSE delivery, or tracing lifecycle events.
+
 ---
 
-# E2E Flow — Architecture & Conventions
+## Architecture Overview
 
-## Full pipeline overview
+Two distinct flows exist. **Never mix them** in the same feature:
 
-```
-Browser (React/Vite)
-  │  POST /api/v1/users/query  →  {thread_id, status="received"}
-  │  EventSource /api/v1/stream/{thread_id}
-  │       ← query_received SSE event
-  │  POST /api/v1/users/query/{thread_id}/ack
-  │       ← query_ack_confirmed SSE event  (client stops retrying ACK)
-  ▼
-Kong :8888  (DB-less declarative)
-  │  fastapi-upstream → host.docker.internal:8432
-  ▼
-FastAPI queries.py
-  │  [ack endpoint] asyncio.create_task(run_graph_async(...))
-  ▼
-runner.py  [FastAPI event loop]
-  │  build_unified_graph().ainvoke()
-  ▼
-LangGraph nodes
-  ├─ PERF_TEST_TRIGGER → perf_test_streamer
-  └─ else → query_optimizer → market_data_collector → decision_maker
-       │
-       ├─ stream_token() XADD tokens:<thread_id>  (Redis Streams — tokens)
-       └─ create/complete/fail_task() → pg_notify  (PostgreSQL — lifecycle)
-            │
-            └─ stream.py SSE generator (XREAD BLOCK + LISTEN)
-                 └─ EventSource → useStreamSession → sseHandlers → App.tsx
-```
+| Flow | Transport | Use case |
+|------|-----------|----------|
+| **Streaming** | Redis Streams (tokens) + Redis Pub/Sub (lifecycle) | LLM token delivery, perf-test |
+| **Non-streaming** | REST request/response or SSE lifecycle events | Query submission, status, control |
 
-## Query dispatch — ACK handshake then `asyncio.Task`
+All events that reach the browser originate from the FastAPI main process (`backend/api/`).
+Celery workers handle **only** Redis Stream batch consumers — they never emit SSE events.
 
-```python
-# queries.py — POST /users/query
-# 1. Dedup check: same user + same query within 60 s → NACK {status='cancelled'}
-# 2. Create UserQuery(status='received'), store perf_params in extra JSONB
-# 3. emit_query_received(thread_id)  → pg_notify + push_pending_notify (retry store)
-# 4. Return {thread_id, status='received'}
+---
 
-# queries.py — POST /users/query/{thread_id}/ack
-# 1. SELECT … FOR UPDATE to lock row
-# 2. If already running+acked → idempotent: re-emit query_ack_confirmed
-# 3. Set status='running', is_ack=True, ack_at=NOW()
-# 4. ack_pending_notify(thread_id, 'query_received', None)
-# 5. asyncio.create_task(run_graph_async(...))
-# 6. emit_query_ack_confirmed(thread_id) → pg_notify
-```
+## Request Lifecycle — Both Branches
 
-- `run_graph_async` is a plain `async def` in `backend/graph/runner.py` — **not** a Celery task.
-- All LLM calls, DB I/O, and Redis XADD are I/O-bound coroutines — cooperative multitasking between concurrent queries.
-- **Celery handles only** `backend/streaming/workers/` (Redis Stream batch consumers). Graph execution is NOT dispatched to Celery.
-- Cancellation: `task.cancel()` via `running_tasks` registry in `backend/api/registry.py`. `is_task_active()` checks `task.done()`.
-
-## Kong API Gateway
-
-### Config management
-
-Kong runs in **DB mode** (`KONG_DATABASE=postgres`). Declarative config in `kong-api-gateway/kong.yml` is imported via `kong config db_import` on container start — **do not edit kong.yml directly**.
-
-```bash
-python kong-api-gateway/build.py       # regenerate kong.yml from fragments
-docker compose restart kong-config-import kong  # re-import and reload
-```
-
-Fragment layout:
-```
-kong-api-gateway/
-  _shared/
-    base.yml          # _format_version, _transform
-    upstreams.yml     # fastapi-upstream (round-robin, health-check /health)
-    services.yml      # fastapi + llm-proxy service stubs
-    plugins.yml       # global: CORS, rate-limiting, correlation-id
-    dev_routes.yml    # /docs /redoc — remove in production
-  api/v1/
-    auth/routes.yml
-    users/routes.yml
-    stream/routes.yml
-    reports/routes.yml
-    tasks/routes.yml
-    quant/routes.yml
-  llm/
-    routes.yml        # POST /llm/* → llm-proxy
-    plugins.yml       # ai-proxy plugin (Ollama upstream)
-```
-
-### Services
-
-| Service | Host | Purpose |
-|---|---|---|
-| `fastapi` | `fastapi-upstream` (port 80) | All REST + SSE routes |
-| `llm-proxy` | `http://placeholder.invalid` | LLM pass-through; ai-proxy overrides URL |
-
-Both use `write_timeout: 3600000` / `read_timeout: 3600000` (60 min).
-
-### Key global plugins
-
-| Plugin | Config highlights |
-|---|---|
-| `cors` | Allows `http://localhost:3000` (page origin); exposes `Last-Event-ID` for SSE reconnect |
-| `rate-limiting` | 300 req/min, 5000/hr; Redis policy (DB 1); limit by IP |
-| `correlation-id` | Injects `X-Request-ID` (uuid#counter) |
-
-### Kong ports
-
-| Port (host) | Protocol | Purpose |
-|---|---|---|
-| 8888 | HTTP/1.1 | Regular REST requests (via Vite dev proxy) |
-| 8889 | **HTTPS + HTTP/2** | SSE-dedicated — self-signed cert from `certs/` generated by `setup.sh` |
-
-HTTP/2 on port 8889 multiplexes **all** `EventSource` connections over one TCP connection — removes the browser's 6-connection-per-origin limit so 10+ concurrent streams open immediately.  
-`VITE_SSE_URL=https://localhost:8889` in `frontend/.env.local`.  
-First-time setup: visit `https://localhost:8889` in browser and accept the self-signed cert once.
-
-### SSE routes — `response_buffering: false`
-
-SSE routes **must** set `response_buffering: false` so Kong forwards chunks immediately:
-```yaml
-- name: route-stream
-  service: fastapi
-  paths: [/api/v1/stream]
-  response_buffering: false
-```
-
-### Adding a new API route
-
-1. Create `kong-api-gateway/api/v1/<domain>/routes.yml`.
-2. Run `python kong-api-gateway/build.py`.
-3. `docker compose restart kong`.
-
-## SSE streaming — dual-channel architecture
-
-**Transmission split:**
-- `token` events → **Redis Streams** (`XADD tokens:<thread_id>`) — high-throughput, no DB write
-- `started / completed / failed / cancelled / done` → **PostgreSQL NOTIFY** on shared channel `sse_lifecycle` → **Redis Pub/Sub** fan-out
+### 1. Query Submission (POST /api/v1/users/query)
 
 ```
-Graph worker
-  ├─ stream_token() → XADD tokens:<thread_id>        → subscriber.read_stream() XREAD BLOCK → token_queue
-  └─ create/complete_task() → pg_notify(shared)      → lifecycle_fanout (ONE PG LISTEN conn)
-                               "sse_lifecycle"          → PUBLISH lifecycle:<thread_id>
-                                                                ↓
-                                                       lifecycle_subscriber.read_lifecycle()
-                                                         Redis Pub/Sub → lifecycle_queue
-                                                                ↓ fan-in merged asyncio.Queue
-                                                         stream.py SSE generator
-                                                         (_watch_registry token filter)
-                                                                ↓
-                                                         EventSource → browser
+Client → POST /users/query {query, perf_params}
+  └─ backend/api/queries.py
+       ├─ Dedup guard (SELECT … WHERE status IN ('received','pending','running') AND created_at > -60s)
+       ├─ INSERT user_queries (status='received', extra.perf_params)
+       ├─ set_query_phase(thread_id, "received")      → Redis key query_phase:{thread_id}
+       ├─ emit_query_status(thread_id, "received")    → publish_lifecycle → Redis Pub/Sub
+       ├─ emit_query_received(thread_id)              → publish_lifecycle + push_pending_notify
+       └─ return {thread_id, status='received'}
 ```
 
-**Lifecycle fan-out (O(1) PG connections):**
-- `backend/db/redis/lifecycle_fanout.py` — `run_lifecycle_fanout()` holds **one** PG connection, LISTENs on `sse_lifecycle`, PUBLISHes to `lifecycle:<thread_id>` per notification.
-- `backend/db/redis/lifecycle_subscriber.py` — `read_lifecycle(thread_id)` async context manager; Redis Pub/Sub subscriber; yields `asyncio.Queue[str]`.
-- Started as `asyncio.create_task(run_lifecycle_fanout())` in `backend/main.py` lifespan.
-- Every `pg_notify` payload gets `thread_id` injected automatically in `channel.py`.
+The graph is **not started** at this point. The client must ACK.
 
-**Watch-registry token filtering (`_watch_registry: dict[str, int]` in `stream.py`):**
-- `token` events suppressed unless `event.task_id == _watch_registry[thread_id]`.
-- `PUT /api/v1/stream/{thread_id}/watch {"task_id": int | null}` — browser calls on task expand.
-- Auto-watch: live `started` event with no watch set → SSE generator auto-registers that task.
-- Late-connect auto-watch: `_replay_existing()` also auto-registers the last started task during replay.
-- `perf_token_batch` events **bypass** the watch registry — always forwarded.
-
-**Late-connect replay (`_replay_existing` in `stream.py`):**
-- On SSE connect, existing `AgentTask` rows loaded from PG → re-emitted as synthetic `started`/`completed`/`failed` pairs.
-- After subscribe opens, a second `_replay_existing()` call closes the race window.
-
-**Orphan detection:**
-- `thread_id not in running_tasks` but DB shows `status='running'` → orphan (server restarted).
-- Perf-test orphans → `cancelled`; all others → `failed` with error message.
-
-### LLM proxy route
+### 2. SSE Subscribe (GET /api/v1/stream/{thread_id})
 
 ```
-POST /llm/v1/chat/completions → Kong ai-proxy → Ollama http://{OLLAMA_HOST}:{OLLAMA_PORT}/v1
+Client → GET /stream/{thread_id}
+  └─ backend/api/stream.py  _event_gen()
+       ├─ yield connected event
+       ├─ replay_existing(thread_id)        → DB query for current status + all agent_tasks
+       │    └─ injects query_status phase from Redis if status in (running, received)
+       │    └─ injects query_received if status == received
+       │    └─ yields started/completed/failed for each existing task row
+       ├─ if already terminal → yield done → return
+       ├─ if query_status != 'received' and NOT is_task_active_any_instance(thread_id):
+       │    └─ handle_orphaned_query()  ← RACE GUARD: re-reads DB before UPDATE to avoid
+       │         overwriting a just-completed query (runner finished between replay and here)
+       │    └─ yield done → return
+       ├─ open read_lifecycle(thread_id) → Redis Pub/Sub lifecycle:<thread_id>
+       ├─ open read_stream(thread_id)    → Redis Streams XREAD tokens:<thread_id>
+       ├─ post-subscribe re-check: replay_existing() again if no prior replay events
+       └─ dual-source fan-in loop:
+            merged_queue ← _pump_lifecycle + _pump_tokens
+            25s timeout → ping + drain_pending_notify recovery
+            token events → watch-registry filter (only forwarded if task_id matches watched task)
+            perf_token_batch → always forwarded (bypass watch filter)
+            done event → two asyncio.sleep(0) drain + remaining perf_token_batch flush
 ```
 
-`strip_path: true` on `route-llm-chat` removes `/llm` prefix before forwarding.
+**Post-subscribe race window fix**: The `replay_existing()` call after LISTEN subscription
+closes the window where `create_task` committed and fired pg_notify while `replay_existing`
+was running (before LISTEN was active).
 
-**LLM traffic path by provider:**
+### 3. Client ACK (POST /api/v1/users/query/{thread_id}/ack)
 
-| Provider | Path | Via Kong? |
-|---|---|---|
-| `ollama` | FastAPI → `http://127.0.0.1:11434/v1` directly | No |
-| `kong_ai` | FastAPI → Kong `:8888/llm` → Ollama | Yes |
-| `ark` | FastAPI → `https://ark.cn-beijing.volces.com/api/v3` via `HTTP_PROXY` | No |
-| `gemini` | FastAPI → Google API via `HTTP_PROXY` | No |
-
-## Adding a new query-type
-
-1. Define a trigger constant in `backend/api/queries.py`.
-2. Add a branch in `run_graph_async` in `backend/graph/runner.py` (preferred — keeps lifecycle uniform) **or** a new `asyncio.create_task` branch in `queries.py`.
-3. The runner must mirror the standard lifecycle:
-   - `start_node_execution` / `create_task` (provider)
-   - `stream_text_task` or `stream_llm_task` for token events
-   - `complete_task` / `finish_node_execution`
-   - Update `UserQuery.status` in DB
-   - `await emit_done(thread_id, "completed")`
-   - Handle `CancelledError` and exceptions identically to `run_graph_async`
-4. **No `asyncio.sleep` grace periods** — if SSE connect timing is a concern, use `_replay_existing` late-connect replay instead.
-
-## Adding a new LLM provider
-
-1. Create `backend/llm/providers/<name>.py` with `get_<name>_llm(temperature) -> BaseChatModel`.
-2. Add the name to `_SUPPORTED_PROVIDERS` in `backend/llm/factory.py`.
-3. Add a branch to `_build_provider()` in `factory.py`.
-4. Add to `_FAILOVER_CANDIDATES` only if it supports cloud API failover (currently: `ark`, `gemini`).
-
-## Task streaming conventions
-
-All token events must use `backend/sse_notifications`:
-
-```python
-from backend.sse_notifications import (
-    create_task, complete_task, fail_task,
-    stream_text_task, stream_llm_task,
-)
-
-task_id = await create_task(thread_id, "node.task_key", node_execution_id, provider=provider)
-full_text = await stream_text_task(thread_id, task_id, "node.task_key", async_gen)
-await complete_task(thread_id, task_id, "node.task_key", {"summary": ...})
+```
+Client → POST /users/query/{thread_id}/ack
+  └─ backend/api/queries.py  ack_query()
+       ├─ SELECT … FOR UPDATE (row-level lock prevents duplicate ACKs)
+       ├─ if already running & acked → re-emit query_ack_confirmed (idempotent)
+       ├─ UPDATE user_queries status='running', is_ack=True
+       ├─ ack_pending_notify(thread_id, 'query_received')  → mark drain cycle complete
+       ├─ asyncio.create_task(run_graph_async(...))         → FastAPI event loop
+       ├─ running_tasks[thread_id] = task
+       ├─ mark_task_active(thread_id)  → Redis key task_active:{thread_id} (TTL 1h)
+       ├─ emit_query_ack_confirmed(thread_id)  → publish_lifecycle → Redis Pub/Sub → SSE
 ```
 
-- `task_key` format: `<node_name>.<method>[.<symbol>]` — first dot-segment = `node_name`
-- Never write token events to DB; `stream_text_task` handles Redis Streams (XADD) only
-- `pg_notify` called automatically by `create_task`, `complete_task`, `fail_task`, `cancel_task`, `emit_done`
-- `stream_llm_task` for `AsyncIterable[AIMessageChunk]`; `stream_text_task` for `AsyncIterable[str]`
+---
 
-## SSE event types (in order)
+## Graph Execution — run_graph_async()
 
-| Event | Payload fields | Frontend handler |
-|---|---|---|
-| `connected` | `thread_id` | — |
-| `started` | `task_id, node_name, task_key` | `onStarted` (sseHandlers.ts) |
-| `token` | `task_id, node_name, task_key, data` | `onToken` |
-| `completed` | `task_id, node_name, task_key, output` | `onCompleted` |
-| `failed` | same as completed | `onFailed` |
-| `cancelled` | same as completed | `onCancelled` |
-| `done` | `status, report?` | `onDone` |
-| `ping` | — | ignored |
-| `perf_token_batch` | `task_id, node_name, task_key, count` | `onPerfTokenBatch` |
-| `query_status` | `phase` | `onQueryStatus` |
+`backend/graph/runner.py` is the unified execution entrypoint.
 
-## Frontend — wiring a new message type
-
-1. Gate on trigger in `useStreamSession.ts` or `App.tsx`:
-   ```tsx
-   if (query.trim() === MY_TRIGGER) {
-     const res = await submitQuery(query, userToken!);
-     setMyFeatureThreadId(res.thread_id);
-     return;
-   }
-   ```
-2. Render the dedicated component in `<Content>`:
-   ```tsx
-   {myFeatureThreadId ? (
-     <MyFeaturePanel initialThreadId={myFeatureThreadId} userToken={userToken!} />
-   ) : (
-     <MessageList ... />
-   )}
-   ```
-3. Provide an "Exit" button that resets the feature state to `null`.
-
-## Frontend base URLs
-
-`frontend/src/api/config.ts`:
-```ts
-export const KONG_ORIGIN = import.meta.env.VITE_KONG_URL ?? "";   // empty = Vite proxy
-export const BASE = `${KONG_ORIGIN}/api/v1`;
-// SSE uses a separate origin so EventSource connections get their own TCP pool
-export const SSE_ORIGIN = import.meta.env.VITE_SSE_URL ?? KONG_ORIGIN;
+```
+asyncio.create_task(run_graph_async(thread_id, query, perf_params))
+  └─ set_query_phase("preparing") + emit_query_status("preparing")
+  └─ graph.ainvoke(initial_state, config)
+       ├─ Fin-analysis branch: query_optimizer → market_data_collector → decision_maker
+       └─ Perf-test branch:    perf_test_streamer
+  └─ _running_tasks.pop(thread_id)   ← synchronous before any await
+  └─ UPDATE user_queries SET status='completed' WHERE status='running' RETURNING thread_id
+  └─ if claimed: emit_done(thread_id, 'completed', report)
+  └─ cleanup_thread_session(thread_id)   ← clears task_active Redis key
 ```
 
-In dev, Vite proxy (`vite.config.ts`) forwards `/api` and `/llm` to `http://localhost:8888`.  
-Set `VITE_SSE_URL=https://localhost:8889` — Kong's HTTPS+HTTP/2 port removes the browser's 6-connection-per-origin cap entirely.
+**Ownership claim**: only one writer (runner or cancel endpoint) can claim the `done`
+transition by atomically updating `WHERE status='running'`. Whoever gets 0 rows is the loser.
 
-## Key files
+---
 
-| File | Role |
-|---|---|
-| `kong-api-gateway/build.py` | Merges fragments → `kong.yml` |
-| `kong-api-gateway/kong.yml` | Kong declarative config (auto-generated, imported via `db_import`) |
-| `kong-api-gateway/_shared/plugins.yml` | Global CORS / rate-limit / correlation-id |
-| `kong-api-gateway/_shared/services.yml` | `fastapi` + `llm-proxy` service definitions |
-| `kong-api-gateway/llm/plugins.yml` | ai-proxy plugin (Ollama upstream) |
-| `backend/api/queries.py` | Query routing; `asyncio.create_task(run_graph_async(...))` |
-| `backend/graph/runner.py` | `run_graph_async` — full graph lifecycle |
-| `backend/api/registry.py` | `running_tasks: dict[str, asyncio.Task]`; `is_task_active()` |
-| `backend/api/stream.py` | SSE endpoint + `_watch_registry` filter + late-connect replay |
-| `backend/graph/builder.py` | `build_unified_graph()` + `PERF_TEST_TRIGGER` |
-| `backend/llm/factory.py` | `get_llm()`, `_SUPPORTED_PROVIDERS`, `_FAILOVER_CANDIDATES` |
-| `backend/sse_notifications/__init__.py` | Central re-export of all SSE notification symbols |
-| `backend/sse_notifications/channel.py` | `pg_notify()` + `pg_notify_in_session()`; `SHARED_LIFECYCLE_CHANNEL` |
-| `backend/sse_notifications/agent_tasks/lifecycle.py` | `create_task`, `complete_task`, `fail_task`, `cancel_task`, `emit_done` |
-| `backend/sse_notifications/agent_tasks/control.py` | `signal_task_control`, `TaskCancelledSignal`, `TaskPassSignal` |
-| `backend/sse_notifications/agent_tasks/token_stream.py` | `stream_llm_task`, `stream_text_task`, `stream_perf_text_task` |
-| `backend/db/redis/publisher.py` | `stream_token(thread_id, payload)` → Redis Streams XADD |
-| `backend/db/redis/subscriber.py` | `read_stream()` context manager → XREAD BLOCK pump |
-| `backend/db/redis/lifecycle_fanout.py` | `run_lifecycle_fanout()` — single PG LISTEN → Redis PUBLISH fanout |
-| `backend/db/redis/lifecycle_subscriber.py` | `read_lifecycle()` context manager → Redis Pub/Sub pump |
-| `backend/graph/utils/execution_log.py` | `start_node_execution`, `finish_node_execution` |
-| `frontend/src/api/config.ts` | `KONG_ORIGIN`, `BASE`, `SSE_ORIGIN` |
-| `frontend/src/api/queries.ts` | `submitQuery`, `submitPerfQuery`, `cancelQuery`, `fetchTasks` |
-| `frontend/src/api/stream.ts` | `openStream` with all SSE event listeners |
-| `frontend/src/app/useStreamSession.ts` | Session lifecycle hook used by `App.tsx` |
-| `frontend/src/app/sseHandlers.ts` | `onStarted`, `onToken`, `onCompleted`, `onDone` handlers |
+## Event Delivery — Two Channels
+
+### Channel A: Redis Streams — token events
+
+```
+LangGraph node
+  └─ stream_text_task / stream_llm_task / stream_perf_text_task
+       └─ stream_token(thread_id, {event, task_id, data})
+            └─ XADD tokens:{thread_id}  (MAXLEN ~ 10 000)
+                 └─ read_stream() XREAD BLOCK 2000ms in SSE generator
+                      └─ _pump_tokens → merged_queue → SSE generator → browser
+```
+
+Events delivered via Redis Streams: `token`, `perf_token_batch`, `perf_concurrent_status`.
+
+**`stream_perf_text_task` batching**: tokens accumulated exponentially (1 → 2 → 4 → … → 1024)
+then flushed as a single `perf_token_batch` event. `TransmissionQoS` auditor force-flushes
+any stalled stream after 3s so the browser sees its first event quickly.
+
+### Channel B: Redis Pub/Sub — lifecycle events
+
+```
+publish_lifecycle(thread_id, {event, ...})   ← called AFTER session.commit()
+  └─ PUBLISH lifecycle:{thread_id} json      ← direct, shard-routed via RedisRouter
+       └─ read_lifecycle() Pub/Sub subscribe in SSE generator
+            └─ _pump_lifecycle → merged_queue → SSE generator → browser
+```
+
+Events delivered via lifecycle channel: `started`, `completed`, `failed`, `cancelled`, `done`,
+`query_received`, `query_ack_confirmed`, `query_status`,
+`perf_ingest_progress`, `perf_ingest_complete`, `perf_test_stopped`, `perf_test_complete`.
+
+**Ordering guarantee**: `publish_lifecycle` is always called after `session.commit()` so the
+DB row is durable before any subscriber reads it.  No PG NOTIFY/LISTEN or fanout task is
+involved — lifecycle events go directly from the FastAPI process to Redis Pub/Sub.
+
+**`pg_notify_in_session` vs `pg_notify`** — these functions have been removed.
+All lifecycle notification now uses `publish_lifecycle(thread_id, payload)` from
+`backend.sse_notifications.channel`.
+
+---
+
+## Fin-Analysis Pipeline (Regular Queries)
+
+```
+query_optimizer node
+  └─ create_task(thread_id, "query_optimizer.extract")  → DB INSERT + pg_notify "started"
+  └─ stream_text_task(...)                              → XADD tokens:{thread_id}
+  └─ complete_task(thread_id, task_id, ...)             → DB UPDATE + pg_notify "completed"
+
+market_data_collector node
+  └─ create_task(...) / complete_task(...) per sub-task (ohlcv, volume, etc.)
+  └─ stream_text_task(...)  for each LLM sub-task
+
+decision_maker node
+  └─ create_task(thread_id, "decision_maker.llm_infer")
+  └─ stream_text_task(...)   → individual `token` events per LLM chunk
+  └─ complete_task(...)
+  └─ create_task(thread_id, "decision_maker.db_insert")
+  └─ complete_task(...)
+```
+
+SSE filter: `token` events are only forwarded when `task_id == watched_task_id`
+(watch registered via `PUT /stream/{thread_id}/watch`). This prevents flooding the
+browser with tokens from background tasks the user hasn't opened.
+
+---
+
+## Perf-Test Pipeline
+
+### Throughput Mode
+
+```
+perf_test_streamer node
+  ├─ set_query_phase("ingesting") + emit_query_status("ingesting")
+  ├─ create_task(thread_id, PERF_TEST_INGEST)
+  │
+  ├─ Phase 1: run_ingest_first_half()
+  │    └─ XADD fin:perf:{thread_id} × 95% of total_tokens (async pipeline)
+  │    └─ emit_perf_ingest_progress(...)  every 1s  → pg_notify → lifecycle SSE
+  │
+  ├─ complete_task(thread_id, PERF_TEST_INGEST, {produced, stop_reason})  → pg_notify "completed"
+  ├─ emit_perf_ingest_complete(thread_id, ingest_ms, produced, stop_reason)  → pg_notify
+  │
+  ├─ set_query_phase("digesting") + emit_query_status("digesting")
+  ├─ create_task(thread_id, PERF_TEST_PUB)
+  │
+  └─ Phase 2: asyncio.gather(
+       run_ingest_second_half()          → XADD remaining 5% + sentinel
+       stream_perf_text_task(
+         dynamic_reader_gen()            → XREAD fin:perf:{thread_id} adaptive batch
+       )                                 → XADD perf_token_batch to tokens:{thread_id}
+     )
+  ├─ complete_task(thread_id, PERF_TEST_PUB, {published, tps})
+  ├─ emit_perf_test_complete() or emit_perf_test_stopped()  → pg_notify
+  └─ (runner) emit_done(thread_id, 'completed')             → pg_notify
+```
+
+### Concurrency Mode
+
+```
+perf_test_streamer node
+  ├─ set_query_phase("digesting") + emit_query_status("digesting")
+  ├─ create_task(thread_id, PERF_TEST_PUB)
+  ├─ register_concurrency_ingest(thread_id, progress)
+  │
+  └─ asyncio.gather(
+       run_rate_limited_ingest()   → rate-limited XADD at token_per_sec
+                                    → emit_perf_ingest_progress every 1s
+                                    → checks progress.stable flag (from frontend stable-signal)
+       stream_perf_text_task(
+         dynamic_reader_gen()      → XREAD fin:perf:{thread_id} adaptive batch
+                                    → emit perf_concurrent_status every window via stream_token
+       )
+     )
+  ├─ unregister_concurrency_ingest(thread_id)
+  ├─ complete_task(thread_id, PERF_TEST_PUB)
+  ├─ emit_perf_test_complete() (stable) or emit_perf_test_stopped() (timeout)
+  └─ (runner) emit_done()
+```
+
+**Multiple concurrent streams**: each session gets its own `thread_id`, isolated Redis Stream,
+Pub/Sub channel, and `asyncio.Task`. `_active_ingest` and `TransmissionQoS._streams` are
+keyed by `thread_id` — no cross-session interference.
+
+---
+
+## Key Redis Keys (all routed per thread_id hash to consistent shard)
+
+| Key pattern | Type | Set by | Read by |
+|-------------|------|--------|---------|
+| `tokens:{thread_id}` | Stream | `stream_token()` XADD | SSE `read_stream()` XREAD |
+| `fin:perf:{thread_id}` | Stream | ingest tasks | `dynamic_reader_gen()` XREAD |
+| `lifecycle:{thread_id}` | Pub/Sub channel | `lifecycle_fanout` PUBLISH | SSE `read_lifecycle()` SUBSCRIBE |
+| `task_active:{thread_id}` | String (TTL 1h) | `mark_task_active()` | `is_task_active_any_instance()` |
+| `query_phase:{thread_id}` | String | `set_query_phase()` | `get_query_phase()` in replay |
+| `watch:{thread_id}` | String | `register_watch()` | SSE token filter |
+| `pending_notify:{thread_id}:*` | Hash | `push_pending_notify()` | `drain_pending_notify()` 25s timeout |
+| `lock:lifecycle_fanout` | String (TTL 300s) | `RedisLock` leader | leader election |
+
+---
+
+## Known Race Windows and Their Fixes
+
+### Race 1: started event before SSE client subscribes
+**Window**: `create_task()` commits and fires pg_notify before client opens `read_lifecycle()`.
+**Fix**: `post-subscribe re-check` — after opening both channels, **always** call
+`replay_existing()` again and emit any tasks NOT already in `replayed_task_ids` (the set
+collected during initial replay).  Previously this was guarded by `if not replay_events`,
+which meant a task created in the race window during an active reconnect was silently dropped.
+
+### Race 2: done event arrives before last perf_token_batch events
+**Window**: pg_notify `done` arrives via Pub/Sub faster than the last Redis Stream XREAD cycle.
+**Fix**: `stream.py` two `asyncio.sleep(0)` after receiving `done` drains remaining
+`perf_token_batch` entries from the merged queue before closing.
+
+### Race 3: orphan detection incorrectly marks a completed query as failed
+**Window**: SSE generator calls `replay_existing()` → returns "running", then between this
+and `is_task_active_any_instance()` the runner completes and clears the task_active flag.
+**Fix** (`backend/streaming/sse_session.py`): `handle_orphaned_query` re-reads DB status;
+if already terminal, returns the existing status without any UPDATE. UPDATE uses
+`.where(status.in_(['running', 'received']))` guard; on 0 rows re-reads to return true status.
+
+### Race 4: duplicate done events (runner vs cancel endpoint)
+**Fix**: Atomic `UPDATE WHERE status='running' RETURNING thread_id` — only one writer
+gets rows, only that writer calls `emit_done()`.
+
+### Race 5 (CRITICAL): `cleanup_thread_session` destroys `done`-event drain recovery
+**Window**: After `emit_done()` calls `push_pending_notify(done)`, the runner immediately
+calls `cleanup_thread_session()` which was deleting `notify_pending:{thread_id}`.  If the
+`done` Pub/Sub message was lost (network gap, fanout reconnect), the SSE generator's 25-second
+drain cycle would call `drain_pending_notify()` and find an empty hash → it could only yield
+pings forever, leaving the frontend in a permanent loading state (never completed).
+**Fix** (`backend/db/redis/lock_manager/session_cleanup.py`): removed `_pending_key(thread_id)`
+from the `cleanup_thread_session` key list.  The hash carries its own TTL (~19 min) and is
+cleared only by `clear_pending_notify()` in the SSE `finally` block.
+
+### Race 6: Watch stuck on first task — tokens suppressed for sequential later tasks
+**Window**: Watch auto-registration used `not await is_thread_watching()` guard, so once the
+first task set the watch the subsequent tasks' `started` events never updated it.  For
+sequential fin-analysis tasks (query_optimizer → market_data_collector → decision_maker), all
+tokens after the first task were silently suppressed.
+**Fix** (`backend/api/stream.py`): removed the `not is_thread_watching()` guard from the live
+`started` auto-registration.  The watch now always follows the **latest** started task.  The
+user can still override via `PUT /stream/{thread_id}/watch`.
+
+### `notify_pending` Key Ownership
+| Action | Who | When |
+|--------|-----|------|
+| Create entry | `push_pending_notify()` | after each pg_notify emit |
+| Delete one entry | `ack_pending_notify()` | SSE generator on receipt |
+| Delete entire hash | `clear_pending_notify()` | SSE `finally` block on clean close |
+| TTL expiry | Redis | ~19 min after last push (fallback if client never reconnects) |
+| **NOT deleted by** | `cleanup_thread_session()` | (intentional — would destroy drain recovery) |
+
+---
+
+## SSE Event Reference
+
+| Event | Channel | Fired by | Frontend handler |
+|-------|---------|----------|-----------------|
+| `connected` | (inline) | SSE generator on connect | — |
+| `query_received` | lifecycle | `emit_query_received()` | `onQueryReceived` → POST /ack |
+| `query_ack_confirmed` | lifecycle | `emit_query_ack_confirmed()` | `onQueryAckConfirmed` → stop retrying |
+| `query_status` | lifecycle | `emit_query_status()` | `onQueryStatus` → phase label |
+| `started` | lifecycle | `create_task()` | `onStarted` → add task to list |
+| `token` | Redis Stream | `stream_text_task` / `stream_llm_task` | `onToken` → append to buffer |
+| `perf_token_batch` | Redis Stream | `stream_perf_text_task` | `onPerfTokenBatch` → count += batch.count |
+| `perf_concurrent_status` | Redis Stream | `dynamic_reader_gen` | `onPerfConcurrentStatus` → metrics panel |
+| `perf_ingest_progress` | lifecycle | `emit_perf_ingest_progress()` | `onPerfIngestProgress` → progress bar |
+| `perf_ingest_complete` | lifecycle | `emit_perf_ingest_complete()` | `onPerfIngestComplete` → ingest done |
+| `completed` | lifecycle | `complete_task()` | `onCompleted` → mark task done |
+| `failed` | lifecycle | `fail_task()` | `onFailed` → show error |
+| `cancelled` | lifecycle | `cancel_task()` | `onCancelled` → terminate |
+| `perf_test_stopped` | lifecycle | `emit_perf_test_stopped()` | `onPerfTestStopped` → timeout |
+| `perf_test_complete` | lifecycle | `emit_perf_test_complete()` | `onPerfTestComplete` → completed |
+| `done` | lifecycle | `emit_done()` | `onDone` → close stream |
+| `ping` | (inline) | 25s timeout | — |
+
+---
+
+## Adding a New Feature Checklist
+
+1. **Decide the flow**: streaming (Redis Streams + Pub/Sub) or non-streaming (REST/SSE lifecycle)?
+2. **DB write + notify**: use `pg_notify_in_session()` inside the same transaction for atomicity.
+3. **Ephemeral event** (no DB write): use `pg_notify()` autocommit raw connection.
+4. **High-frequency token data** (>10 events/s): use `stream_token()` → Redis Streams.
+5. **Frontend event handler**: add `es.addEventListener('my_event', ...)` in `stream.ts`.
+6. **SSE generator passthrough**: verify `event_type` is not accidentally suppressed by the watch filter in `stream.py` (only `token` events are filtered).
+7. **Pending-notify store**: push lifecycle events via `push_pending_notify()` so the 25s drain cycle recovers missed deliveries.
+8. **Race guards**: if the new event could race with `done`, handle ordering explicitly.

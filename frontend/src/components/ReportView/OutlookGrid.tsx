@@ -1,6 +1,7 @@
 import { Card, Col, Row, Space, Typography } from "antd";
 import { ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
 import { MdSection } from "./MdSection";
+import { useStyles } from "./OutlookGrid.styles";
 
 const { Text } = Typography;
 
@@ -27,6 +28,7 @@ export function OutlookGrid({
   fallShortTerm,
   fallLongTerm,
 }: OutlookGridProps) {
+  const styles = useStyles();
   const riseItems = [
     { label: "Today",      content: riseToday },
     { label: "Tomorrow",   content: riseTomorrow },
@@ -47,17 +49,17 @@ export function OutlookGrid({
           size="small"
           title={
             <Space size={6}>
-              <ArrowUpOutlined style={{ color: "#52c41a" }} />
-              <Text strong style={{ fontSize: 14, color: "#52c41a" }}>
+              <ArrowUpOutlined style={styles.riseIcon} />
+              <Text strong style={styles.riseText}>
                 Rise Scenarios — {symbol}
               </Text>
             </Space>
           }
-          styles={{ header: { background: "#f6ffed" }, body: { padding: "10px 14px" } }}
+          styles={styles.riseCardHeader}
         >
           {riseItems.map(({ label, content }) => (
-            <div key={label} style={{ marginBottom: 10 }}>
-              <Text strong style={{ fontSize: 12 }}>{label}</Text>
+            <div key={label} style={styles.item}>
+              <Text strong style={styles.itemLabel}>{label}</Text>
               <div style={{ marginTop: 4 }}>
                 <MdSection content={content} />
               </div>
@@ -70,17 +72,17 @@ export function OutlookGrid({
           size="small"
           title={
             <Space size={6}>
-              <ArrowDownOutlined style={{ color: "#ff4d4f" }} />
-              <Text strong style={{ fontSize: 14, color: "#ff4d4f" }}>
+              <ArrowDownOutlined style={styles.fallIcon} />
+              <Text strong style={styles.fallText}>
                 Fall Scenarios — {symbol}
               </Text>
             </Space>
           }
-          styles={{ header: { background: "#fff2f0" }, body: { padding: "10px 14px" } }}
+          styles={styles.fallCardHeader}
         >
           {fallItems.map(({ label, content }) => (
-            <div key={label} style={{ marginBottom: 10 }}>
-              <Text strong style={{ fontSize: 12 }}>{label}</Text>
+            <div key={label} style={styles.item}>
+              <Text strong style={styles.itemLabel}>{label}</Text>
               <div style={{ marginTop: 4 }}>
                 <MdSection content={content} />
               </div>

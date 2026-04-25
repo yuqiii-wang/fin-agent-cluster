@@ -1,11 +1,12 @@
 # Query routes — submit, cancel, and poll financial analysis queries.
 # Source: api/v1/users/routes.yml
 #
-#   POST /api/v1/users/query                        submit a new query
-#   POST /api/v1/users/query/{thread_id}/cancel     cancel a running query
-#   GET  /api/v1/users/query/{thread_id}            poll query status
-#   GET  /api/v1/users/query/{thread_id}/tasks      list agent sub-tasks
-#   GET  /api/v1/users/query/{thread_id}/nodes      node-level I/O snapshots
+#   POST /api/v1/users/query                               submit a new query
+#   POST /api/v1/users/query/{thread_id}/cancel            cancel a running query
+#   POST /api/v1/users/query/{thread_id}/perf-stable       signal stable TPS (concurrency mode)
+#   GET  /api/v1/users/query/{thread_id}                   poll query status
+#   GET  /api/v1/users/query/{thread_id}/tasks             list agent sub-tasks
+#   GET  /api/v1/users/query/{thread_id}/nodes             node-level I/O snapshots
 routes:
   # Dedicated route for query submission with a relaxed rate limit so
   # high-concurrency perf-test sessions (50-100+ concurrent streams) can

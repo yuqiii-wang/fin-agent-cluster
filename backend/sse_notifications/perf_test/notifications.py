@@ -1,7 +1,7 @@
 """Performance-test SSE notifications — throughput metrics emission.
 
-Emits a ``perf_test_metrics`` SSE event via pg_notify after each completed
-performance-test run so the frontend can display real-time throughput stats.
+Emits perf-test events directly via Redis Pub/Sub after each phase transition
+so the frontend can display real-time throughput stats.
 
 This is separate from the generic task lifecycle path because performance
 metrics (tokens/sec, latency percentiles) are not stored in ``fin_agents.tasks``
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 
-from backend.sse_notifications.channel import pg_notify
+from backend.sse_notifications.channel import publish_lifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 async def emit_perf_test_stopped(
     thread_id: str,
     duration_secs: int,
+    total_published: int = 0,
 ) -> None:
     """Emit a ``perf_test_stopped`` SSE event when the timeout fires.
 
@@ -30,19 +31,25 @@ async def emit_perf_test_stopped(
     this is an ephemeral control event.
 
     Args:
-        thread_id:     LangGraph thread UUID.
-        duration_secs: Configured test duration in seconds.
+        thread_id:       LangGraph thread UUID.
+        duration_secs:   Configured test duration in seconds.
+        total_published: Actual tokens published to the SSE stream before the
+                         timeout fired.  The frontend uses this to know the
+                         real target — which may be less than the configured
+                         token count when ingest hit the deadline early.
     """
-    await pg_notify(
+    await publish_lifecycle(
         thread_id,
         {
             "event": "perf_test_stopped",
             "duration_secs": duration_secs,
+            "total_published": total_published,
         },
     )
     logger.info(
-        "[perf_test] stopped emitted duration_secs=%d thread_id=%s",
+        "[perf_test] stopped emitted duration_secs=%d total_published=%d thread_id=%s",
         duration_secs,
+        total_published,
         thread_id,
     )
 
@@ -65,7 +72,7 @@ async def emit_perf_test_complete(
         total_tokens: Number of tokens published.
         tps:          Tokens per second throughput.
     """
-    await pg_notify(
+    await publish_lifecycle(
         thread_id,
         {
             "event": "perf_test_complete",
@@ -101,7 +108,7 @@ async def emit_perf_ingest_complete(
         produced:    Number of tokens written to the Redis perf stream.
         stop_reason: ``"completed"`` or ``"timeout"``.
     """
-    await pg_notify(
+    await publish_lifecycle(
         thread_id,
         {
             "event": "perf_ingest_complete",
@@ -143,7 +150,7 @@ async def emit_perf_ingest_progress(
         ingest_tps:   Current ingest throughput in tokens per second.
         status:       ``"running"``, ``"half_done"``, ``"completed"``, or ``"timeout"``.
     """
-    await pg_notify(
+    await publish_lifecycle(
         thread_id,
         {
             "event": "perf_ingest_progress",
@@ -156,45 +163,9 @@ async def emit_perf_ingest_progress(
     )
 
 
-async def emit_perf_concurrent_status(
-    thread_id: str,
-    batch_size: int,
-    digest_tps: float,
-    ingest_tps: float,
-    stream_len: int,
-) -> None:
-    """Emit a ``perf_concurrent_status`` SSE event during the concurrent Phase-2.
-
-    Fired every :data:`~backend.graph.agents.perf_test.tasks.fanout_to_streams._WINDOW_SECS`
-    seconds by :func:`~backend.graph.agents.perf_test.tasks.fanout_to_streams.dynamic_reader_gen`
-    while the adaptive reader and second-half ingest run concurrently.
-    Carries live batch size, throughput rates, and Redis backlog so the
-    frontend can plot the concurrent-phase metrics column.
-
-    Args:
-        thread_id:  LangGraph thread UUID.
-        batch_size: Current adaptive XREAD batch size.
-        digest_tps: Current read throughput in tokens per second.
-        ingest_tps: Current ingest throughput in tokens per second.
-        stream_len: Number of entries currently in ``fin:perf:{thread_id}``.
-    """
-    await pg_notify(
-        thread_id,
-        {
-            "event": "perf_concurrent_status",
-            "batch_size": batch_size,
-            "digest_tps": round(digest_tps, 1),
-            "ingest_tps": round(ingest_tps, 1),
-            "stream_len": stream_len,
-        },
-    )
-
-
 __all__ = [
     "emit_perf_test_stopped",
     "emit_perf_test_complete",
     "emit_perf_ingest_complete",
-    "emit_perf_ingest_half_complete",
     "emit_perf_ingest_progress",
-    "emit_perf_concurrent_status",
 ]

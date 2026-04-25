@@ -11,23 +11,23 @@ Agent-task service (``backend.sse_notifications.agent_tasks``):
   ``connected``          — stream subscription confirmed
   ``started``            — an agent sub-task began
   ``token``              — one LLM output token (high-frequency, Redis Streams path)
-  ``completed``          — a sub-task finished with output (pg_notify path)
-  ``failed``             — a sub-task failed (pg_notify path)
-  ``cancelled``          — a sub-task was cancelled (pg_notify path)
-  ``done``               — the entire query session finished (pg_notify path)
+  ``completed``          — a sub-task finished with output (lifecycle channel)
+  ``failed``             — a sub-task failed (lifecycle channel)
+  ``cancelled``          — a sub-task was cancelled (lifecycle channel)
+  ``done``               — the entire query session finished (lifecycle channel)
   ``ping``               — keep-alive heartbeat (no data payload)
 
 Node I/O service (``backend.sse_notifications.node_io``):
-  ``node_input``         — LangGraph node received inputs (pg_notify path)
-  ``node_output``        — LangGraph node produced outputs (pg_notify path)
+  ``node_input``         — LangGraph node received inputs (lifecycle channel)
+  ``node_output``        — LangGraph node produced outputs (lifecycle channel)
 
 Performance-test service (``backend.sse_notifications.perf_test``):
-  ``perf_test_metrics``  — throughput stats after a perf-test run (pg_notify path)
-  ``perf_test_complete`` — all requested tokens were streamed for this session (pg_notify path)
+  ``perf_test_metrics``  — throughput stats after a perf-test run (lifecycle channel)
+  ``perf_test_complete`` — all requested tokens were streamed for this session (lifecycle channel)
 
 Query lifecycle service (``backend.sse_notifications.query_lifecycle``):
-  ``query_received``       — backend accepted the query; awaiting client ACK (pg_notify + pending store)
-  ``query_ack_confirmed``  — backend received ACK; LangGraph execution starting (pg_notify path)
+  ``query_received``       — backend accepted the query; awaiting client ACK (lifecycle + pending store)
+  ``query_ack_confirmed``  — backend received ACK; LangGraph execution starting (lifecycle channel)
 """
 
 from __future__ import annotations
@@ -62,11 +62,11 @@ SseEventType = Literal[
     "query_ack_confirmed",
 ]
 
-# Terminal task statuses — events that carry these arrive via pg_notify after commit.
+# Terminal task statuses — events that carry these arrive via Redis Pub/Sub after DB commit.
 TERMINAL_TASK_EVENTS: frozenset[str] = frozenset({"completed", "failed", "cancelled"})
 
-# All lifecycle event types that travel via PostgreSQL NOTIFY.
-PG_NOTIFY_EVENTS: frozenset[str] = frozenset(
+# All lifecycle event types delivered via Redis Pub/Sub.
+LIFECYCLE_EVENTS: frozenset[str] = frozenset(
     {
         "started",
         "completed",
@@ -84,6 +84,9 @@ PG_NOTIFY_EVENTS: frozenset[str] = frozenset(
         "query_ack_confirmed",
     }
 )
+
+# Backward-compatible alias.
+PG_NOTIFY_EVENTS = LIFECYCLE_EVENTS
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +330,8 @@ class QueryAckConfirmedPayload(BaseModel):
 __all__ = [
     "SseEventType",
     "TERMINAL_TASK_EVENTS",
-    "PG_NOTIFY_EVENTS",
+    "PG_NOTIFY_EVENTS",  # backward-compat alias for LIFECYCLE_EVENTS
+    "LIFECYCLE_EVENTS",
     "ConnectedPayload",
     "StartedPayload",
     "TokenPayload",

@@ -16,6 +16,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 ## Dev Requirements
 
 * Do NOT add hardcoded time lag or grace period for any flow; if got racing or other safety concerns, implement proper locking or queuing mechanism to ensure safety without hardcoded time lag.
+* Debug on git bash, although backend runs on WSL2, only try wsl if want to `python run.py` to launch the whole backend, for other debugging purposes, use git bash to run individual files or commands, do not use wsl for debugging.
 
 ### Backend and Frontend Communications
 

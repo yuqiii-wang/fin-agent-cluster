@@ -1,9 +1,10 @@
 import { useCallback, useState } from "react";
-import { Button, Drawer, Input, Space, Spin, theme } from "antd";
+import { Button, Drawer, Input, Space, Spin } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { ReportView } from "../components/ReportView";
 import { fetchLatestReport } from "../api";
 import type { StrategyReport } from "../types";
+import { useStyles } from "./ReportDrawerPanel.styles";
 
 interface Props {
   open: boolean;
@@ -11,7 +12,7 @@ interface Props {
 }
 
 export function ReportDrawerPanel({ open, onClose }: Props) {
-  const { token } = theme.useToken();
+  const styles = useStyles();
   const [reportSymbol, setReportSymbol] = useState("");
   const [reportData, setReportData] = useState<StrategyReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
@@ -42,13 +43,13 @@ export function ReportDrawerPanel({ open, onClose }: Props) {
       onClose={onClose}
       styles={{ body: { padding: "16px 12px", overflowY: "auto" } }}
     >
-      <Space.Compact style={{ width: "100%", marginBottom: 20 }}>
+      <Space.Compact style={styles.searchBar}>
         <Input
           placeholder="Enter ticker symbol, e.g. AAPL"
           value={reportSymbol}
           onChange={(e) => setReportSymbol(e.target.value)}
           onPressEnter={handleLoadReport}
-          style={{ textTransform: "uppercase" }}
+          style={styles.inputUppercase}
         />
         <Button
           type="primary"
@@ -61,13 +62,13 @@ export function ReportDrawerPanel({ open, onClose }: Props) {
       </Space.Compact>
 
       {reportLoading && (
-        <div style={{ textAlign: "center", padding: "40px 0" }}>
+        <div style={styles.loadingCenter}>
           <Spin size="large" />
         </div>
       )}
 
       {reportError && !reportLoading && (
-        <div style={{ color: token.colorError, padding: "8px 0" }}>
+        <div style={styles.errorText}>
           {reportError}
         </div>
       )}

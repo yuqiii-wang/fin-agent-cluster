@@ -1,7 +1,8 @@
 """Redis Streams token publisher.
 
-Provides a shared connection-pool client and ``stream_token`` / ``delete_stream``
-helpers for publishing LLM token payloads to per-thread Redis Streams (XADD).
+Routes all Redis operations to the correct shard via :func:`~backend.db.redis.router.get_redis_router`.
+Every key is namespaced by ``thread_id`` so session data is always co-located
+on a single Redis node and pipeline/pipeline atomicity is preserved.
 
 Only **token** events travel through Redis Streams.  Task lifecycle events
 (started, completed, failed, done) are delivered via PostgreSQL NOTIFY so they
@@ -12,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import asyncio
 import dataclasses
 import threading
 import time
@@ -22,12 +22,9 @@ from typing import Any
 
 import redis.asyncio as aioredis
 
-from backend.config import get_settings
+from backend.db.redis.router import get_redis_router
 
 logger = logging.getLogger(__name__)
-
-_publish_client: aioredis.Redis | None = None
-_publish_client_loop_id: int | None = None
 
 # Per-thread token aggregation: thread_id -> (count, t_last_log)
 _token_stats: dict[str, tuple[int, float]] = defaultdict(lambda: (0, time.time()))
@@ -55,33 +52,19 @@ def stream_key(thread_id: str) -> str:
     return f"tokens:{thread_id}"
 
 
-async def _get_publish_client() -> aioredis.Redis:
-    """Return (or lazily create) the shared publish Redis client.
+def _get_client_for_thread(thread_id: str) -> aioredis.Redis:
+    """Return the router-managed Redis client for *thread_id*.
 
-    Recreated when the running event loop changes to avoid stale connection
-    pools (e.g. Celery tasks each call ``asyncio.run()`` which closes the
-    previous loop).
+    All keys for the same *thread_id* are guaranteed to land on the same Redis
+    node so pipelines and multi-key operations remain atomic within a session.
+
+    Args:
+        thread_id: LangGraph UUID used as the hash routing key.
 
     Returns:
-        A connected ``redis.asyncio.Redis`` instance backed by a connection pool.
+        ``redis.asyncio.Redis`` for the correct shard.
     """
-    global _publish_client, _publish_client_loop_id
-    current_id = id(asyncio.get_running_loop())
-    if _publish_client is not None and _publish_client_loop_id != current_id:
-        try:
-            await _publish_client.aclose()
-        except Exception:  # noqa: BLE001
-            pass
-        _publish_client = None
-        _publish_client_loop_id = None
-    if _publish_client is None:
-        settings = get_settings()
-        _publish_client = aioredis.from_url(
-            settings.DATABASE_REDIS_URL,
-            decode_responses=True,
-        )
-        _publish_client_loop_id = current_id
-    return _publish_client
+    return get_redis_router().get_client_for_thread(thread_id)
 
 
 def _default_json(obj: Any) -> str:
@@ -124,7 +107,7 @@ async def stream_token(thread_id: str, payload: dict) -> None:
         payload:   Token event dict — must include ``"event": "token"``.
     """
     try:
-        client = await _get_publish_client()
+        client = _get_client_for_thread(thread_id)
         key = stream_key(thread_id)
         raw = json.dumps(payload, default=_default_json)
         await client.xadd(key, {"data": raw}, maxlen=_STREAM_MAXLEN, approximate=True)
@@ -158,7 +141,7 @@ async def delete_stream(thread_id: str) -> None:
     """
     _token_stats.pop(thread_id, None)
     try:
-        client = await _get_publish_client()
+        client = _get_client_for_thread(thread_id)
         await client.delete(stream_key(thread_id))
         logger.debug("[publisher.delete_stream] deleted thread_id=%s", thread_id)
     except Exception as exc:  # noqa: BLE001
@@ -166,7 +149,7 @@ async def delete_stream(thread_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pending pg_notify store — ack-based delivery guarantee
+# Pending lifecycle-notify store — ack-based delivery guarantee
 # ---------------------------------------------------------------------------
 
 #: Redis hash prefix for the pending-notify ack store.
@@ -174,7 +157,7 @@ _PENDING_PREFIX = "notify_pending:"
 #: Maximum number of re-emit attempts before an entry is abandoned.
 _MAX_RETRIES: int = 10
 #: Per-retry delay in seconds (indexed by retry_count before the retry fires).
-#: First two retries are fast (1 s, 2 s) for transient pg_notify hiccups;
+#: First two retries are fast (1 s, 2 s) for transient Redis hiccups;
 #: subsequent retries grow exponentially up to a 300 s cap.
 _RETRY_DELAYS_SECS: tuple[float, ...] = (
     1.0,    # initial wait  → first  retry at t+1 s
@@ -194,7 +177,7 @@ _PENDING_TTL_SECS: int = int(sum(_RETRY_DELAYS_SECS)) + 300  # ~1141 s
 
 @dataclasses.dataclass(frozen=True)
 class DrainEntry:
-    """A single unacked pg_notify entry recovered from the pending hash.
+    """A single unacked lifecycle-notify entry recovered from the pending hash.
 
     Attributes:
         field:       Hash field key (``"{event_type}:{task_id}"``).
@@ -242,7 +225,7 @@ def _pending_field(event_type: str, task_id: int | None) -> str:
 
 
 async def push_pending_notify(thread_id: str, event_type: str, task_id: int | None, raw: str) -> None:
-    """Persist a pg_notify payload envelope to the pending-notify Redis hash.
+    """Persist a lifecycle payload envelope to the pending-notify Redis hash.
 
     Stores a JSON envelope containing the payload, ``event_type``, ``task_id``,
     ``retry_count=0``, and ``next_retry_at`` (the earliest wall-clock time at
@@ -258,7 +241,7 @@ async def push_pending_notify(thread_id: str, event_type: str, task_id: int | No
         raw:        JSON-encoded payload string.
     """
     try:
-        client = await _get_publish_client()
+        client = _get_client_for_thread(thread_id)
         key = _pending_key(thread_id)
         field = _pending_field(event_type, task_id)
         next_retry_at = (datetime.now(timezone.utc).timestamp() + _RETRY_DELAYS_SECS[0])
@@ -283,7 +266,7 @@ async def push_pending_notify(thread_id: str, event_type: str, task_id: int | No
 
 
 async def ack_pending_notify(thread_id: str, event_type: str, task_id: int | None) -> None:
-    """Acknowledge delivery of a pg_notify event by removing it from the pending hash.
+    """Acknowledge delivery of a lifecycle event by removing it from the pending hash.
 
     Called by the SSE generator immediately after successfully yielding the
     event to the client.  A missing key is silently ignored.
@@ -294,7 +277,7 @@ async def ack_pending_notify(thread_id: str, event_type: str, task_id: int | Non
         task_id:    DB task PK (``None`` for session-level events).
     """
     try:
-        client = await _get_publish_client()
+        client = _get_client_for_thread(thread_id)
         field = _pending_field(event_type, task_id)
         await client.hdel(_pending_key(thread_id), field)
         logger.debug(
@@ -309,7 +292,7 @@ async def ack_pending_notify(thread_id: str, event_type: str, task_id: int | Non
 
 
 async def drain_pending_notify(thread_id: str) -> list[DrainEntry]:
-    """Return all pending pg_notify entries that are due for re-emit.
+    """Return all pending lifecycle-notify entries that are due for re-emit.
 
     For each entry in the hash:
 
@@ -331,7 +314,7 @@ async def drain_pending_notify(thread_id: str) -> list[DrainEntry]:
     """
     results: list[DrainEntry] = []
     try:
-        client = await _get_publish_client()
+        client = _get_client_for_thread(thread_id)
         key = _pending_key(thread_id)
         entries: dict[str, str] = await client.hgetall(key)
         if not entries:
@@ -411,7 +394,7 @@ async def clear_pending_notify(thread_id: str) -> None:
         thread_id: LangGraph UUID.
     """
     try:
-        client = await _get_publish_client()
+        client = _get_client_for_thread(thread_id)
         await client.delete(_pending_key(thread_id))
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -435,7 +418,7 @@ async def get_last_token_ms_ago(thread_id: str) -> int | None:
         stream key does not exist or contains no entries.
     """
     try:
-        client = await _get_publish_client()
+        client = _get_client_for_thread(thread_id)
         key = stream_key(thread_id)
         entries = await client.xrevrange(key, "+", "-", count=1)
         if not entries:

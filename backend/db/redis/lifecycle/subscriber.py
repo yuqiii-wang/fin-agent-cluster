@@ -4,18 +4,13 @@ Provides the :func:`read_lifecycle` async context manager that opens a Redis
 Pub/Sub subscription on the per-thread lifecycle channel and pumps incoming
 messages onto an ``asyncio.Queue``.
 
-Replaces the previous ``backend.db.postgres.listener.pg_listen`` approach:
-instead of each SSE session holding a dedicated psycopg3 PG connection, every
-subscriber creates a single cheap Redis Pub/Sub connection.  The sole PG
-connection is held by the fanout task in
-:mod:`backend.db.redis.lifecycle_fanout`.
+Lifecycle events are published directly to Redis Pub/Sub by
+:func:`~backend.sse_notifications.channel.publish_lifecycle` — no PostgreSQL
+NOTIFY/LISTEN fanout is involved.
 
-Connection budget (new vs old)
--------------------------------
-N active SSE sessions:
-
-  Old: N psycopg3 PG connections (heavy)
-  New: 1 PG connection (fanout) + N Redis Pub/Sub connections (lightweight)
+Connection budget
+-----------------
+N active SSE sessions each open one cheap Redis Pub/Sub connection.
 """
 
 from __future__ import annotations
@@ -28,10 +23,24 @@ from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
 
-from backend.config import get_settings
-from backend.db.redis.lifecycle_fanout import lifecycle_pub_channel
+from backend.db.redis.router import get_redis_router
 
 logger = logging.getLogger(__name__)
+
+# Redis Pub/Sub key prefix for per-thread lifecycle channels.
+_LIFECYCLE_PREFIX = "lifecycle:"
+
+
+def lifecycle_pub_channel(thread_id: str) -> str:
+    """Return the Redis Pub/Sub channel name for lifecycle events of *thread_id*.
+
+    Args:
+        thread_id: LangGraph UUID thread identifier.
+
+    Returns:
+        Channel name, e.g. ``"lifecycle:<uuid>"``.
+    """
+    return f"{_LIFECYCLE_PREFIX}{thread_id}"
 
 
 @asynccontextmanager
@@ -44,9 +53,9 @@ async def read_lifecycle(
     onto an ``asyncio.Queue``.  Both the Pub/Sub subscription and the Redis
     connection are cleaned up on context-manager exit.
 
-    The fanout task (:func:`~backend.db.redis.lifecycle_fanout.run_lifecycle_fanout`)
-    must be running for messages to arrive; if it is not running, the queue
-    simply stays empty until the drain-cycle timeout recovers missed events.
+    Events are published directly by
+    :func:`~backend.sse_notifications.channel.publish_lifecycle` after each DB
+    commit — no fanout task is required.
 
     Args:
         thread_id: LangGraph thread ID to subscribe for.
@@ -54,8 +63,12 @@ async def read_lifecycle(
     Yields:
         Queue of raw JSON lifecycle event payloads (strings).
     """
-    settings = get_settings()
-    client = aioredis.from_url(settings.DATABASE_REDIS_URL, decode_responses=True)
+    # Connect to the shard that owns this thread_id so the SUBSCRIBE lands on
+    # the same Redis node where lifecycle_fanout PUBLISHes this thread's events.
+    client = aioredis.from_url(
+        get_redis_router().get_url_for_thread(thread_id),
+        decode_responses=True,
+    )
     pubsub = client.pubsub()
     channel = lifecycle_pub_channel(thread_id)
     queue: asyncio.Queue[str] = asyncio.Queue()

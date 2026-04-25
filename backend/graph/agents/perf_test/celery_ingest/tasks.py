@@ -45,7 +45,7 @@ from typing import Any
 
 import redis.asyncio as aioredis
 
-from backend.config import get_settings
+from backend.db.redis.router import get_redis_router
 from backend.graph.agents.perf_test.celery_ingest.celery_app import perf_ingest_app
 from backend.graph.agents.perf_test.celery_ingest.config import (
     PERF_INGEST_ACTIVE_SET_KEY,
@@ -66,39 +66,44 @@ _TASK_BULK_INGEST = "backend.graph.agents.perf_test.celery_ingest.tasks.bulk_ing
 _TASK_RECOVER = "backend.graph.agents.perf_test.celery_ingest.tasks.recover_stalled_streams"
 
 # ---------------------------------------------------------------------------
-# Shared async Redis client (per asyncio.run() call)
+# Per-task Redis client factory
 # ---------------------------------------------------------------------------
 
-_redis_client: aioredis.Redis | None = None
-_redis_loop_id: int | None = None
 
+def _make_clients(thread_id: str) -> tuple[aioredis.Redis, aioredis.Redis]:
+    """Create per-task Redis clients routed by *thread_id*.
 
-async def _get_redis_client() -> aioredis.Redis:
-    """Return (or lazily create) the shared async Redis client.
+    Each Celery task runs inside its own ``asyncio.run()`` call so there is no
+    benefit to caching clients across tasks.  Clients are created fresh each
+    invocation and closed in a ``finally`` block.
 
-    Recreated on each new event-loop instance (each ``asyncio.run()`` call
-    from a Celery worker) to prevent "Event loop is closed" errors.
+    Returns a ``(thread_client, global_client)`` pair:
+
+    * *thread_client* — connects to the shard determined by
+      ``hash(thread_id) % node_count``.  Used for the per-session
+      ``fin:perf:{thread_id}`` stream and ``fin:perf:ingest:state:{thread_id}``
+      hash.
+    * *global_client* — pinned to shard 0.  Used for the
+      ``fin:perf:ingest:active`` sorted set, which is a global resource.
+
+    When both clients resolve to the same URL a single
+    ``aioredis.Redis`` instance is returned for both to avoid duplicate
+    connection pools.
+
+    Args:
+        thread_id: LangGraph UUID identifying the session.
 
     Returns:
-        A ``redis.asyncio.Redis`` instance backed by a connection pool.
+        ``(thread_client, global_client)`` tuple.
     """
-    global _redis_client, _redis_loop_id
-    current_id = id(asyncio.get_running_loop())
-    if _redis_client is not None and _redis_loop_id != current_id:
-        try:
-            await _redis_client.aclose()
-        except Exception:  # noqa: BLE001
-            pass
-        _redis_client = None
-        _redis_loop_id = None
-    if _redis_client is None:
-        settings = get_settings()
-        _redis_client = aioredis.from_url(
-            settings.DATABASE_REDIS_URL,
-            decode_responses=True,
-        )
-        _redis_loop_id = current_id
-    return _redis_client
+    router = get_redis_router()
+    thread_url = router.get_url_for_thread(thread_id)
+    global_url = router.get_url_at(0)
+    thread_client: aioredis.Redis = aioredis.from_url(thread_url, decode_responses=True)
+    if thread_url == global_url:
+        return thread_client, thread_client
+    global_client: aioredis.Redis = aioredis.from_url(global_url, decode_responses=True)
+    return thread_client, global_client
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +129,8 @@ def _state_key(thread_id: str) -> str:
 
 
 async def _signal_done(
-    client: aioredis.Redis,
+    thread_client: aioredis.Redis,
+    global_client: aioredis.Redis,
     thread_id: str,
     produced: int,
     stop_reason: str,
@@ -132,21 +138,24 @@ async def _signal_done(
     """Write the end-of-stream sentinel and push a completion record.
 
     Args:
-        client:      Async Redis client.
+        thread_client: Redis client for the shard owning this thread's stream
+                       and state-hash keys.
+        global_client: Redis client for shard 0, which holds the global
+                       ``fin:perf:ingest:active`` sorted set.
         thread_id:   LangGraph thread UUID.
         produced:    Total tokens written.
         stop_reason: ``"completed"`` or ``"timeout"``.
     """
     stream = _stream_key(thread_id)
     # Append sentinel so the pub reader terminates without polling.
-    await client.xadd(stream, {PERF_INGEST_SENTINEL_FIELD: PERF_INGEST_SENTINEL_VALUE})
-    # Update state hash.
-    await client.hset(
+    await thread_client.xadd(stream, {PERF_INGEST_SENTINEL_FIELD: PERF_INGEST_SENTINEL_VALUE})
+    # Update state hash (thread-local shard).
+    await thread_client.hset(
         _state_key(thread_id),
         mapping={"status": stop_reason, "produced": produced},
     )
-    # Remove from active set — no longer needs heartbeat / recovery.
-    await client.zrem(PERF_INGEST_ACTIVE_SET_KEY, thread_id)
+    # Remove from active set — lives on shard 0 (global resource).
+    await global_client.zrem(PERF_INGEST_ACTIVE_SET_KEY, thread_id)
     logger.info(
         "[perf_ingest] done produced=%d stop_reason=%s thread_id=%s",
         produced, stop_reason, thread_id,
@@ -207,52 +216,58 @@ async def _run_batch(
     Returns:
         Dict with ``produced`` and ``status``.
     """
-    client = await _get_redis_client()
-    state_raw = await client.hgetall(_state_key(thread_id))
+    thread_client, global_client = _make_clients(thread_id)
+    try:
+        state_raw = await thread_client.hgetall(_state_key(thread_id))
 
-    # Timeout check (uses session start time stored during registration).
-    started_at = float(state_raw.get("started_at", time.time()))
-    timeout_secs = float(state_raw.get("timeout_secs", 60))
-    if time.time() - started_at > timeout_secs:
-        await _signal_done(client, thread_id, produced, "timeout")
-        return {"produced": produced, "status": "timeout"}
+        # Timeout check (uses session start time stored during registration).
+        started_at = float(state_raw.get("started_at", time.time()))
+        timeout_secs = float(state_raw.get("timeout_secs", 60))
+        if time.time() - started_at > timeout_secs:
+            await _signal_done(thread_client, global_client, thread_id, produced, "timeout")
+            return {"produced": produced, "status": "timeout"}
 
-    batch_size = min(PERF_INGEST_BATCH_SIZE, total_tokens - produced)
-    stream = _stream_key(thread_id)
+        batch_size = min(PERF_INGEST_BATCH_SIZE, total_tokens - produced)
+        stream = _stream_key(thread_id)
 
-    # Bulk write via pipeline — synchronous XADD, no per-entry round-trips.
-    async with client.pipeline(transaction=False) as pipe:
-        for i in range(batch_size):
-            seq = produced + i + 1
-            pipe.xadd(
-                stream,
-                {"t": f"mock_msg_{thread_id}_{seq}"},
-                maxlen=PERF_INGEST_STREAM_MAXLEN,
-                approximate=True,
-            )
-        await pipe.execute()
+        # Bulk write via pipeline — synchronous XADD, no per-entry round-trips.
+        async with thread_client.pipeline(transaction=False) as pipe:
+            for i in range(batch_size):
+                seq = produced + i + 1
+                pipe.xadd(
+                    stream,
+                    {"t": f"mock_msg_{thread_id}_{seq}"},
+                    maxlen=PERF_INGEST_STREAM_MAXLEN,
+                    approximate=True,
+                )
+            await pipe.execute()
 
-    new_produced = produced + batch_size
+        new_produced = produced + batch_size
 
-    # Update heartbeat so the recovery beat can detect liveness.
-    await client.hset(
-        _state_key(thread_id),
-        mapping={"produced": new_produced, "heartbeat": time.time()},
-    )
-    await client.zadd(PERF_INGEST_ACTIVE_SET_KEY, {thread_id: time.time()})
+        # Update heartbeat so the recovery beat can detect liveness.
+        await thread_client.hset(
+            _state_key(thread_id),
+            mapping={"produced": new_produced, "heartbeat": time.time()},
+        )
+        # Active set is global — must go to shard 0.
+        await global_client.zadd(PERF_INGEST_ACTIVE_SET_KEY, {thread_id: time.time()})
 
-    logger.debug(
-        "[perf_ingest.bulk] batch done produced=%d/%d thread_id=%s",
-        new_produced, total_tokens, thread_id,
-    )
+        logger.debug(
+            "[perf_ingest.bulk] batch done produced=%d/%d thread_id=%s",
+            new_produced, total_tokens, thread_id,
+        )
 
-    if new_produced >= total_tokens:
-        await _signal_done(client, thread_id, new_produced, "completed")
-        return {"produced": new_produced, "status": "completed"}
+        if new_produced >= total_tokens:
+            await _signal_done(thread_client, global_client, thread_id, new_produced, "completed")
+            return {"produced": new_produced, "status": "completed"}
 
-    # Drain-first self-chain: same session, no delay.
-    bulk_ingest_stream.apply_async(args=[thread_id, new_produced, total_tokens])
-    return {"produced": new_produced, "status": "running"}
+        # Drain-first self-chain: same session, no delay.
+        bulk_ingest_stream.apply_async(args=[thread_id, new_produced, total_tokens])
+        return {"produced": new_produced, "status": "running"}
+    finally:
+        await thread_client.aclose()
+        if global_client is not thread_client:
+            await global_client.aclose()
 
 
 @perf_ingest_app.task(  # type: ignore[misc]
@@ -281,40 +296,57 @@ def recover_stalled_streams(self: Any) -> dict[str, int]:
 
 async def _recover() -> dict[str, int]:
     """Inner async implementation of :func:`recover_stalled_streams`."""
-    client = await _get_redis_client()
-    stall_cutoff = time.time() - PERF_INGEST_STALL_THRESHOLD
-
-    # Oldest-stall-first: ZRANGEBYSCORE ascending by heartbeat, limit=1.
-    stalled: list[str] = await client.zrangebyscore(
-        PERF_INGEST_ACTIVE_SET_KEY,
-        "-inf",
-        stall_cutoff,
-        start=0,
-        num=1,
+    router = get_redis_router()
+    # Active set is global — always on shard 0.
+    global_client: aioredis.Redis = aioredis.from_url(
+        router.get_url_at(0), decode_responses=True
     )
-    if not stalled:
-        return {"recovered": 0}
+    try:
+        stall_cutoff = time.time() - PERF_INGEST_STALL_THRESHOLD
 
-    thread_id = stalled[0]
-    state = await client.hgetall(_state_key(thread_id))
+        # Oldest-stall-first: ZRANGEBYSCORE ascending by heartbeat, limit=1.
+        stalled: list[str] = await global_client.zrangebyscore(
+            PERF_INGEST_ACTIVE_SET_KEY,
+            "-inf",
+            stall_cutoff,
+            start=0,
+            num=1,
+        )
+        if not stalled:
+            return {"recovered": 0}
 
-    if state.get("status") in ("completed", "timeout"):
-        await client.zrem(PERF_INGEST_ACTIVE_SET_KEY, thread_id)
-        return {"recovered": 0}
+        thread_id = stalled[0]
+        # State hash lives on the thread's own shard.
+        thread_url = router.get_url_for_thread(thread_id)
+        if thread_url == router.get_url_at(0):
+            thread_client: aioredis.Redis = global_client
+        else:
+            thread_client = aioredis.from_url(thread_url, decode_responses=True)
+        try:
+            state = await thread_client.hgetall(_state_key(thread_id))
 
-    produced = int(state.get("produced", 0))
-    total_tokens = int(state.get("total_tokens", 0))
+            if state.get("status") in ("completed", "timeout"):
+                await global_client.zrem(PERF_INGEST_ACTIVE_SET_KEY, thread_id)
+                return {"recovered": 0}
 
-    if produced >= total_tokens:
-        await client.zrem(PERF_INGEST_ACTIVE_SET_KEY, thread_id)
-        return {"recovered": 0}
+            produced = int(state.get("produced", 0))
+            total_tokens = int(state.get("total_tokens", 0))
 
-    logger.info(
-        "[perf_ingest.recover] restarting stalled thread_id=%s produced=%d/%d",
-        thread_id, produced, total_tokens,
-    )
-    bulk_ingest_stream.apply_async(args=[thread_id, produced, total_tokens])
-    return {"recovered": 1}
+            if produced >= total_tokens:
+                await global_client.zrem(PERF_INGEST_ACTIVE_SET_KEY, thread_id)
+                return {"recovered": 0}
+
+            logger.info(
+                "[perf_ingest.recover] restarting stalled thread_id=%s produced=%d/%d",
+                thread_id, produced, total_tokens,
+            )
+            bulk_ingest_stream.apply_async(args=[thread_id, produced, total_tokens])
+            return {"recovered": 1}
+        finally:
+            if thread_client is not global_client:
+                await thread_client.aclose()
+    finally:
+        await global_client.aclose()
 
 
 __all__ = ["bulk_ingest_stream", "recover_stalled_streams"]

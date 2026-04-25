@@ -21,8 +21,8 @@ from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
 
-from backend.config import get_settings
-from backend.db.redis.publisher import stream_key
+from backend.db.redis.streams.publisher import stream_key
+from backend.db.redis.router import get_redis_router
 
 logger = logging.getLogger(__name__)
 
@@ -75,20 +75,37 @@ async def read_stream(
     Yields:
         Queue of raw JSON token payloads (strings).
     """
-    settings = get_settings()
     client: aioredis.Redis = aioredis.from_url(
-        settings.DATABASE_REDIS_URL,
+        get_redis_router().get_url_for_thread(thread_id),
         decode_responses=True,
     )
     key = stream_key(thread_id)
     queue: asyncio.Queue[str] = asyncio.Queue()
 
-    # Start reading from the newest entry at subscription time ($).
-    # Tokens published before the SSE client connected are not replayed here;
-    # only tokens published after the stream is open are forwarded.
-    last_id = "$"
+    # Anchor the start position synchronously before scheduling the pump task.
+    #
+    # Using the literal "$" string is unsafe: Redis evaluates it lazily at the
+    # time XREAD executes (not when the context manager opens).  With multiple
+    # concurrent sessions in the same asyncio event loop, the _pump() task can
+    # be delayed for 10–200 ms before its first XREAD runs.  During that window
+    # the publisher (stream_perf_text_task) may write many perf_token_batch
+    # entries; when _pump() finally calls XREAD with "$" those entries are
+    # silently skipped, causing long first-token latency or missed batches.
+    #
+    # Fix: call XREVRANGE now (before create_task) to capture the real last
+    # entry ID.  Any entries published AFTER this call have IDs strictly greater
+    # than last_id and will be returned by the first XREAD.
+    #   • Empty stream → last_id "0-0": reads from the very beginning (correct
+    #     for fresh sessions where publishing hasn't started yet).
+    #   • Non-empty stream → last_id = current tip: next XREAD catches every
+    #     entry written after this moment, closing the scheduling race window.
+    try:
+        _tip = await client.xrevrange(key, "+", "-", count=1)
+        last_id: str = _tip[0][0] if _tip else "0-0"
+    except Exception:  # noqa: BLE001
+        last_id = "0-0"
 
-    logger.debug("[subscriber.read_stream] subscribed key=%s", key)
+    logger.debug("[subscriber.read_stream] subscribed key=%s last_id=%s", key, last_id)
 
     async def _pump() -> None:
         """Background task — relay Stream entries onto the queue."""

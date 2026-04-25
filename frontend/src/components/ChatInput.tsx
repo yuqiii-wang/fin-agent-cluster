@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Flex, Input, Button, theme } from "antd";
+import { Flex, Input, Button } from "antd";
 import { SendOutlined, StopOutlined } from "@ant-design/icons";
+import { useStyles } from "./ChatInput.styles";
 
 interface Props {
   onSubmit: (query: string) => void;
@@ -9,7 +10,7 @@ interface Props {
 }
 
 export function ChatInput({ onSubmit, onCancel, loading }: Props) {
-  const { token } = theme.useToken();
+  const styles = useStyles();
   const [value, setValue] = useState("");
 
   const handleSend = () => {
@@ -22,11 +23,7 @@ export function ChatInput({ onSubmit, onCancel, loading }: Props) {
   return (
     <Flex
       gap={8}
-      style={{
-        padding: "12px 16px",
-        background: token.colorBgContainer,
-        borderTop: `1px solid ${token.colorBorder}`,
-      }}
+      style={styles.inputBar}
     >
       <Input
         value={value}

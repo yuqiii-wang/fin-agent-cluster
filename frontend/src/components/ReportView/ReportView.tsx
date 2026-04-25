@@ -6,7 +6,6 @@ import {
   Tag,
   Tooltip,
   Typography,
-  theme,
 } from "antd";
 import {
   ArrowUpOutlined,
@@ -18,11 +17,11 @@ import {
   RadarChartOutlined,
   RiseOutlined,
 } from "@ant-design/icons";
-import type { CSSProperties } from "react";
 import type { StrategyReport } from "../../types";
 import { SectionCard } from "./SectionCard";
 import { OutlookGrid } from "./OutlookGrid";
 import { ReferencesSection } from "./ReferencesSection";
+import { useStyles } from "./ReportView.styles";
 
 const { Title, Text } = Typography;
 
@@ -31,17 +30,11 @@ interface Props {
 }
 
 export function ReportView({ report }: Props) {
-  const { token } = theme.useToken();
-
-  const headerStyle: CSSProperties = {
-    marginBottom: 20,
-    paddingBottom: 12,
-    borderBottom: `1px solid ${token.colorBorder}`,
-  };
+  const styles = useStyles();
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "16px 8px" }}>
-      <div style={headerStyle}>
+    <div style={styles.container}>
+      <div style={styles.header}>
         <Space align="baseline" size={12}>
           <Title level={3} style={{ margin: 0 }}>{report.symbol}</Title>
           <Text type="secondary" style={{ fontSize: 13 }}>
@@ -104,25 +97,25 @@ export function ReportView({ report }: Props) {
 
       <Row gutter={[12, 0]}>
         <Col span={12}>
-          <SectionCard title="Short-term Risks (1–2 weeks)" icon={<ArrowDownOutlined style={{ color: "#ff4d4f" }} />} content={report.short_term_risk_desc} />
+          <SectionCard title="Short-term Risks (1–2 weeks)" icon={<ArrowDownOutlined style={styles.riskIcon} />} content={report.short_term_risk_desc} />
         </Col>
         <Col span={12}>
-          <SectionCard title="Long-term Risks (6+ months)" icon={<ArrowDownOutlined style={{ color: "#ff4d4f" }} />} content={report.long_term_risk_desc} />
+          <SectionCard title="Long-term Risks (6+ months)" icon={<ArrowDownOutlined style={styles.riskIcon} />} content={report.long_term_risk_desc} />
         </Col>
       </Row>
 
       <Row gutter={[12, 0]}>
         <Col span={12}>
-          <SectionCard title="Short-term Growth Catalysts" icon={<ArrowUpOutlined style={{ color: "#52c41a" }} />} content={report.short_term_growth_desc} />
+          <SectionCard title="Short-term Growth Catalysts" icon={<ArrowUpOutlined style={styles.growthIcon} />} content={report.short_term_growth_desc} />
         </Col>
         <Col span={12}>
-          <SectionCard title="Long-term Growth Catalysts" icon={<ArrowUpOutlined style={{ color: "#52c41a" }} />} content={report.long_term_growth_desc} />
+          <SectionCard title="Long-term Growth Catalysts" icon={<ArrowUpOutlined style={styles.growthIcon} />} content={report.long_term_growth_desc} />
         </Col>
       </Row>
 
       <SectionCard
         title="Recent Trade Anomalies"
-        icon={<ExclamationCircleOutlined style={{ color: "#faad14" }} />}
+        icon={<ExclamationCircleOutlined style={styles.anomalyIcon} />}
         content={report.recent_trade_anomalies}
         extra={
           !report.recent_trade_anomalies ? (

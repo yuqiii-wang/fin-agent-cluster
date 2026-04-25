@@ -3,10 +3,11 @@ import { LoadingOutlined } from "@ant-design/icons";
 import { useState } from "react";
 import type { TaskInfo } from "../../types";
 import { passTask } from "../../api";
+import { styles } from "./LlmTaskActions.styles";
 
 const PASS_HELP = (
-  <div style={{ maxWidth: 220 }}>
-    <p style={{ margin: 0 }}>
+  <div style={styles.tooltipContent}>
+    <p style={styles.tooltipParagraph}>
       <strong>Pass</strong> — stops the LLM stream and accepts whatever has been
       generated so far as the final output. The partial JSON populates the required
       output schema.
@@ -35,8 +36,8 @@ export function LlmTaskActions({ task }: { task: TaskInfo }) {
           size="small"
           onClick={handlePass}
           disabled={busy}
-          icon={busy ? <LoadingOutlined style={{ fontSize: 11 }} /> : undefined}
-          style={{ fontSize: 11 }}
+          icon={busy ? <LoadingOutlined style={styles.loadingIcon} /> : undefined}
+          style={styles.button}
         >
           Pass
         </Button>
