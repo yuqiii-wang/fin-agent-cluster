@@ -14,6 +14,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from backend.config import get_settings
 from backend.db.redis.lock_manager import RedisLock
 from backend.db.redis.router import get_redis_router
+from backend.db.postgres.errors import PG_CHECKPOINTER_TIMEOUT, PG_CHECKPOINTER_SETUP_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ async def ensure_setup() -> None:
             await asyncio.sleep(_SETUP_LOCK_RETRY_INTERVAL)
         else:
             raise RuntimeError(
-                f"[checkpointer] timed out waiting for {_SETUP_LOCK_KEY} "
+                f"[{PG_CHECKPOINTER_TIMEOUT}] timed out waiting for {_SETUP_LOCK_KEY} "
                 f"after {_SETUP_LOCK_MAX_RETRIES}s"
             )
 
@@ -130,12 +131,12 @@ async def ensure_setup() -> None:
         sentinel = await lock_client.exists(_SETUP_DONE_KEY)
         if not sentinel:
             raise RuntimeError(
-                f"[checkpointer] lock released but sentinel {_SETUP_DONE_KEY!r} "
+                f"[{PG_CHECKPOINTER_SETUP_FAILED}] lock released but sentinel {_SETUP_DONE_KEY!r} "
                 "not found in Redis — setup did not complete successfully"
             )
         if not _setup_done:
             raise RuntimeError(
-                "[checkpointer] lock released but _setup_done is False — "
+                f"[{PG_CHECKPOINTER_SETUP_FAILED}] lock released but _setup_done is False — "
                 "setup did not complete successfully"
             )
 

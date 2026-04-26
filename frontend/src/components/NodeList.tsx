@@ -6,6 +6,7 @@ import { fetchNodeExecutions } from "../api";
 import { JsonViewer } from "./JsonViewer";
 import { NODE_LABELS } from "./nodeLabels";
 import { useStyles } from "./NodeList.styles";
+import { getErrorDescription } from "../services/streaming/errors";
 
 const { Text } = Typography;
 
@@ -191,11 +192,24 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
     if (counts.cancelled) auditParts.push(`${counts.cancelled} cancelled`);
     if (counts.pending)   auditParts.push(`${counts.pending} pending`);
     const descriptionText = auditParts.length > 0 ? auditParts.join(" · ") : `${node.tasks.length} task${node.tasks.length !== 1 ? "s" : ""}`;
+
+    // Collect error messages from failed tasks for hover tooltip.
+    // Prefer structured description (from error registry) over raw exception string.
+    const failedErrors = node.tasks
+      .filter((t) => t.status === "failed")
+      .map((t) => getErrorDescription(t.error_code, t.error_description) ?? t.error)
+      .filter((msg): msg is string => !!msg);
+    const errorTooltip = failedErrors.length > 0 ? failedErrors.join("\n") : null;
+
     return {
       onClick: () => handleClick(node),
       style: { cursor: "pointer" },
       title: (
-        <Tooltip title={`${node.tasks.length} task(s) — click to inspect`}>
+        <Tooltip
+          title={errorTooltip ?? `${node.tasks.length} task(s) — click to inspect`}
+          color={errorTooltip ? "red" : undefined}
+          overlayStyle={errorTooltip ? { maxWidth: 400, whiteSpace: "pre-wrap" } : undefined}
+        >
           <span style={styles.stepTitle}>{NODE_LABELS[node.node_name] ?? node.node_name}</span>
         </Tooltip>
       ),

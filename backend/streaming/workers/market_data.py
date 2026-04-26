@@ -23,6 +23,7 @@ from typing import Any
 
 from backend.streaming.celery_app import celery_app
 from backend.streaming.config import MARKET_TICKS
+from backend.streaming.errors import STREAM_WORKER_BATCH_FAILED, STREAM_WORKER_MSG_FAILED
 from backend.streaming.streams import (
     ensure_group,
     xack,
@@ -51,7 +52,7 @@ def consume_batch(self: Any) -> dict[str, int]:
     try:
         return asyncio.run(_consume())
     except Exception as exc:
-        logger.warning("[market_data.consume_batch] error: %s", exc)
+        logger.warning("[%s] market_data.consume_batch error: %s", STREAM_WORKER_BATCH_FAILED, exc)
         raise self.retry(exc=exc)
 
 
@@ -89,7 +90,7 @@ async def _consume() -> dict[str, int]:
             await _handle_tick(msg_id, fields)
             acked.append(msg_id)
         except Exception as exc:
-            logger.warning("[market_data] failed msg_id=%s: %s", msg_id, exc)
+            logger.warning("[%s] market_data failed msg_id=%s: %s", STREAM_WORKER_MSG_FAILED, msg_id, exc)
 
     if acked:
         await xack(_TOPIC.stream_key, _TOPIC.consumer_group, *acked)

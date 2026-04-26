@@ -23,6 +23,11 @@ from backend.graph.state import FinAnalysisState
 from backend.graph.utils.execution_log import start_node_execution, finish_node_execution
 from backend.graph.agents.query_optimizer.chain import build_chain
 from backend.graph.agents.query_optimizer.tasks import comprehend_basics, validate_basics, populate_json, populate_sec_profile
+from backend.graph.agents.query_optimizer.errors import (
+    QO_COMPREHEND_FAILED,
+    QO_VALIDATE_FAILED,
+    QO_POPULATE_FAILED,
+)
 from backend.llm import get_active_provider, get_llm
 
 logger = logging.getLogger(__name__)
@@ -69,10 +74,10 @@ async def query_optimizer(state: FinAnalysisState) -> dict:
     if not raw_json:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         await finish_node_execution(
-            node_execution_id, {"error": "comprehend_basics failed"}, elapsed_ms
+            node_execution_id, {"error": QO_COMPREHEND_FAILED}, elapsed_ms
         )
         return {
-            "steps": [f"[query_optimizer] input='{query}' | error=comprehend_basics failed"]
+            "steps": [f"[query_optimizer] input='{query}' | error={QO_COMPREHEND_FAILED}"]
         }
 
     # ── Task 2: correct region / index / industry vs SQL static data ──────────
@@ -80,10 +85,10 @@ async def query_optimizer(state: FinAnalysisState) -> dict:
     if validated_json is None:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         await finish_node_execution(
-            node_execution_id, {"error": "validate_basics failed"}, elapsed_ms
+            node_execution_id, {"error": QO_VALIDATE_FAILED}, elapsed_ms
         )
         return {
-            "steps": [f"[query_optimizer] input='{query}' | error=validate_basics failed"]
+            "steps": [f"[query_optimizer] input='{query}' | error={QO_VALIDATE_FAILED}"]
         }
 
     # ── Task 3: build full QueryOptimizerOutput ──────────────────────────────
@@ -91,10 +96,10 @@ async def query_optimizer(state: FinAnalysisState) -> dict:
     if result is None:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         await finish_node_execution(
-            node_execution_id, {"error": "populate_json failed"}, elapsed_ms
+            node_execution_id, {"error": QO_POPULATE_FAILED}, elapsed_ms
         )
         return {
-            "steps": [f"[query_optimizer] input='{query}' | error=populate_json failed"]
+            "steps": [f"[query_optimizer] input='{query}' | error={QO_POPULATE_FAILED}"]
         }
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)

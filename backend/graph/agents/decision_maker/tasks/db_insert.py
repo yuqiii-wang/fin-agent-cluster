@@ -17,6 +17,7 @@ from backend.db.postgres.queries.fin_strategies import ReportSQL
 from backend.graph.agents.decision_maker.models.output import DecisionReport
 from backend.graph.agents.task_keys import DM_DB_INSERT_REPORT
 from backend.sse_notifications import complete_task, fail_task
+from backend.streaming.lifecycle.errors import DB_INSERT_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -132,5 +133,5 @@ async def run_db_insert(
         return row_data
     except Exception as exc:
         logger.warning("[decision_maker/db_insert] DB insert failed: %s", exc)
-        await fail_task(thread_id, task_id, DM_DB_INSERT_REPORT, str(exc))
+        await fail_task(thread_id, task_id, DM_DB_INSERT_REPORT, str(exc), error_code=DB_INSERT_FAILED)
         return {}

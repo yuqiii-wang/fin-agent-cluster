@@ -132,6 +132,10 @@ export function buildSseHandlers({
         }
         return;
       }
+      // Extract structured error fields from the task output payload.
+      const taskError = (output?.error as string | undefined) ?? message;
+      const taskErrorCode = output?.error_code as string | undefined;
+      const taskErrorDescription = output?.error_description as string | undefined;
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== asstMsgId || !m.nodes) return m;
@@ -140,7 +144,16 @@ export function buildSseHandlers({
             nodes: m.nodes.map((ng) => {
               if (ng.node_name !== node_name) return ng;
               const tasks = ng.tasks.map((t) =>
-                t.id === task_id ? { ...t, status: "failed" as const, output: output || t.output } : t
+                t.id === task_id
+                  ? {
+                      ...t,
+                      status: "failed" as const,
+                      output: output || t.output,
+                      ...(taskError ? { error: taskError } : {}),
+                      ...(taskErrorCode ? { error_code: taskErrorCode } : {}),
+                      ...(taskErrorDescription ? { error_description: taskErrorDescription } : {}),
+                    }
+                  : t
               );
               return { ...ng, tasks, status: "failed" as NodeGroup["status"] };
             }),
@@ -172,7 +185,11 @@ export function buildSseHandlers({
     },
 
     onDone: (data: unknown) => {
-      const { status } = data as { status: string };
+      const { status, error_code, error_description } = data as {
+        status: string;
+        error_code?: string;
+        error_description?: string;
+      };
       if (status === "cancelled") {
         // Mark all still-running tasks and nodes as cancelled
         setMessages((prev) =>
@@ -185,6 +202,32 @@ export function buildSseHandlers({
                   t.status === "running" ? { ...t, status: "cancelled" as const } : t
                 );
                 const nodeStatus = ng.status === "running" ? ("cancelled" as const) : ng.status;
+                return { ...ng, tasks, status: nodeStatus };
+              }),
+            };
+          })
+        );
+      } else if (status === "failed") {
+        // Mark all still-running tasks and nodes as failed (graph aborted).
+        // Attach the graph-level error_code/description so the tooltip shows
+        // the reason even for tasks that had no individual fail_task call.
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== asstMsgId || !m.nodes) return m;
+            return {
+              ...m,
+              nodes: m.nodes.map((ng) => {
+                const tasks = ng.tasks.map((t) =>
+                  t.status === "running"
+                    ? {
+                        ...t,
+                        status: "failed" as const,
+                        ...(error_code && !t.error_code ? { error_code } : {}),
+                        ...(error_description && !t.error_description ? { error_description } : {}),
+                      }
+                    : t
+                );
+                const nodeStatus = ng.status === "running" ? ("failed" as const) : ng.status;
                 return { ...ng, tasks, status: nodeStatus };
               }),
             };

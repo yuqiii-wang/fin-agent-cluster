@@ -23,6 +23,7 @@ from backend.db.postgres.queries.fin_markets_region import (
 )
 from backend.graph.agents.query_optimizer.models import LLMRawContext
 from backend.graph.agents.task_keys import QO_VALIDATE_BASICS
+from backend.graph.agents.query_optimizer.errors import QO_VALIDATE_FAILED
 from backend.sse_notifications import complete_task, create_task, fail_task
 
 logger = logging.getLogger(__name__)
@@ -241,8 +242,8 @@ async def validate_basics(
         return corrected_json
 
     except Exception as exc:
-        logger.warning("[query_optimizer] validate_basics failed: %s", exc)
+        logger.warning("[query_optimizer] validate_basics failed [%s]: %s", QO_VALIDATE_FAILED, exc)
         await fail_task(
-            thread_id, task_id, QO_VALIDATE_BASICS, str(exc)
+            thread_id, task_id, QO_VALIDATE_BASICS, str(exc), error_code=QO_VALIDATE_FAILED
         )
         return None

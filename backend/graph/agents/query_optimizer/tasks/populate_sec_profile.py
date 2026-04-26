@@ -22,6 +22,7 @@ from backend.db.postgres.queries.fin_markets_region import (
 )
 from backend.db.postgres.queries.fin_markets_static import SecProfileSQL
 from backend.graph.agents.task_keys import QO_POPULATE_SEC_PROFILE
+from backend.graph.agents.query_optimizer.errors import QO_SEC_PROFILE_FAILED
 from backend.sse_notifications import complete_task, create_task, fail_task
 from backend.resource_api.quant_api.client import QuantClient
 from backend.resource_api.quant_api.models import QuantQuery
@@ -182,4 +183,4 @@ async def populate_sec_profile(
         )
     except Exception as exc:
         logger.warning("[populate_sec_profile] failed for %s: %s", ticker, exc)
-        await fail_task(thread_id, task_id, QO_POPULATE_SEC_PROFILE, str(exc))
+        await fail_task(thread_id, task_id, QO_POPULATE_SEC_PROFILE, str(exc), error_code=QO_SEC_PROFILE_FAILED)

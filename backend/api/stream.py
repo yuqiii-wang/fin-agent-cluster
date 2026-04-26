@@ -47,12 +47,30 @@ from backend.streaming.lifecycle import (
     register_watch,
     unregister_watch,
 )
-from backend.streaming.lifecycle.schemas import StreamingStatusResponse
+from backend.streaming.lifecycle.schemas import StreamingErrorsResponse, StreamingStatusResponse
 from backend.streaming.status import get_session_status
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/stream", tags=["stream"])
+
+
+@router.get("/errors", response_model=StreamingErrorsResponse)
+async def get_streaming_errors() -> StreamingErrorsResponse:
+    """Return the full backend streaming error code registry.
+
+    Provides the frontend with the human-readable descriptions for every
+    structured ``error_code`` value that can appear in SSE ``failed`` and
+    ``done`` event payloads.  The frontend fetches this once on startup and
+    caches it so tooltips and error popups can display meaningful messages.
+
+    Returns:
+        :class:`~backend.streaming.lifecycle.schemas.StreamingErrorsResponse`
+        mapping each error code string to its description.
+    """
+    from backend.streaming.lifecycle.errors import STREAMING_ERRORS
+
+    return StreamingErrorsResponse(errors=STREAMING_ERRORS)
 
 
 @router.put("/{thread_id}/watch", response_model=WatchTaskResponse, status_code=200)

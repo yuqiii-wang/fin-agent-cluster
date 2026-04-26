@@ -84,6 +84,12 @@ export interface TaskInfo {
   output: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  /** Human-readable error message populated when status is 'failed'. */
+  error?: string;
+  /** Structured error code from the backend error registry (e.g. 'DB_INSERT_FAILED'). */
+  error_code?: string;
+  /** Human-readable description for error_code, embedded inline in the SSE payload. */
+  error_description?: string;
 }
 
 export interface SessionStatus {

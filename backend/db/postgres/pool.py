@@ -28,6 +28,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from backend.config import get_settings
+from backend.db.postgres.errors import PG_POOL_NOT_OPENED
 
 logger = logging.getLogger(__name__)
 
@@ -113,19 +114,19 @@ async def close_pools() -> None:
 def get_checkpointer_pool() -> AsyncConnectionPool:
     """Return the shared checkpointer pool (primary).  Must call :func:`open_pools` first."""
     if _checkpointer_pool is None:
-        raise RuntimeError("Connection pools not opened — call open_pools() in lifespan")
+        raise RuntimeError(f"[{PG_POOL_NOT_OPENED}] Connection pools not opened — call open_pools() in lifespan")
     return _checkpointer_pool
 
 
 def get_raw_pool() -> AsyncConnectionPool:
     """Return the shared raw-write pool (primary).  Must call :func:`open_pools` first."""
     if _raw_pool is None:
-        raise RuntimeError("Connection pools not opened — call open_pools() in lifespan")
+        raise RuntimeError(f"[{PG_POOL_NOT_OPENED}] Connection pools not opened — call open_pools() in lifespan")
     return _raw_pool
 
 
 def get_raw_read_pool() -> AsyncConnectionPool:
     """Return the shared raw-read pool (replica or primary).  Must call :func:`open_pools` first."""
     if _raw_read_pool is None:
-        raise RuntimeError("Connection pools not opened — call open_pools() in lifespan")
+        raise RuntimeError(f"[{PG_POOL_NOT_OPENED}] Connection pools not opened — call open_pools() in lifespan")
     return _raw_read_pool

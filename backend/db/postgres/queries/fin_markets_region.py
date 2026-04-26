@@ -10,6 +10,7 @@ import logging
 from typing import Optional
 
 from backend.db.postgres.connection import raw_conn
+from backend.db.postgres.errors import PG_QUERY_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ async def get_region_by_name(region_name: str) -> Optional[tuple[str, list[str]]
             return None
         return row["code"], list(row["indexes"])
     except Exception as exc:
-        logger.warning("[get_region_by_name] DB query failed for region=%r: %s", region_name, exc)
+        logger.warning("[%s] get_region_by_name DB query failed for region=%r: %s", PG_QUERY_FAILED, region_name, exc)
         return None
 
 
@@ -147,7 +148,7 @@ async def get_prompt_catalogs() -> PromptCatalogs:
         catalogs.sectors = ", ".join(sectors)
 
     except Exception as exc:
-        logger.warning("[get_prompt_catalogs] DB query failed: %s", exc)
+        logger.warning("[%s] get_prompt_catalogs DB query failed: %s", PG_QUERY_FAILED, exc)
 
     return catalogs
 
@@ -169,7 +170,7 @@ async def get_region_name_to_code() -> dict[str, str]:
             rows = await cur.fetchall()
         return {row["name"].lower(): row["code"] for row in rows if row["name"] and row["code"]}
     except Exception as exc:
-        logger.warning("[get_region_name_to_code] DB query failed: %s", exc)
+        logger.warning("[%s] get_region_name_to_code DB query failed: %s", PG_QUERY_FAILED, exc)
         return {}
 
 
@@ -201,7 +202,7 @@ async def get_region_indexes(region_code: str) -> list[str]:
             return []
         return list(row["indexes"])
     except Exception as exc:
-        logger.warning("[get_region_indexes] DB query failed for region=%r: %s", region_code, exc)
+        logger.warning("[%s] get_region_indexes DB query failed for region=%r: %s", PG_QUERY_FAILED, region_code, exc)
         return []
 
 
@@ -242,7 +243,7 @@ async def get_regions_for_validation() -> list[dict]:
             for row in rows
         ]
     except Exception as exc:
-        logger.warning("[get_regions_for_validation] DB query failed: %s", exc)
+        logger.warning("[%s] get_regions_for_validation DB query failed: %s", PG_QUERY_FAILED, exc)
         return []
 
 
@@ -265,7 +266,7 @@ async def get_region_currency_map() -> dict[str, str]:
             rows = await cur.fetchall()
         return {row["code"]: row["currency_code"] for row in rows}
     except Exception as exc:
-        logger.warning("[get_region_currency_map] DB query failed: %s", exc)
+        logger.warning("[%s] get_region_currency_map DB query failed: %s", PG_QUERY_FAILED, exc)
         return {}
 
 
@@ -285,7 +286,7 @@ async def get_currency_codes() -> set[str]:
             rows = await cur.fetchall()
         return {row["code"] for row in rows}
     except Exception as exc:
-        logger.warning("[get_currency_codes] DB query failed: %s", exc)
+        logger.warning("[%s] get_currency_codes DB query failed: %s", PG_QUERY_FAILED, exc)
         return set()
 
 
@@ -308,7 +309,7 @@ async def get_news_sector_values() -> list[str]:
             rows = await cur.fetchall()
         return [row["sector"] for row in rows]
     except Exception as exc:
-        logger.warning("[get_news_sector_values] DB query failed: %s", exc)
+        logger.warning("[%s] get_news_sector_values DB query failed: %s", PG_QUERY_FAILED, exc)
         return []
 
 
@@ -346,5 +347,5 @@ async def get_currency_for_symbol(symbol: str) -> dict | None:
             return None
         return {"code": row["code"], "name": row["name"], "symbol": row["symbol"], "decimals": row["decimals"]}
     except Exception as exc:
-        logger.warning("[get_currency_for_symbol] DB query failed for symbol=%r: %s", symbol, exc)
+        logger.warning("[%s] get_currency_for_symbol DB query failed for symbol=%r: %s", PG_QUERY_FAILED, symbol, exc)
         return None

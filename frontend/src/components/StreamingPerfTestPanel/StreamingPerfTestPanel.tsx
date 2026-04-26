@@ -85,6 +85,7 @@ export function StreamingPerfTestPanel({
     totalTokens,
     activeCount,
     completedCount,
+    aggregateStats,
     frozen,
     handleAddRequest,
     handleRestart,
@@ -243,7 +244,7 @@ export function StreamingPerfTestPanel({
           <Col span={8}><Statistic title="Active Streams" value={activeCount} /></Col>
           <Col span={8}><Statistic title="Completed" value={completedCount} /></Col>
         </Row>
-        <AggregateStatsHeader sessions={sessions} />
+        <AggregateStatsHeader stats={aggregateStats} />
       </div>
 
       {/* ── Scrollable grid ── */}

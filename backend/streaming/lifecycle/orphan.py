@@ -31,6 +31,7 @@ import logging
 from sqlalchemy import select, update
 
 from backend.db.postgres.engine import get_session_factory
+from backend.streaming.lifecycle.errors import ORPHAN_SERVER_RESTART
 from backend.users.models import UserQuery
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 _PERF_TEST_QUERY = "DO STREAMING PERFORMANCE TEST NOW"
 
 
-async def handle_orphaned_query(thread_id: str) -> str:
+async def handle_orphaned_query(thread_id: str) -> tuple[str, str | None]:
     """Mark an orphaned running query as failed or cancelled.
 
     An orphaned query has ``status='running'`` but no active asyncio task in
@@ -56,8 +57,10 @@ async def handle_orphaned_query(thread_id: str) -> str:
         thread_id: LangGraph thread UUID.
 
     Returns:
-        The effective terminal status: ``'cancelled'``, ``'failed'``,
-        ``'completed'``, or whatever terminal value the DB already holds.
+        A ``(status, error_code)`` tuple where *status* is the effective
+        terminal status and *error_code* is an optional structured code from
+        :mod:`backend.streaming.lifecycle.errors` (``None`` for non-failure
+        outcomes such as ``'cancelled'``).
     """
     factory = get_session_factory()
     async with factory() as session:
@@ -65,7 +68,7 @@ async def handle_orphaned_query(thread_id: str) -> str:
             select(UserQuery).where(UserQuery.thread_id == thread_id)
         )
         if uq is None:
-            return "failed"
+            return "failed", ORPHAN_SERVER_RESTART
 
         # Race guard: if the runner already committed a terminal status between
         # replay_existing() and is_task_active_any_instance(), do NOT overwrite
@@ -76,7 +79,7 @@ async def handle_orphaned_query(thread_id: str) -> str:
                 "[orphan] already_terminal status=%s thread_id=%s",
                 uq.status, thread_id,
             )
-            return uq.status
+            return uq.status, None
 
         is_perf_test = uq.query.strip() == _PERF_TEST_QUERY
         if is_perf_test:
@@ -119,9 +122,12 @@ async def handle_orphaned_query(thread_id: str) -> str:
             "[orphan] update_noop current_status=%s thread_id=%s",
             current, thread_id,
         )
-        return current
+        # Return error_code only when the DB status is 'failed' and it was
+        # already failed due to a restart (no other writer clears the error).
+        code = ORPHAN_SERVER_RESTART if current == "failed" else None
+        return current, code
 
-    return "cancelled" if is_perf_test else "failed"
+    return ("cancelled", None) if is_perf_test else ("failed", ORPHAN_SERVER_RESTART)
 
 
 __all__ = ["handle_orphaned_query"]

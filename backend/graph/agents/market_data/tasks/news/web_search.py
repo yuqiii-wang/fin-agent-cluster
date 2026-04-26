@@ -14,6 +14,7 @@ from backend.graph.agents.task_keys import md_web_search
 from backend.graph.utils.news_stats import transform_news_to_stats
 from backend.graph.utils.pdf_parser import fetch_and_parse_pdf, is_pdf_url
 from backend.sse_notifications import complete_task, fail_task
+from backend.streaming.lifecycle.errors import WEB_SEARCH_FAILED
 from backend.resource_api.news_api.client import NewsClient
 from backend.resource_api.news_api.models import NewsArticle, NewsQuery, NewsResult
 
@@ -134,5 +135,5 @@ async def run_web_search(
         )
     except Exception as exc:
         logger.warning("[news tasks] web_search[%s] failed: %s", label, exc)
-        await fail_task(thread_id, task_id, md_web_search(label), str(exc))
+        await fail_task(thread_id, task_id, md_web_search(label), str(exc), error_code=WEB_SEARCH_FAILED)
         return NewsRawResults(ticker=ticker, query_key=label, query=q_text, error=str(exc))

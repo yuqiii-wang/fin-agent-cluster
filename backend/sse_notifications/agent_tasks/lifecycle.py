@@ -184,19 +184,31 @@ async def fail_task(
     task_id: int,
     task_key: str,
     error: str,
+    error_code: str | None = None,
 ) -> None:
     """Mark a task failed in DB and emit a ``failed`` SSE notification.
 
     Args:
-        thread_id: LangGraph thread UUID.
-        task_id:   DB primary key of the task row.
-        task_key:  Full dot-separated task key.
-        error:     Error message string (truncated to 500 chars in output).
+        thread_id:  LangGraph thread UUID.
+        task_id:    DB primary key of the task row.
+        task_key:   Full dot-separated task key.
+        error:      Error message string (truncated to 500 chars in output).
+        error_code: Optional structured error code from
+                    :mod:`backend.streaming.lifecycle.errors`.  When provided
+                    the code and its human-readable description are embedded in
+                    the SSE payload so the frontend can show a rich tooltip
+                    without an extra API round-trip.
     """
     from backend.graph.models import AgentTask  # deferred to avoid circular import
+    from backend.streaming.lifecycle.errors import STREAMING_ERRORS  # deferred
 
     node = _node_name(task_key)
-    output_val = {"error": error[:500]}
+    output_val: dict = {"error": error[:500]}
+    if error_code:
+        output_val["error_code"] = error_code
+        desc = STREAMING_ERRORS.get(error_code)
+        if desc:
+            output_val["error_description"] = desc
     factory = get_session_factory()
     async with factory() as session:
         await session.execute(
@@ -217,21 +229,19 @@ async def fail_task(
         )
         await session.commit()
     # Publish to Redis Pub/Sub after commit — DB row is now durable.
-    await publish_lifecycle(
-        thread_id,
-        {
-            "event": "failed",
-            "task_id": task_id,
-            "node_name": node,
-            "task_key": task_key,
-            "output": output_val,
-        },
-    )
+    _failed_payload: dict = {
+        "event": "failed",
+        "task_id": task_id,
+        "node_name": node,
+        "task_key": task_key,
+        "output": output_val,
+    }
+    await publish_lifecycle(thread_id, _failed_payload)
     # Record step and push ack-store entry after commit.
     await record_task_step(thread_id, task_id, "failed")
     await push_pending_notify(
         thread_id, "failed", task_id,
-        json.dumps({"event": "failed", "task_id": task_id, "node_name": node, "task_key": task_key, "output": output_val}),
+        json.dumps(_failed_payload),
     )
 
     logger.warning(
@@ -308,7 +318,12 @@ async def cancel_task(
     )
 
 
-async def emit_done(thread_id: str, status: str, report: str = "") -> None:
+async def emit_done(
+    thread_id: str,
+    status: str,
+    report: str = "",
+    error_code: str | None = None,
+) -> None:
     """Emit a terminal ``done`` SSE event and clean up the Redis token stream.
 
     Called once after the entire graph finishes (success, failure, cancellation,
@@ -317,12 +332,23 @@ async def emit_done(thread_id: str, status: str, report: str = "") -> None:
     distinguish ``"timeout"`` from a regular ``"cancelled"`` action.
 
     Args:
-        thread_id: LangGraph thread UUID.
-        status:    Final session status emitted to the client.  Standard values:
-                   ``"completed"``, ``"failed"``, ``"cancelled"``, ``"timeout"``.
-        report:    Optional short excerpt of the final report (first 500 chars).
+        thread_id:  LangGraph thread UUID.
+        status:     Final session status emitted to the client.  Standard values:
+                    ``"completed"``, ``"failed"``, ``"cancelled"``, ``"timeout"``.
+        report:     Optional short excerpt of the final report (first 500 chars).
+        error_code: Optional structured error code from
+                    :mod:`backend.streaming.lifecycle.errors`.  Only meaningful
+                    when ``status`` is ``"failed"``; embedded in the ``done``
+                    payload so the frontend can surface a rich error tooltip.
     """
-    _done_payload = {"event": "done", "status": status, "data": report[:500] if report else ""}
+    from backend.streaming.lifecycle.errors import STREAMING_ERRORS  # deferred
+
+    _done_payload: dict = {"event": "done", "status": status, "data": report[:500] if report else ""}
+    if error_code:
+        _done_payload["error_code"] = error_code
+        desc = STREAMING_ERRORS.get(error_code)
+        if desc:
+            _done_payload["error_description"] = desc
     logger.info(
         "[task_lifecycle] publish event=done status=%s thread_id=%s",
         status,

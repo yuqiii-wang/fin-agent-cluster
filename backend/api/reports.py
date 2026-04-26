@@ -18,6 +18,7 @@ from backend.db import raw_conn
 from backend.db.postgres.queries.fin_agents import TaskSQL
 from backend.db.postgres.queries.fin_strategies import ReportSQL
 from backend.users.schemas import StrategyReport, StrategyReportList, TaskInfo
+from backend.api.errors import API_REPORT_NOT_FOUND
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ async def get_latest_report(symbol: str) -> StrategyReport:
         cur = await conn.execute(ReportSQL.GET_LATEST_BY_SYMBOL, (symbol.upper(),))
         row = await cur.fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail=f"No report found for symbol '{symbol}'")
+        raise HTTPException(status_code=404, detail={"code": API_REPORT_NOT_FOUND, "message": f"No report found for symbol '{symbol}'"})
     tasks = await _fetch_reference_tasks(row["market_data_task_ids"])
     return _row_to_report(row, tasks)
 
@@ -138,7 +139,7 @@ async def get_report_by_id(report_id: int) -> StrategyReport:
         cur = await conn.execute(ReportSQL.GET_BY_ID, (report_id,))
         row = await cur.fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+        raise HTTPException(status_code=404, detail={"code": API_REPORT_NOT_FOUND, "message": f"Report {report_id} not found"})
     tasks = await _fetch_reference_tasks(row["market_data_task_ids"])
     return _row_to_report(row, tasks)
 

@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type React from "react";
 import { cancelQuery, createAckHandlers, fetchStreamingStatus, openStream } from "../../api";
 import { DoneConditionGuard, sendDoneAck } from "./lifecycle";
-import type { PerfTestConfig, ThreadSession } from "../../components/StreamingPerfTestPanel/types";
+import type { PendingTokenPatch, PerfTestConfig, ThreadSession } from "../../components/StreamingPerfTestPanel/types";
 import { TERMINAL_STATUSES } from "../../components/StreamingPerfTestPanel/types";
 
 export interface PerfSessionDeps {
@@ -16,6 +16,20 @@ export interface PerfSessionDeps {
   totalTokensRef: React.MutableRefObject<number>;
   /** Guest user token required to send the query ACK. */
   userToken: string;
+  /**
+   * Shared ref map for buffered token patches.  Instead of calling setSessions
+   * on every `perf_token_batch` SSE event, onPerfTokenBatch writes into this map
+   * and the 100ms tick in useSessionManager flushes them in a single setSessions
+   * call.  This prevents hundreds of re-renders per second when many streams run
+   * concurrently.
+   */
+  pendingTokenPatchesRef: React.MutableRefObject<Map<string, PendingTokenPatch>>;
+  /**
+   * Flush the buffered patch for a single session immediately.  Called by
+   * onPerfTokenBatch's terminal path so the final token count is committed to
+   * React state before closeSession sets closed=true.
+   */
+  flushPendingForSession: (thread_id: string) => void;
 }
 
 export interface UsePerfSessionReturn {
@@ -49,6 +63,8 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
     freezeAllRef,
     totalTokensRef,
     userToken,
+    pendingTokenPatchesRef,
+    flushPendingForSession,
   } = deps;
 
   const openSessionStream = useCallback(
@@ -56,6 +72,19 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
       let sessionClosed = false;
       let lastIngestLogPct = -1;
       let lastTokenLogPct = -1;
+      /**
+       * Closure-tracked session status — mirrors React state for this session
+       * so onPerfTokenBatch can compute status transitions without reading the
+       * stale React state inside setSessions.  Updated in onQueryStatus and
+       * whenever onPerfTokenBatch promotes the session to "digesting".
+       */
+      let sessionStatus: ThreadSession["status"] = "connecting";
+      /**
+       * Closure-tracked first-token timestamp.  Set on the first token batch so
+       * the pending patch always carries the authoritative digest_start_ms value
+       * regardless of how many batches have been buffered.
+       */
+      let closureDigestStartMs: number | null = null;
       // Running total of tokens received for this session — incremented
       // synchronously in onPerfTokenBatch so we can compare against the
       // target without relying on the async setSessions state.
@@ -193,6 +222,7 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
           };
           const newStatus = phaseToStatus[d.phase ?? ""];
           if (newStatus) {
+            sessionStatus = newStatus; // keep closure in sync
             console.info("[perf] %s → %s", thread_id, newStatus);
             // Guard: do not override a terminal status on an already-closed session.
             setSessions((prev) =>
@@ -298,7 +328,6 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
           //   2. Tokens arriving while the EventSource is still open after an
           //      optimistic cancel (handleCancelOne sets s.closed=true in React
           //      state but cannot set sessionClosed in this closure).
-          // Case 2 is handled by the s.closed guard inside setSessions below.
           if (sessionClosed) return;
           const d = data as { count?: number; recent_tokens?: string[] };
           const count = d.count ?? 1;
@@ -310,60 +339,59 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
           batchCount += 1;
           const batchAve = Math.round(batchSum / batchCount);
           const now = Date.now();
+          // Record first-token timestamp once for accurate digest_start_ms.
+          if (closureDigestStartMs === null) closureDigestStartMs = now;
           // recent_tokens from the backend is already a rolling window of last 10.
-          // Build stream_text: "…\n" history indicator + tokens one per line.
           const recentTokens = d.recent_tokens ?? [];
           const stream_text = (tokensReceived > recentTokens.length ? "…\n" : "") + recentTokens.join("\n");
-          setSessions((prev) =>
-            prev.map((s) => {
-              if (s.thread_id !== thread_id) return s;
-              if (s.closed) return s;
-              // Guard: once the tick has marked the session as a terminal status
-              // (e.g. "completed" for concurrency stable), stop updating metrics
-              // so Digest Time, Token Rate and Progress stay frozen.
-              if (TERMINAL_STATUSES.has(s.status)) return s;
-              const activeStatus =
-                s.status === "connecting" || s.status === "received" ||
-                s.status === "preparing" || s.status === "ingesting"
-                  ? "digesting" as const
-                  : s.status;
-              // When this batch exactly fills the expected token budget, write the
-              // authoritative tokensReceived into s.tokens rather than s.tokens+count.
-              // s.tokens is React state that may lag behind the closure variable by
-              // several batches (React defers / batches setSessions calls).  Using
-              // tokensReceived ensures the displayed count freezes at the correct
-              // value when closeSession sets s.closed=true in the same flush.
-              const isLastBatch = tokensReceived >= actualTokensExpected && config.testMode === "throughput";
-              return {
-                ...s,
-                status: activeStatus,
-                tokens: isLastBatch ? tokensReceived : s.tokens + count,
-                last_token_ms: now,
-                digest_start_ms: s.digest_start_ms ?? now,
-                batch_first: batchFirst,
-                batch_max: batchMax,
-                batch_ave: batchAve,
-                batch_last: count,
-                stream_text,
-              };
-            })
-          );
-          // Auto-complete in throughput mode: all tokens received — close session immediately.
+
+          // Determine if the session status needs a "digesting" transition.
+          // Mirrors the s.status check that was previously done inside setSessions.
+          const wasPreDigesting =
+            sessionStatus === "connecting" || sessionStatus === "received" ||
+            sessionStatus === "preparing" || sessionStatus === "ingesting";
+          if (wasPreDigesting) sessionStatus = "digesting";
+
+          // Determine if this is the terminal (last) batch for throughput mode.
+          const isLastBatch = tokensReceived >= actualTokensExpected && config.testMode === "throughput";
+
+          // ── Buffer into pending patch — NO setSessions call here ────────────
+          // The 100ms tick in useSessionManager will flush all pending patches in
+          // a single setSessions call, keeping the React re-render rate ≤ 10/sec
+          // even when hundreds of streams are running concurrently.
+          const existing = pendingTokenPatchesRef.current.get(thread_id);
+          pendingTokenPatchesRef.current.set(thread_id, {
+            tokensDelta: (existing?.tokensDelta ?? 0) + count,
+            last_token_ms: now,
+            first_token_ms: existing?.first_token_ms ?? closureDigestStartMs,
+            batch_first: existing?.batch_first ?? batchFirst!,
+            batch_max: batchMax,
+            batch_ave: batchAve,
+            batch_last: count,
+            stream_text,
+            status_transition: wasPreDigesting ? "digesting" : existing?.status_transition,
+            // For the last batch, write the authoritative tokensReceived total so
+            // the displayed count freezes at the exact value even if React state
+            // is a few batches behind.
+            forceTokensTotal: isLastBatch ? tokensReceived : existing?.forceTokensTotal,
+          });
+
+          // Auto-complete in throughput mode: all tokens received — flush the
+          // accumulated patch immediately then close the session.
           // Concurrency mode sessions end via perf_test_stopped (timeout) instead.
-          if (tokensReceived >= actualTokensExpected && config.testMode === "throughput") {
+          if (isLastBatch) {
             const status = pendingComplete ? pendingTerminalStatus : "completed";
             console.info(
               "[perf] all tokens received %s tokensReceived=%d actualExpected=%d reactTokensLag=%s status=%s",
               thread_id, tokensReceived, actualTokensExpected,
               pendingComplete ? "(pendingComplete)" : "(normal)", status,
             );
+            // Flush the buffered patch synchronously before closing so the final
+            // token count reaches React state before closeSession sets closed=true.
+            flushPendingForSession(thread_id);
             if (pendingComplete && doneGuard) {
-              // Guard is active — let it handle sendDoneAck + terminate
-              // via its onReady callback once recheck() confirms the condition.
               doneGuard.recheck();
             } else {
-              // Guard not yet created (onDone hasn't arrived) or normal path
-              // (no pendingComplete) — terminate directly.
               terminate(status, /* ackDone */ pendingComplete);
             }
           } else if (config.testMode === "throughput") {
@@ -377,7 +405,6 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
                 thread_id, milestone, tokensReceived, actualTokensExpected, pendingComplete,
               );
             }
-            // When pendingComplete is set but tokens keep arriving, probe backend at 95 %.
             if (pendingComplete && pct >= 95 && lastTokenLogPct < 95) {
               lastTokenLogPct = 95;
               console.warn(

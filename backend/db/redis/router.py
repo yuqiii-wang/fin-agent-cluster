@@ -56,6 +56,7 @@ from typing import Optional
 import redis.asyncio as aioredis
 
 from backend.config import get_settings
+from backend.db.redis.errors import REDIS_ROUTER_NO_URLS
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ class RedisRouter:
                   canonical "shard 0" used for global/pinned operations.
         """
         if not urls:
-            raise ValueError("RedisRouter requires at least one Redis URL")
+            raise ValueError(f"[{REDIS_ROUTER_NO_URLS}] RedisRouter requires at least one Redis URL")
         self._urls: list[str] = urls
         self._clients: list[Optional[aioredis.Redis]] = [None] * len(urls)
         self._loop_id: Optional[int] = None

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from backend.db import init_db, raw_conn
 from backend.api.router import router as api_router
+from backend.graph.errors import GRAPH_DB_UNAVAILABLE
 from backend.llm.factory import get_active_provider, set_provider_override
 from backend.llm.embeddings import (
     get_active_embedding_provider,
@@ -30,7 +31,7 @@ async def _check_db_conn() -> None:
             await cur.fetchone()
         logger.info("[startup] database connection OK")
     except Exception as exc:
-        raise RuntimeError(f"[startup] database connection failed: {exc}") from exc
+        raise RuntimeError(f"[{GRAPH_DB_UNAVAILABLE}] database connection failed: {exc}") from exc
 
 
 @asynccontextmanager

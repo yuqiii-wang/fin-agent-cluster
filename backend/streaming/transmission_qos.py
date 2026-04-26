@@ -36,6 +36,8 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from backend.streaming.errors import STREAM_QOS_STALL
+
 logger = logging.getLogger(__name__)
 
 #: Seconds between QoS audit sweeps.
@@ -169,8 +171,9 @@ class TransmissionQoS:
 
             if stalled:
                 logger.warning(
-                    "[transmission_qos] stall_detected count=%d active=%d "
+                    "[%s] stall_detected count=%d active=%d "
                     "sample_thread_ids=%s",
+                    STREAM_QOS_STALL,
                     len(stalled),
                     len(self._streams),
                     stalled[:5],

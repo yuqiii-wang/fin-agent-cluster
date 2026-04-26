@@ -18,6 +18,14 @@ from pydantic import BaseModel
 from backend.db import raw_conn
 from backend.db.postgres.queries.fin_markets_quant import OhlcvStatsSQL
 from backend.db.postgres.queries.fin_markets_region import get_currency_for_symbol
+from backend.api.errors import (
+    API_QUANT_INVALID_GRANULARITY,
+    API_QUANT_INVALID_INSTRUMENT,
+    API_QUANT_UNKNOWN_INDICATOR,
+    API_QUANT_CONFIG_ERROR,
+    API_QUANT_DB_FAILED,
+    API_QUANT_NO_CURRENCY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -189,28 +197,28 @@ async def get_indicator_stats(
     if granularity not in _VALID_GRANULARITIES:
         raise HTTPException(
             status_code=404,
-            detail=f"Unknown granularity '{granularity}'. Valid: {sorted(_VALID_GRANULARITIES)}",
+            detail={"code": API_QUANT_INVALID_GRANULARITY, "message": f"Unknown granularity '{granularity}'. Valid: {sorted(_VALID_GRANULARITIES)}"},
         )
 
     if instrument_type not in _VALID_INSTRUMENT_TYPES:
         raise HTTPException(
             status_code=422,
-            detail=f"instrument_type must be one of {sorted(_VALID_INSTRUMENT_TYPES)}",
+            detail={"code": API_QUANT_INVALID_INSTRUMENT, "message": f"instrument_type must be one of {sorted(_VALID_INSTRUMENT_TYPES)}"},
         )
 
     ind = _INDICATOR_BY_ID.get(indicator)
     if ind is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Unknown indicator '{indicator}'. Use GET /quant/indicators for valid ids.",
+            detail={"code": API_QUANT_UNKNOWN_INDICATOR, "message": f"Unknown indicator '{indicator}'. Use GET /quant/indicators for valid ids."},
         )
 
     # Safety: verify every column is in the whitelist before building SQL.
     columns: list[str] = ind["columns"]
     for col in columns:
         if col not in _ALLOWED_COLUMNS:
-            logger.error("Requested column '%s' is not in the allowed whitelist", col)
-            raise HTTPException(status_code=500, detail="Internal configuration error.")
+            logger.error("[%s] Requested column '%s' is not in the allowed whitelist", API_QUANT_CONFIG_ERROR, col)
+            raise HTTPException(status_code=500, detail={"code": API_QUANT_CONFIG_ERROR, "message": "Internal configuration error."})
 
     keys: list[str] = ind["keys"]
     sql = OhlcvStatsSQL.get_indicator_series(columns) + f"\nLIMIT {int(limit)}"
@@ -224,8 +232,8 @@ async def get_indicator_stats(
             )
             db_rows = await rows.fetchall()
     except Exception as exc:
-        logger.error("quant stats query failed for %s/%s/%s: %s", symbol, granularity, indicator, exc)
-        raise HTTPException(status_code=500, detail="Database query failed.")
+        logger.error("[%s] quant stats query failed for %s/%s/%s: %s", API_QUANT_DB_FAILED, symbol, granularity, indicator, exc)
+        raise HTTPException(status_code=500, detail={"code": API_QUANT_DB_FAILED, "message": "Database query failed."})
 
     def _safe(v: Any) -> float | None:
         """Coerce DB value to float or None."""
@@ -305,6 +313,6 @@ async def get_symbol_currency(symbol: str) -> CurrencyInfo:
     if currency is None:
         raise HTTPException(
             status_code=404,
-            detail=f"No currency data found for symbol '{symbol.upper()}'.",
+            detail={"code": API_QUANT_NO_CURRENCY, "message": f"No currency data found for symbol '{symbol.upper()}'"},
         )
     return CurrencyInfo(**currency)

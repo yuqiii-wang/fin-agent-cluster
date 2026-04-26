@@ -3,6 +3,7 @@ import type React from "react";
 import type { ChatMessage, ThreadSummary } from "../types";
 import { cancelQuery, createAckHandlers, fetchHistory, fetchStreamingStatus, openStream, submitQuery } from "../api";
 import { buildSseHandlers } from "./sseHandlers";
+import { sendDoneAck } from "../services/streaming/lifecycle";
 
 const PERF_TEST_TRIGGER = "DO STREAMING PERFORMANCE TEST NOW";
 
@@ -174,6 +175,7 @@ export function useStreamSession(
         appendMessageText,
         updateMessage,
         onDone: (status) => {
+          sendDoneAck(thread.thread_id, userToken, status).catch(() => {});
           updateMessage(asstMsgId, { status: status as ChatMessage["status"], streamingCursor: false });
           activeThreadId.current = null;
           setLoading(false);
@@ -181,11 +183,13 @@ export function useStreamSession(
           if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
         },
         onClose: () => {
+          sendDoneAck(thread.thread_id, userToken, "failed").catch(() => {});
           updateMessage(asstMsgId, { status: "failed" as ChatMessage["status"], streamingCursor: false });
           activeThreadId.current = null;
           setLoading(false);
         },
         onConnectionFailed: (message) => {
+          sendDoneAck(thread.thread_id, userToken, "failed").catch(() => {});
           updateMessage(asstMsgId, { text: message, status: "failed" as ChatMessage["status"], streamingCursor: false });
           activeThreadId.current = null;
           setLoading(false);
@@ -267,6 +271,7 @@ export function useStreamSession(
           updateMessage,
           withReport: true,
           onDone: (status) => {
+            sendDoneAck(threadId, userToken, status).catch(() => {});
             if (status === "cancelled") {
               updateMessage(asstMsgId, { text: "Query cancelled by user.", status: "cancelled" as ChatMessage["status"], streamingCursor: false });
             } else {
@@ -278,11 +283,13 @@ export function useStreamSession(
             if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
           },
           onClose: () => {
+            sendDoneAck(threadId, userToken, "failed").catch(() => {});
             updateMessage(asstMsgId, { status: "failed" as ChatMessage["status"], streamingCursor: false });
             activeThreadId.current = null;
             setLoading(false);
           },
           onConnectionFailed: (message) => {
+            sendDoneAck(threadId, userToken, "failed").catch(() => {});
             updateMessage(asstMsgId, { text: message, status: "failed" as ChatMessage["status"], streamingCursor: false });
             activeThreadId.current = null;
             setLoading(false);
@@ -315,6 +322,7 @@ export function useStreamSession(
         updateMessage,
         withReport: true,
         onDone: (status) => {
+          sendDoneAck(threadId, userToken, status).catch(() => {});
           if (status === "cancelled") {
             updateMessage(asstMsgId, { text: "Query cancelled by user.", status: "cancelled" as ChatMessage["status"], streamingCursor: false });
           } else {
@@ -326,11 +334,13 @@ export function useStreamSession(
           if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
         },
         onClose: () => {
+          sendDoneAck(threadId, userToken, "failed").catch(() => {});
           updateMessage(asstMsgId, { status: "failed" as ChatMessage["status"], streamingCursor: false });
           activeThreadId.current = null;
           setLoading(false);
         },
         onConnectionFailed: (message) => {
+          sendDoneAck(threadId, userToken, "failed").catch(() => {});
           updateMessage(asstMsgId, { text: message, status: "failed" as ChatMessage["status"], streamingCursor: false });
           activeThreadId.current = null;
           setLoading(false);

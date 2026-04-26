@@ -17,6 +17,7 @@ from typing import Optional
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from backend.config import get_settings
+from backend.llm.errors import LLM_UNKNOWN_PROVIDER, LLM_PROVIDER_NOT_CONFIGURED
 
 logger = logging.getLogger(__name__)
 
@@ -104,14 +105,14 @@ def get_llm(temperature: float = 0.3) -> BaseChatModel:
     primary_name = (_runtime_provider_override or get_settings().LLM_PROVIDER).lower().strip()
     if primary_name not in _SUPPORTED_PROVIDERS:
         raise ValueError(
-            f"Unknown LLM_PROVIDER={primary_name!r}. "
+            f"[{LLM_UNKNOWN_PROVIDER}] Unknown LLM_PROVIDER={primary_name!r}. "
             f"Supported values: {', '.join(_SUPPORTED_PROVIDERS)}"
         )
 
     primary = _build_provider(primary_name, temperature)
     if primary is None:
         raise ValueError(
-            f"LLM_PROVIDER={primary_name!r} is not configured — "
+            f"[{LLM_PROVIDER_NOT_CONFIGURED}] LLM_PROVIDER={primary_name!r} is not configured — "
             f"check the required API key / path in .env"
         )
 

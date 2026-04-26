@@ -24,6 +24,7 @@ from backend.sse_notifications import (
     stream_text_task,
 )
 from backend.llm import get_active_provider, get_llm
+from backend.streaming.lifecycle.errors import LLM_INFERENCE_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ async def run_llm_infer(
         await complete_task(thread_id, task_id, DM_LLM_INFER, {"chars": len(raw_json), "text": raw_json, "passed": True})
     except Exception as exc:
         logger.warning("[decision_maker/llm_infer] LLM call failed: %s", exc)
-        await fail_task(thread_id, task_id, DM_LLM_INFER, str(exc))
+        await fail_task(thread_id, task_id, DM_LLM_INFER, str(exc), error_code=LLM_INFERENCE_FAILED)
         raise
 
     # Strip <think>...</think> reasoning blocks and optional markdown fences

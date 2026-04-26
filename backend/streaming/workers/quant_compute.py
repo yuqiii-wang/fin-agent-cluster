@@ -26,6 +26,7 @@ from backend.resource_api.quant_api.models import OHLCVBar
 from backend.resource_api.quant_api.ohlcv_processor import compute_quant_stats
 from backend.streaming.celery_app import celery_app
 from backend.streaming.config import QUANT_COMPUTE
+from backend.streaming.errors import STREAM_WORKER_BATCH_FAILED, STREAM_WORKER_MSG_FAILED
 from backend.streaming.streams import (
     ensure_group,
     xack,
@@ -57,7 +58,7 @@ def consume_batch(self: Any) -> dict[str, int]:
     try:
         return asyncio.run(_consume())
     except Exception as exc:
-        logger.warning("[quant_compute.consume_batch] error: %s", exc)
+        logger.warning("[%s] quant_compute.consume_batch error: %s", STREAM_WORKER_BATCH_FAILED, exc)
         raise self.retry(exc=exc)
 
 
@@ -95,7 +96,7 @@ async def _consume() -> dict[str, int]:
             await _handle_job(msg_id, fields)
             acked.append(msg_id)
         except Exception as exc:
-            logger.warning("[quant_compute] failed msg_id=%s: %s", msg_id, exc)
+            logger.warning("[%s] quant_compute failed msg_id=%s: %s", STREAM_WORKER_MSG_FAILED, msg_id, exc)
 
     if acked:
         await xack(_TOPIC.stream_key, _TOPIC.consumer_group, *acked)

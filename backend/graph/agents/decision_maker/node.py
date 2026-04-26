@@ -24,6 +24,7 @@ from backend.graph.agents.market_data.models.output import MarketDataOutput
 from backend.graph.agents.task_keys import DM_DB_INSERT_REPORT, DM_LLM_INFER
 from backend.graph.state import FinAnalysisState
 from backend.graph.utils.execution_log import finish_node_execution, start_node_execution
+from backend.graph.agents.decision_maker.errors import DM_NO_MARKET_DATA, DM_PARSE_FAILED
 from backend.sse_notifications import create_task
 
 logger = logging.getLogger(__name__)
@@ -67,15 +68,15 @@ async def decision_maker(state: FinAnalysisState) -> dict:
         mdo = MarketDataOutput.model_validate(mdo_dict)
         market_data_context = "\n".join(mdo.to_context_lines())
     except Exception as exc:
-        logger.warning("[decision_maker] MarketDataOutput parse failed: %s", exc)
+        logger.warning("[decision_maker] MarketDataOutput parse failed [%s]: %s", DM_PARSE_FAILED, exc)
         market_data_context = ""
 
     if not market_data_context:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        await finish_node_execution(node_execution_id, {"error": "no market data"}, elapsed_ms)
+        await finish_node_execution(node_execution_id, {"error": DM_NO_MARKET_DATA}, elapsed_ms)
         return {
             "report": "",
-            "steps": ["[decision_maker] no market data available; skipping"],
+            "steps": [f"[decision_maker] {DM_NO_MARKET_DATA}; skipping"],
         }
 
     # -- LLM inference ---------------------------------------------------------

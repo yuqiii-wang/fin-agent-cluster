@@ -34,6 +34,8 @@ from backend.graph.state import FinAnalysisState
 from backend.graph.utils.execution_log import start_node_execution, finish_node_execution
 from backend.graph.utils.ohlcv import upsert_quant_stats
 from backend.sse_notifications import create_task, complete_task, fail_task
+from backend.streaming.lifecycle.errors import MARKET_DATA_FETCH_FAILED
+from backend.graph.agents.market_data.errors import MD_NO_TICKER, MD_PARSE_FAILED
 from backend.graph.agents.task_keys import (
     MD_BOND,
     md_ohlcv,
@@ -115,7 +117,7 @@ async def market_data_collector(state: FinAnalysisState) -> dict:
         if mdi:
             qoo = QueryOptimizerOutput.model_validate(mdi)
     except Exception as exc:
-        logger.warning("[market_data_collector] QueryOptimizerOutput parse failed: %s", exc)
+        logger.warning("[market_data_collector] QueryOptimizerOutput parse failed [%s]: %s", MD_PARSE_FAILED, exc)
 
     quants: Optional[QuantContext] = qoo.quants if qoo else None
     news_ctx: Optional[NewsContext] = qoo.news if qoo else None
@@ -146,10 +148,10 @@ async def market_data_collector(state: FinAnalysisState) -> dict:
 
     if not ticker:
         elapsed = int((time.monotonic() - t0) * 1000)
-        await finish_node_execution(node_execution_id, {"error": "no ticker resolved"}, elapsed)
+        await finish_node_execution(node_execution_id, {"error": MD_NO_TICKER}, elapsed)
         return {
             "market_data": "",
-            "steps": ["[market_data_collector] no ticker resolved; skipping data fetch"],
+            "steps": [f"[market_data_collector] {MD_NO_TICKER}; skipping data fetch"],
         }
 
     qclient = QuantClient()
@@ -192,7 +194,7 @@ async def market_data_collector(state: FinAnalysisState) -> dict:
             )
         except Exception as exc:
             logger.warning("[market_data_collector] OHLCV %s failed: %s", window.granularity, exc)  # type: ignore[attr-defined]
-            await fail_task(thread_id, task_id, task_key, str(exc))
+            await fail_task(thread_id, task_id, task_key, str(exc), error_code=MARKET_DATA_FETCH_FAILED)
             return OHLCVWindowResult(ticker=ticker, window=window.granularity, label=label, error=str(exc))  # type: ignore[attr-defined]
 
     async def _run_peer_ohlcv(peer: str) -> OHLCVWindowResult:
@@ -207,7 +209,7 @@ async def market_data_collector(state: FinAnalysisState) -> dict:
             return OHLCVWindowResult(ticker=peer, window="1day", label=f"{peer} 2y daily", bars=[b.model_dump() for b in bars], source=actual_source)
         except Exception as exc:
             logger.warning("[market_data_collector] peer OHLCV %s failed: %s", peer, exc)
-            await fail_task(thread_id, task_id, task_key, str(exc))
+            await fail_task(thread_id, task_id, task_key, str(exc), error_code=MARKET_DATA_FETCH_FAILED)
             return OHLCVWindowResult(ticker=peer, window="1day", label=f"{peer} 2y daily", error=str(exc))
 
     async def _run_index_ohlcv(label_key: str) -> OHLCVWindowResult:
@@ -228,7 +230,7 @@ async def market_data_collector(state: FinAnalysisState) -> dict:
             return OHLCVWindowResult(ticker=ticker_sym, window="1day", label=f"{label_key} index 2y daily", bars=[b.model_dump() for b in bars], source=actual_source)
         except Exception as exc:
             logger.warning("[market_data_collector] index OHLCV %s (%s) failed: %s", label_key, ticker_sym, exc)
-            await fail_task(thread_id, task_id, task_key, str(exc))
+            await fail_task(thread_id, task_id, task_key, str(exc), error_code=MARKET_DATA_FETCH_FAILED)
             return OHLCVWindowResult(ticker=ticker_sym, window="1day", label=f"{label_key} index 2y daily", error=str(exc))
 
     async def _run_macro_quant(macro_key: str) -> MacroResult:
@@ -252,7 +254,7 @@ async def market_data_collector(state: FinAnalysisState) -> dict:
             return result
         except Exception as exc:
             logger.warning("[market_data_collector] macro %s failed: %s", macro_key, exc)
-            await fail_task(thread_id, task_id, task_key, str(exc))
+            await fail_task(thread_id, task_id, task_key, str(exc), error_code=MARKET_DATA_FETCH_FAILED)
             return MacroResult(key=macro_key, symbol=symbol, label=label, error=str(exc))
 
     async def _run_bond_yields() -> BondResult:
@@ -269,7 +271,7 @@ async def market_data_collector(state: FinAnalysisState) -> dict:
             return result
         except Exception as exc:
             logger.warning("[market_data_collector] US Bond yields failed: %s", exc)
-            await fail_task(thread_id, task_id, MD_BOND, str(exc))
+            await fail_task(thread_id, task_id, MD_BOND, str(exc), error_code=MARKET_DATA_FETCH_FAILED)
             return BondResult(error=str(exc))
 
     # ---------------------------------------------------------------------------

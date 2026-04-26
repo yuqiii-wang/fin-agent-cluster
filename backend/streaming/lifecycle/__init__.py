@@ -63,6 +63,7 @@ from backend.streaming.lifecycle.schemas import (
     DoneAckRequest,
     DoneAckResponse,
     RunningTaskInfo,
+    StreamingErrorsResponse,
     StreamingStatusResponse,
     WatchTaskRequest,
     WatchTaskResponse,
@@ -101,4 +102,5 @@ __all__ = [
     "DoneAckResponse",
     "RunningTaskInfo",
     "StreamingStatusResponse",
+    "StreamingErrorsResponse",
 ]

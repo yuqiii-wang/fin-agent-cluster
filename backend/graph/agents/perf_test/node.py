@@ -49,6 +49,7 @@ from backend.sse_notifications import (
     stream_perf_text_task,
 )
 from backend.sse_notifications.query_lifecycle import emit_query_status
+from backend.streaming.lifecycle.errors import PERF_INGEST_FAILED, PERF_PUBLISH_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,7 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
             logger.exception(
                 "[perf_test_streamer] concurrency error thread_id=%s: %s", thread_id, exc
             )
-            await fail_task(thread_id, pub_task_id, PERF_TEST_PUB, str(exc))
+            await fail_task(thread_id, pub_task_id, PERF_TEST_PUB, str(exc), error_code=PERF_PUBLISH_FAILED)
             await finish_node_execution(
                 node_execution_id, {"error": str(exc)[:500]}, elapsed_ms
             )
@@ -233,7 +234,7 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
         logger.exception(
             "[perf_test_streamer] phase1 ingest error thread_id=%s: %s", thread_id, exc
         )
-        await fail_task(thread_id, ingest_task_id, PERF_TEST_INGEST, str(exc))
+        await fail_task(thread_id, ingest_task_id, PERF_TEST_INGEST, str(exc), error_code=PERF_INGEST_FAILED)
         await finish_node_execution(
             node_execution_id, {"error": str(exc)[:500]}, elapsed_ms
         )
@@ -330,7 +331,7 @@ async def perf_test_streamer(state: PerfTestState) -> dict:
         logger.exception(
             "[perf_test_streamer] phase2 error thread_id=%s: %s", thread_id, exc
         )
-        await fail_task(thread_id, pub_task_id, task_key, str(exc))
+        await fail_task(thread_id, pub_task_id, task_key, str(exc), error_code=PERF_PUBLISH_FAILED)
         await finish_node_execution(
             node_execution_id, {"error": str(exc)[:500]}, elapsed_ms
         )

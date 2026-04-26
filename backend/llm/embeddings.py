@@ -12,6 +12,7 @@ from functools import lru_cache
 from typing import Optional, Protocol
 
 from backend.config import get_settings
+from backend.llm.errors import LLM_EMBED_UNKNOWN_PROVIDER
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def set_embedding_provider_override(provider: str) -> None:
     normalized = provider.lower().strip()
     if normalized not in _SUPPORTED_EMBED_PROVIDERS:
         raise ValueError(
-            f"Unknown embedding provider={provider!r}. "
+            f"[{LLM_EMBED_UNKNOWN_PROVIDER}] Unknown embedding provider={provider!r}. "
             f"Supported values: {', '.join(_SUPPORTED_EMBED_PROVIDERS)}"
         )
     _runtime_embedding_provider_override = normalized
@@ -70,7 +71,7 @@ def _build_embedder(provider: str) -> EmbeddingClient:
         return get_google_embedder()  # type: ignore[return-value]
 
     raise ValueError(
-        f"Unknown EMBEDDING_PROVIDER={provider!r}. "
+        f"[{LLM_EMBED_UNKNOWN_PROVIDER}] Unknown EMBEDDING_PROVIDER={provider!r}. "
         f"Supported values: {', '.join(_SUPPORTED_EMBED_PROVIDERS)}"
     )
 

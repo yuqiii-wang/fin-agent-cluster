@@ -99,6 +99,20 @@ class StreamingStatusResponse(BaseModel):
     is_active: bool
 
 
+class StreamingErrorsResponse(BaseModel):
+    """Response for ``GET /stream/errors``.
+
+    Returns the full backend error code → description registry so the frontend
+    can display meaningful tooltips for structured ``error_code`` values that
+    arrive in SSE ``failed`` and ``done`` payloads.
+
+    Attributes:
+        errors: Mapping of error code string → human-readable description.
+    """
+
+    errors: dict[str, str]
+
+
 __all__ = [
     "WatchTaskRequest",
     "WatchTaskResponse",
@@ -106,4 +120,5 @@ __all__ = [
     "DoneAckResponse",
     "RunningTaskInfo",
     "StreamingStatusResponse",
+    "StreamingErrorsResponse",
 ]

@@ -20,6 +20,7 @@ from typing import Any
 
 from backend.db.redis.lifecycle.subscriber import lifecycle_pub_channel
 from backend.db.redis.router import get_redis_router
+from backend.sse_notifications.errors import SSE_PUBLISH_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,8 @@ async def publish_lifecycle(thread_id: str, payload: dict[str, Any]) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "[sse_notifications.channel] failed event=%s thread_id=%s: %s",
+            "[%s] failed event=%s thread_id=%s: %s",
+            SSE_PUBLISH_FAILED,
             payload.get("event", "?"),
             thread_id,
             exc,

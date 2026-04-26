@@ -1,12 +1,15 @@
-import { useMemo } from "react";
 import { Col, Row, Statistic, Tooltip, theme } from "antd";
 import { InfoCircleOutlined } from "@ant-design/icons";
-import type { ThreadSession } from "./types";
-import { computeAggregateStats } from "./aggregateStats";
+import type { AggregateStats } from "./aggregateStats";
 import { styles } from "./AggregateStatsHeader.styles";
 
 export interface AggregateStatsHeaderProps {
-  sessions: ThreadSession[];
+  /**
+   * Pre-computed aggregate stats from useSessionManager's 1s sub-tick.
+   * Passed as a prop (instead of the full sessions array) so this component
+   * only re-renders once per second instead of on every 100ms token flush.
+   */
+  stats: AggregateStats;
 }
 
 /**
@@ -23,9 +26,8 @@ export interface AggregateStatsHeaderProps {
  *
  * Hidden when no session has per-second history yet.
  */
-export function AggregateStatsHeader({ sessions }: AggregateStatsHeaderProps) {
+export function AggregateStatsHeader({ stats }: AggregateStatsHeaderProps) {
   const { token } = theme.useToken();
-  const stats = useMemo(() => computeAggregateStats(sessions), [sessions]);
   const infoIconStyle = { color: token.colorTextTertiary, cursor: "help" as const };
 
   if (stats.sampleCount === 0) return null;

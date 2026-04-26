@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 
 from backend.db.postgres.engine import get_session_factory
 from backend.users.models import GuestUser
+from backend.users.errors import USERS_GUEST_CREATE_FAILED
 
 
 def _utcnow() -> datetime:
@@ -66,4 +67,4 @@ async def ensure_guest(token: str | None) -> tuple[GuestUser, bool]:
                 await session.rollback()
                 continue
 
-        raise RuntimeError("Failed to create guest user after 5 attempts")
+        raise RuntimeError(f"[{USERS_GUEST_CREATE_FAILED}] Failed to create guest user after 5 attempts")

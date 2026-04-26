@@ -3,9 +3,11 @@ import { cancelQuery, submitPerfQuery, stablePerfStream } from "../../api";
 import { fetchStreamingStatus } from "../../api";
 
 const PERF_TRIGGER = "DO STREAMING PERFORMANCE TEST NOW";
-import type { PerfTestConfig, ThreadSession } from "./types";
+import type { PendingTokenPatch, PerfTestConfig, ThreadSession } from "./types";
 import { TERMINAL_STATUSES } from "./types";
 import { usePerfSession } from "../../services/streaming";
+import { computeAggregateStats } from "./aggregateStats";
+import type { AggregateStats } from "./aggregateStats";
 
 /**
  * Returns true when ≥ 20 % of the previous TPS-history buckets (excluding the
@@ -54,6 +56,9 @@ interface UseSessionManagerReturn {
   totalTokens: number;
   activeCount: number;
   completedCount: number;
+  /** Pre-computed aggregate stats updated on the 1-second tick — passed directly
+   *  to AggregateStatsHeader to prevent it from re-rendering every 100ms. */
+  aggregateStats: AggregateStats;
   /** True after the user clicked Complete — all controls are disabled. */
   frozen: boolean;
   handleAddRequest: (count: number) => Promise<void>;
@@ -72,6 +77,11 @@ export function useSessionManager(
   const timeouts = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const labelCounter = useRef(1);
   const totalTokensRef = useRef(0);
+  /**
+   * Pending token patches accumulated by usePerfSession's onPerfTokenBatch.
+   * Flushed into React state once per 100ms tick to cap render frequency.
+   */
+  const pendingTokenPatchesRef = useRef<Map<string, PendingTokenPatch>>(new Map());
   /** Ref mirror of config.tokenCount — used inside freezeAll without stale closure. */
   const tokenCountRef = useRef(config.tokenCount);
   /** Ref mirror of sessions state — readable inside the tick interval without stale closure. */
@@ -105,6 +115,8 @@ export function useSessionManager(
     cleanups.current.clear();
     timeouts.current.forEach(clearTimeout);
     timeouts.current.clear();
+    // Discard all buffered token patches — no more updates after freeze.
+    pendingTokenPatchesRef.current.clear();
     setSessions((prev) =>
       prev.map((s) => {
         if (s.closed) return s;
@@ -125,6 +137,35 @@ export function useSessionManager(
       ),
     [],
   );
+
+  /**
+   * Immediately flush the buffered token patch for a single session into React
+   * state.  Called by usePerfSession's terminal path so the final token count
+   * reaches the UI before closeSession sets closed=true.
+   */
+  const flushPendingForSession = useCallback((thread_id: string) => {
+    const p = pendingTokenPatchesRef.current.get(thread_id);
+    if (!p) return;
+    pendingTokenPatchesRef.current.delete(thread_id);
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.thread_id !== thread_id) return s;
+        if (s.closed || TERMINAL_STATUSES.has(s.status)) return s;
+        return {
+          ...s,
+          tokens: p.forceTokensTotal !== undefined ? p.forceTokensTotal : s.tokens + p.tokensDelta,
+          last_token_ms: p.last_token_ms,
+          digest_start_ms: s.digest_start_ms ?? p.first_token_ms,
+          batch_first: s.batch_first ?? p.batch_first,
+          batch_max: p.batch_max,
+          batch_ave: p.batch_ave,
+          batch_last: p.batch_last,
+          stream_text: p.stream_text,
+          status: p.status_transition ?? s.status,
+        };
+      })
+    );
+  }, []);
 
   const closeSession = useCallback(
     (thread_id: string, finalStatus: ThreadSession["status"] = "cancelled") => {
@@ -176,6 +217,8 @@ export function useSessionManager(
     freezeAllRef,
     totalTokensRef,
     userToken,
+    pendingTokenPatchesRef,
+    flushPendingForSession,
   });
 
   // Ref guard: prevents React Strict Mode's double-effect from spawning a
@@ -290,6 +333,7 @@ export function useSessionManager(
     centisTickRef.current = 0;
     prevSessionTokensRef.current.clear();
     stableSignaledRef.current.clear();
+    pendingTokenPatchesRef.current.clear();
     totalTokensRef.current = 0;
     setSessions([]);
     // Reset counters for a clean restart.
@@ -331,7 +375,11 @@ export function useSessionManager(
     // If all streams finished and we were frozen (e.g. perf_test_stopped), unfreeze
     // so the interval tick and other controls resume correctly.
     if (frozen) setFrozen(false);
-    console.info("[perf] adding %d request(s)", count);
+    const t0 = performance.now();
+    console.info(
+      "[perf-render] handleAddRequest count=%d pending_patches=%d sessions=%d",
+      count, pendingTokenPatchesRef.current.size, sessionsRef.current.length,
+    );
     await Promise.all(
       Array.from({ length: count }, async () => {
         const labelNum = labelCounter.current++;
@@ -360,18 +408,18 @@ export function useSessionManager(
         }
       }),
     );
+    console.info("[perf-render] handleAddRequest done count=%d elapsed=%dms", count, Math.round(performance.now() - t0));
   }, [userToken, config, openSessionStream, makeSession]);
 
   const handleCancelAll = useCallback(() => {
-    console.info("[perf] cancel-all triggered active=%d", sessions.filter((s) => !s.closed).length);
-    sessions.forEach((s) => {
-      if (!s.closed) {
-        // Optimistically show "cancelled" immediately; the EventSource stays open
-        // until onCancelled (or onDone) fires from the backend and calls closeSession.
-        patch(s.thread_id, { status: "cancelled", closed: true });
-        if (!s.thread_id.startsWith("pending-")) {
-          cancelQuery(s.thread_id).catch(() => {});
-        }
+    const active = sessions.filter((s) => !s.closed);
+    console.info("[perf-render] cancel-all triggered active=%d pending_patches=%d", active.length, pendingTokenPatchesRef.current.size);
+    active.forEach((s) => {
+      // Optimistically show "cancelled" immediately; the EventSource stays open
+      // until onCancelled (or onDone) fires from the backend and calls closeSession.
+      patch(s.thread_id, { status: "cancelled", closed: true });
+      if (!s.thread_id.startsWith("pending-")) {
+        cancelQuery(s.thread_id).catch(() => {});
       }
     });
   }, [sessions, patch]);
@@ -395,11 +443,63 @@ export function useSessionManager(
 
   useEffect(() => { totalTokensRef.current = totalTokens; }, [totalTokens]);
 
-  const [, setTick] = useState(0);
+  /**
+   * Aggregate stats updated on the 1s sub-tick.  Passed directly to
+   * AggregateStatsHeader so it does NOT re-render on every 100ms token flush.
+   */
+  const emptyStats: AggregateStats = {
+    peakSumConcurrent: null, peakSingleStream: null,
+    aveConcurrent: null, maxFirstTokenLatencyMs: null, sampleCount: 0,
+  };
+  const [aggregateStats, setAggregateStats] = useState<AggregateStats>(emptyStats);
+  /** Throttle diagnostic log: log flush metrics once every 50 ticks (~5s). */
+  const flushLogTickRef = useRef(0);
+
   useEffect(() => {
     if (!activeCount) return;
     const iv = setInterval(() => {
       centisTickRef.current += 1;
+
+      // ── 100ms: Flush pending token patches ───────────────────────────────────
+      // Consolidate all buffered token-batch updates into a single setSessions call
+      // to keep the React re-render rate ≤ 10/sec regardless of how many streams
+      // are running.  Without this, onPerfTokenBatch would call setSessions on
+      // every SSE event — hundreds of calls/sec with 100 concurrent streams.
+      const pending = pendingTokenPatchesRef.current;
+      if (pending.size > 0) {
+        const snapshot = new Map(pending);
+        pending.clear();
+        // Diagnostic log every ~5 s to surface flush volume without flooding the console.
+        flushLogTickRef.current += 1;
+        if (flushLogTickRef.current % 50 === 1) {
+          let totalDelta = 0;
+          snapshot.forEach((p) => { totalDelta += p.tokensDelta; });
+          console.debug(
+            "[perf-render] tick-flush patches=%d total_delta=%d sessions=%d",
+            snapshot.size, totalDelta, sessionsRef.current.length,
+          );
+        }
+        setSessions((prev) =>
+          prev.map((s) => {
+            const p = snapshot.get(s.thread_id);
+            if (!p) return s;
+            if (s.closed || TERMINAL_STATUSES.has(s.status)) return s;
+            return {
+              ...s,
+              tokens: p.forceTokensTotal !== undefined ? p.forceTokensTotal : s.tokens + p.tokensDelta,
+              last_token_ms: p.last_token_ms,
+              digest_start_ms: s.digest_start_ms ?? p.first_token_ms,
+              batch_first: s.batch_first ?? p.batch_first,
+              batch_max: p.batch_max,
+              batch_ave: p.batch_ave,
+              batch_last: p.batch_last,
+              stream_text: p.stream_text,
+              status: p.status_transition ?? s.status,
+            };
+          })
+        );
+      }
+
       // ── 1 s sub-tick (every 10th 100 ms tick) ────────────────────────────────
       // TPS is measured over a 1-second window to avoid JS event-loop timer
       // jitter that inflates short windows: a late 100ms tick could appear to
@@ -530,12 +630,14 @@ export function useSessionManager(
           });
         });
 
+        // Update aggregate stats on the 1s tick so AggregateStatsHeader only
+        // re-renders once per second instead of on every 100ms token flush.
+        setAggregateStats(computeAggregateStats(sessionsRef.current));
       }
 
-      // Always tick every 100ms so the Token Rate column (which reads Date.now()
-      // dynamically in its render function) updates smoothly without waiting a
-      // full second between refreshes.
-      setTick((t) => t + 1);
+      // NOTE: setTick removed — the pending-patch flush's setSessions call
+      // above already drives 100ms re-renders when tokens are flowing.
+      // This reduces one full re-render cycle per tick when no patches exist.
     }, 100);
     return () => clearInterval(iv);
   }, [activeCount]);
@@ -545,6 +647,7 @@ export function useSessionManager(
     totalTokens,
     activeCount,
     completedCount,
+    aggregateStats,
     frozen,
     handleAddRequest,
     handleRestart,

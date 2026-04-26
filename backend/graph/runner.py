@@ -54,6 +54,7 @@ from backend.db.redis.session.query_phase import set_query_phase
 from backend.db.redis.lock_manager.session_cleanup import cleanup_thread_session
 from backend.graph.compiled import get_compiled_graph
 from backend.sse_notifications import emit_done
+from backend.streaming.lifecycle.errors import GRAPH_EXECUTION_FAILED
 from backend.sse_notifications.query_lifecycle import emit_query_status
 from backend.users.models import UserQuery
 
@@ -191,7 +192,7 @@ async def run_graph_async(
                         .values(status="failed", error=str(exc)[:1000])
                     )
                     await session.commit()
-                    await emit_done(thread_id, "failed", str(exc))
+                    await emit_done(thread_id, "failed", str(exc), error_code=GRAPH_EXECUTION_FAILED)
         except Exception as cleanup_exc:
             logger.warning(
                 "[graph_runner] cleanup error thread_id=%s: %s",

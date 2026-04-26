@@ -16,6 +16,7 @@ from backend.graph.agents.query_optimizer.models import (
     QueryOptimizerOutput,
 )
 from backend.graph.agents.task_keys import QO_POPULATE_JSON
+from backend.graph.agents.query_optimizer.errors import QO_POPULATE_FAILED
 from backend.sse_notifications import complete_task, create_task, fail_task
 
 logger = logging.getLogger(__name__)
@@ -63,8 +64,8 @@ async def populate_json(
         )
         return result
     except Exception as exc:
-        logger.warning("[query_optimizer] populate_json failed: %s", exc)
+        logger.warning("[query_optimizer] populate_json failed [%s]: %s", QO_POPULATE_FAILED, exc)
         await fail_task(
-            thread_id, task_id, QO_POPULATE_JSON, str(exc)
+            thread_id, task_id, QO_POPULATE_JSON, str(exc), error_code=QO_POPULATE_FAILED
         )
         return None

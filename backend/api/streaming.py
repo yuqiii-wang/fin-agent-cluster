@@ -44,6 +44,7 @@ from backend.streaming.streams import (
     xlen,
     xread,
 )
+from backend.api.errors import API_STREAM_UNKNOWN_KEY, API_STREAM_READ_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def _resolve_stream(stream_key: StreamKey) -> str:
     """
     name = STREAM_KEY_MAP.get(stream_key.value)
     if not name:
-        raise HTTPException(status_code=400, detail=f"Unknown stream key: {stream_key.value}")
+        raise HTTPException(status_code=400, detail={"code": API_STREAM_UNKNOWN_KEY, "message": f"Unknown stream key: {stream_key.value}"})
     return name
 
 
@@ -153,8 +154,8 @@ async def poll_consume(
     try:
         messages = await _xread(stream, last_id=last_id, count=count, block_ms=block_ms)
     except Exception as exc:
-        logger.error("[streaming.poll] xread failed stream=%s: %s", stream, exc)
-        raise HTTPException(status_code=503, detail="Stream read failed") from exc
+        logger.error("[%s] xread failed stream=%s: %s", API_STREAM_READ_FAILED, stream, exc)
+        raise HTTPException(status_code=503, detail={"code": API_STREAM_READ_FAILED, "message": "Stream read failed"}) from exc
 
     items = [{"id": msg_id, **fields} for msg_id, fields in messages]
     next_id = messages[-1][0] if messages else last_id

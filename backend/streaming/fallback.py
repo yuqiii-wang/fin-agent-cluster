@@ -38,6 +38,7 @@ import warnings
 from typing import Any
 
 from backend.streaming.config import ACTIVE_TOPICS, GRAPH_EVENTS, MARKET_TICKS, TRADE_SIGNALS
+from backend.streaming.errors import STREAM_FALLBACK_MODE, STREAM_WORKER_MSG_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +132,7 @@ async def _poll_graph_events() -> None:
         except asyncio.CancelledError:
             break
         except Exception as exc:
-            logger.warning("[streaming.fallback] graph_events error: %s", exc)
+            logger.warning("[%s] graph_events error: %s", STREAM_WORKER_MSG_FAILED, exc)
         await asyncio.sleep(_GRAPH_POLL_INTERVAL)
     logger.info("[streaming.fallback] graph-events consumer stopped")
 
@@ -150,7 +151,7 @@ async def _poll_market_data() -> None:
         except asyncio.CancelledError:
             break
         except Exception as exc:
-            logger.warning("[streaming.fallback] market_data error: %s", exc)
+            logger.warning("[%s] market_data error: %s", STREAM_WORKER_MSG_FAILED, exc)
         await asyncio.sleep(_MARKET_POLL_INTERVAL)
     logger.info("[streaming.fallback] market-data consumer stopped")
 
@@ -169,7 +170,7 @@ async def _poll_signals() -> None:
         except asyncio.CancelledError:
             break
         except Exception as exc:
-            logger.warning("[streaming.fallback] signals error: %s", exc)
+            logger.warning("[%s] signals error: %s", STREAM_WORKER_MSG_FAILED, exc)
         await asyncio.sleep(_SIGNALS_POLL_INTERVAL)
     logger.info("[streaming.fallback] trade-signals consumer stopped")
 
@@ -190,9 +191,10 @@ async def start_fallback_workers() -> list[asyncio.Task]:
         asyncio.create_task(_poll_signals(),        name="fallback-trade-signals"),
     ]
     logger.warning(
-        "[streaming] FALLBACK MODE: Celery workers not detected. "
+        "[%s] FALLBACK MODE: Celery workers not detected. "
         "Stream consumers running as FastAPI background threads. "
         "Start Celery for production-grade durability: "
-        "celery -A backend.streaming.celery_app.celery_app worker --beat --loglevel=info"
+        "celery -A backend.streaming.celery_app.celery_app worker --beat --loglevel=info",
+        STREAM_FALLBACK_MODE,
     )
     return tasks

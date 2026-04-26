@@ -12,6 +12,7 @@ from typing import Optional
 from langchain_core.runnables import Runnable
 
 from backend.graph.agents.task_keys import QO_COMPREHEND_BASICS
+from backend.graph.agents.query_optimizer.errors import QO_COMPREHEND_FAILED
 from backend.sse_notifications import (
     TaskCancelledSignal,
     TaskPassSignal,
@@ -74,6 +75,6 @@ async def comprehend_basics(
         )
         return sig.partial_text
     except Exception as exc:
-        logger.warning("[query_optimizer] comprehend_basics failed: %s", exc)
-        await fail_task(thread_id, task_id, QO_COMPREHEND_BASICS, str(exc))
+        logger.warning("[query_optimizer] comprehend_basics failed [%s]: %s", QO_COMPREHEND_FAILED, exc)
+        await fail_task(thread_id, task_id, QO_COMPREHEND_BASICS, str(exc), error_code=QO_COMPREHEND_FAILED)
         return None

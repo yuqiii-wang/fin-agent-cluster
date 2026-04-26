@@ -1,0 +1,40 @@
+"""API error code registry package.
+
+Re-exports all error code constants and the ``API_ERRORS`` description dict::
+
+    from backend.api.errors import API_ERRORS, API_QUERY_NOT_FOUND
+"""
+
+from __future__ import annotations
+
+from backend.api.errors.codes import (
+    API_ERRORS,
+    API_QUERY_NOT_FOUND,
+    API_QUERY_STATUS_CONFLICT,
+    API_TASK_ID_INVALID,
+    API_STREAM_UNKNOWN_KEY,
+    API_STREAM_READ_FAILED,
+    API_QUANT_INVALID_GRANULARITY,
+    API_QUANT_INVALID_INSTRUMENT,
+    API_QUANT_UNKNOWN_INDICATOR,
+    API_QUANT_CONFIG_ERROR,
+    API_QUANT_DB_FAILED,
+    API_QUANT_NO_CURRENCY,
+    API_REPORT_NOT_FOUND,
+)
+
+__all__ = [
+    "API_ERRORS",
+    "API_QUERY_NOT_FOUND",
+    "API_QUERY_STATUS_CONFLICT",
+    "API_TASK_ID_INVALID",
+    "API_STREAM_UNKNOWN_KEY",
+    "API_STREAM_READ_FAILED",
+    "API_QUANT_INVALID_GRANULARITY",
+    "API_QUANT_INVALID_INSTRUMENT",
+    "API_QUANT_UNKNOWN_INDICATOR",
+    "API_QUANT_CONFIG_ERROR",
+    "API_QUANT_DB_FAILED",
+    "API_QUANT_NO_CURRENCY",
+    "API_REPORT_NOT_FOUND",
+]

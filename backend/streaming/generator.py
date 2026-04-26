@@ -113,8 +113,15 @@ async def build_sse_generator(
     # ── Phase 3: Orphan detection ──────────────────────────────────────────
     # Skip for 'received' — query awaits client ACK, live loop handles retries.
     if query_status != "received" and not await is_task_active_any_instance(thread_id):
-        final_status = await handle_orphaned_query(thread_id)
-        yield {"event": "done", "data": json.dumps({"event": "done", "status": final_status})}
+        final_status, orphan_error_code = await handle_orphaned_query(thread_id)
+        _orphan_done: dict = {"event": "done", "status": final_status}
+        if orphan_error_code:
+            from backend.streaming.lifecycle.errors import STREAMING_ERRORS
+            _orphan_done["error_code"] = orphan_error_code
+            desc = STREAMING_ERRORS.get(orphan_error_code)
+            if desc:
+                _orphan_done["error_description"] = desc
+        yield {"event": "done", "data": json.dumps(_orphan_done)}
         return
 
     # ── Phase 4: Dual-channel fan-in loop ─────────────────────────────────

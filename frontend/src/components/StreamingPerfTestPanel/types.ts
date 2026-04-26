@@ -95,6 +95,42 @@ export interface PerfTestConfig {
   initialRequestCount: number;
 }
 
+/**
+ * Pending token-batch data accumulated per-session in a ref between 100ms flush
+ * ticks.  Written by `onPerfTokenBatch` in `usePerfSession`; consumed and cleared
+ * by the 100ms tick in `useSessionManager`.
+ *
+ * Buffering all SSE token events into this ref and flushing at most once per
+ * 100ms tick dramatically reduces the number of React state updates (and
+ * therefore re-renders) when hundreds of streams are running concurrently.
+ */
+export interface PendingTokenPatch {
+  /** Accumulated token count since the last tick flush. */
+  tokensDelta: number;
+  /** Timestamp of the most recent token batch. */
+  last_token_ms: number;
+  /** Timestamp of the FIRST ever token batch — sets digest_start_ms on flush. */
+  first_token_ms: number;
+  /** Count of the first batch (written to s.batch_first if not yet set). */
+  batch_first: number;
+  /** Max single-batch count seen so far. */
+  batch_max: number;
+  /** Running average batch count. */
+  batch_ave: number;
+  /** Count of the most recent batch. */
+  batch_last: number;
+  /** Latest stream text snippet. */
+  stream_text: string;
+  /** Non-null when the session status needs to be promoted to "digesting". */
+  status_transition?: "digesting";
+  /**
+   * When set, override s.tokens with this authoritative value instead of
+   * s.tokens + tokensDelta.  Used for the final batch so the displayed count
+   * freezes at the exact closure-tracked total rather than a React-lagged value.
+   */
+  forceTokensTotal?: number;
+}
+
 export const DEFAULT_PERF_CONFIG: PerfTestConfig = {
   testMode: "throughput",
   tokenCount: 100_000,

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from backend.graph.agents.task_keys import LLM_STREAM_KEYS, PERF_TOKEN_KEYS, STATIC_KEYS
 from backend.sse_notifications import signal_task_control
+from backend.api.errors import API_TASK_ID_INVALID
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -85,7 +86,7 @@ async def cancel_task_action(task_id: int) -> dict:
         HTTPException: 400 if task_id is not positive.
     """
     if task_id <= 0:
-        raise HTTPException(status_code=400, detail="task_id must be positive")
+        raise HTTPException(status_code=400, detail={"code": API_TASK_ID_INVALID, "message": "task_id must be positive"})
     signal_task_control(task_id, "cancel")
     return {"task_id": task_id, "action": "cancel"}
 
@@ -110,7 +111,7 @@ async def pass_task_action(task_id: int) -> dict:
         HTTPException: 400 if task_id is not positive.
     """
     if task_id <= 0:
-        raise HTTPException(status_code=400, detail="task_id must be positive")
+        raise HTTPException(status_code=400, detail={"code": API_TASK_ID_INVALID, "message": "task_id must be positive"})
     signal_task_control(task_id, "pass")
     return {"task_id": task_id, "action": "pass"}
 

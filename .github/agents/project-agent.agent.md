@@ -22,6 +22,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 
 * There are two main flows: streaming flow with celery + redis streams, and non-streaming flow with request/response or SSE; do NOT mix the two flows, implement new features in one flow or the other based on the nature of the feature, but do not mix both flows in the same feature.
 * main fast-api gathers celery worker results and pg notifies client application via SSE; do not send notifications directly from celery workers, but always go through main fast-api to send notifications to client application, to ensure all notifications are sent in a consistent manner and to avoid racing conditions or missed notifications.
+* In every large component, need to mkdir a sub-dir called `errors` to store error code and description capturing likely exceptions or racing or any thing suspected. The error codes will be used in logs and return to UI to help locate error. And in migration or code cleanup, or if some error code is no longer used, just delete/migrate it, do not keep dead code.
 
 ### Backend
 
