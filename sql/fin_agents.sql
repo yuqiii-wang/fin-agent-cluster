@@ -100,3 +100,27 @@ CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_execution_id_idx ON fin_agents.
 
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_thread_id_idx ON fin_agents.tasks (thread_id);
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_name_idx ON fin_agents.tasks (node_name);
+
+-- LLM token usage records persisted by the FastAPI background task
+-- from the fin:llm:completions Redis Stream after each celery-ingest invocation.
+CREATE TABLE IF NOT EXISTS fin_agents.llm_responses (
+    id                BIGSERIAL PRIMARY KEY,
+    event_id          TEXT NOT NULL UNIQUE,
+    ts                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    thread_id         TEXT,
+    provider          TEXT NOT NULL DEFAULT '',
+    model             TEXT NOT NULL DEFAULT '',
+    task_key          TEXT,
+    node_name         TEXT,
+    prompt_tokens     INT NOT NULL DEFAULT 0,
+    prompts           TEXT,
+    thinking          TEXT,
+    answer            TEXT,
+    completion_tokens INT NOT NULL DEFAULT 0,
+    total_tokens      INT NOT NULL DEFAULT 0,
+    latency_ms        INT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS fin_agents_llm_responses_thread_id_idx ON fin_agents.llm_responses (thread_id);
+CREATE INDEX IF NOT EXISTS fin_agents_llm_responses_ts_idx ON fin_agents.llm_responses (ts DESC);
+CREATE INDEX IF NOT EXISTS fin_agents_llm_responses_provider_model_idx ON fin_agents.llm_responses (provider, model);
+

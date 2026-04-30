@@ -1,6 +1,5 @@
 import type React from "react";
 import type { ChatMessage, NodeGroup, TaskInfo } from "../types";
-import { fetchReportById } from "../api";
 
 interface SseHandlerParams {
   asstMsgId: string;
@@ -19,8 +18,7 @@ interface SseHandlerParams {
    * When omitted, falls back to calling `onClose`.
    */
   onConnectionFailed?: (message: string) => void;
-  /** When true, fetches and attaches a StrategyReport on db_insert_report completion. */
-  withReport?: boolean;
+
 }
 
 /**
@@ -38,7 +36,6 @@ export function buildSseHandlers({
   onDone,
   onClose,
   onConnectionFailed,
-  withReport = false,
 }: SseHandlerParams) {
   return {
     onStarted: (data: unknown) => {
@@ -111,11 +108,6 @@ export function buildSseHandlers({
           };
         })
       );
-      if (withReport && task_key === "db_insert_report" && typeof output?.id === "number") {
-        fetchReportById(output.id as number)
-          .then((report) => updateMessage(asstMsgId, { report }))
-          .catch(console.error);
-      }
     },
 
     onFailed: (data: unknown) => {

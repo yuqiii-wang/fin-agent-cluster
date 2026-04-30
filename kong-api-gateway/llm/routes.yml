@@ -24,11 +24,6 @@ routes:
         config:
           minute: 6000
           hour: 100000
-          policy: redis
+          policy: local
           limit_by: ip
           hide_client_headers: false
-          redis:
-            host: "{REDIS_HOST}"
-            port: {REDIS_PORT}
-            database: 1
-            timeout: 2000

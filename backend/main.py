@@ -92,20 +92,14 @@ async def lifespan(app: FastAPI):
     from backend.db.redis.session.cancel_signal import run_cancel_listener
     from backend.api.registry import running_tasks
     _cancel_task = asyncio.create_task(run_cancel_listener(running_tasks))
-    # Start transmission QoS auditor: detects perf-test streams stalled without
-    # a first token for ≥ 3 s and signals them to flush immediately.
-    from backend.streaming.transmission_qos import transmission_qos as _qos
-    _qos.start()
     # Start stream consumers: prefer Celery workers; fall back to FastAPI threads.
     from backend.streaming.fallback import celery_workers_available, start_fallback_workers
     _fallback_tasks: list = []
     if await celery_workers_available():
-        logger.info("[startup] Celery workers detected — stream consumers delegated to Celery")
+        logger.info("[startup] Celery workers detected — LLM invocations delegated to Celery")
     else:
         _fallback_tasks = await start_fallback_workers()
     yield
-    # Stop transmission QoS auditor.
-    _qos.stop()
     # Cancel the cancel-signal listener on shutdown.
     _cancel_task.cancel()
     # Cancel fallback tasks on shutdown (no-op if Celery was used)

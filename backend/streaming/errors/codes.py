@@ -1,7 +1,7 @@
 """Streaming workers error code registry.
 
 Covers errors in Celery stream-consumer workers, the FastAPI fallback mode,
-orphan detection, and transmission QoS monitoring.
+and orphan detection.
 
 Error code prefixes
 -------------------
@@ -31,9 +31,6 @@ STREAM_FALLBACK_MODE = "STREAM_FALLBACK_MODE"
 #: An orphaned running query was detected (server restarted mid-query).
 STREAM_ORPHAN_DETECTED = "STREAM_ORPHAN_DETECTED"
 
-#: TransmissionQoS detected stalled streams above the warning threshold.
-STREAM_QOS_STALL = "STREAM_QOS_STALL"
-
 # ---------------------------------------------------------------------------
 # Description registry
 # ---------------------------------------------------------------------------
@@ -55,9 +52,5 @@ STREAMING_WORKER_ERRORS: dict[str, str] = {
     STREAM_ORPHAN_DETECTED: (
         "A query was found in 'running' status with no active asyncio task. "
         "The server likely restarted while the query was executing."
-    ),
-    STREAM_QOS_STALL: (
-        "TransmissionQoS detected stalled token streams. "
-        "Some SSE clients may be experiencing delayed delivery."
     ),
 }

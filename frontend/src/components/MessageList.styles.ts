@@ -36,6 +36,6 @@ export function useStyles(): Record<string, CSSProperties> {
       fontSize: 13,
     },
     userText: { color: token.colorTextLightSolid, fontSize: 14 },
-    reportWrapper: { marginTop: 12 },
+
   };
 }

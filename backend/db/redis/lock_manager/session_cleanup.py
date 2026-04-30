@@ -15,6 +15,7 @@ Key pattern                              Module                     Normal clean
 ``watch:<thread_id>``                    watch_registry             ``unregister_watch`` in SSE teardown
 ``task_active:<thread_id>``              api.registry               ``clear_task_active`` in runner/cancel
 ``task_ack:<thread_id>``                 task_ack_store             (TTL=3600s; also cleaned here)
+``query_status_ack:<thread_id>``         query_status_ack_store     (TTL=1800s; also cleaned here)
 ``fin:perf:<thread_id>``                 perf_test celery_ingest    (no TTL; only cleaned here)
 ``fin:perf:ingest:state:<thread_id>``    perf_test celery_ingest    (no TTL; only cleaned here)
 
@@ -56,6 +57,7 @@ from backend.db.redis.streams.publisher import (
 from backend.db.redis.session.query_phase import _phase_key
 from backend.db.redis.router import get_redis_router
 from backend.db.redis.session.task_ack_store import _task_ack_key
+from backend.db.redis.session.query_status_ack_store import _key as _query_status_ack_key
 from backend.db.redis.session.watch_registry import _watch_key, _local_cache as _watch_local_cache
 
 logger = logging.getLogger(__name__)
@@ -90,13 +92,14 @@ async def cleanup_thread_session(thread_id: str) -> None:
     """Delete all Redis keys owned by *thread_id* in a single pipeline.
 
     Covers:
-    * ``tokens:<thread_id>``                  — Redis Stream (LLM tokens)
-    * ``fin:query:phase:<thread_id>``         — ephemeral query-phase label
-    * ``watch:<thread_id>``                   — SSE watch registry
-    * ``task_active:<thread_id>``             — cross-instance task-active flag
-    * ``task_ack:<thread_id>``                — SSE task-delivery ACK tracking hash
-    * ``fin:perf:<thread_id>``                — perf-test token stream (no-op for regular queries)
-    * ``fin:perf:ingest:state:<thread_id>``   — perf-test ingest state hash (no-op for regular queries)
+    * ``tokens:<thread_id>``                    — Redis Stream (LLM tokens)
+    * ``fin:query:phase:<thread_id>``           — ephemeral query-phase label
+    * ``watch:<thread_id>``                     — SSE watch registry
+    * ``task_active:<thread_id>``               — cross-instance task-active flag
+    * ``task_ack:<thread_id>``                  — SSE task-delivery ACK tracking hash
+    * ``query_status_ack:<thread_id>``          — query-status phase ACK tracking hash
+    * ``fin:perf:<thread_id>``                  — perf-test token stream (no-op for regular queries)
+    * ``fin:perf:ingest:state:<thread_id>``     — perf-test ingest state hash (no-op for regular queries)
 
     **Not covered** (intentional):
     * ``notify_pending:<thread_id>`` — this is the drain-cycle recovery store.
@@ -123,6 +126,7 @@ async def cleanup_thread_session(thread_id: str) -> None:
         _watch_key(thread_id),
         _task_active_key(thread_id),
         _task_ack_key(thread_id),
+        _query_status_ack_key(thread_id),
         # Perf-test keys — no-op DEL for regular (non-perf) sessions.
         _perf_stream_key(thread_id),
         _perf_state_key(thread_id),

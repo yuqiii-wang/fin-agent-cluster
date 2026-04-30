@@ -66,19 +66,10 @@ def _configure_proxy(proxy: str | None) -> None:
 
 
 def _start_celery(concurrency: int = 2) -> list[subprocess.Popen]:
-    """Start dedicated Celery workers per queue group and the beat scheduler.
+    """Start a single ``celery-ingest`` worker.
 
-    Three workers are started, each consuming a single queue:
-
-    * ``stream:critical``  — ``GRAPH_EVENTS``; higher concurrency (concurrency + 2)
-      so SSE token delivery is never starved by heavier tasks.
-    * ``stream:default``   — ``MARKET_TICKS``, ``TRADE_SIGNALS``; default concurrency.
-    * ``stream:compute``   — ``QUANT_COMPUTE``; lower concurrency (max 2) to cap
-      CPU/IO pressure from pandas-ta + DB upsert batches.
-
-    Pool is ``gevent`` on Windows and ``prefork`` on Unix.
-    Beat is embedded on Unix (``--beat`` on the critical worker) and a separate
-    subprocess on Windows.
+    The worker consumes from the ``stream:ingest`` queue.  Beat scheduling is
+    not used — all tasks are dispatched on demand (no beat_schedule is defined).
 
     Returns:
         List of :class:`subprocess.Popen` handles to pass to :func:`_stop_celery`.
@@ -86,47 +77,25 @@ def _start_celery(concurrency: int = 2) -> list[subprocess.Popen]:
     is_windows = sys.platform == "win32"
     pool = "gevent" if is_windows else "prefork"
     env = os.environ.copy()
-    procs: list[subprocess.Popen] = []
     _creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if is_windows else 0
 
-    # Worker specs: (queue, node_name_suffix, concurrency, embed_beat_on_unix)
-    _worker_specs = [
-        ("stream:critical", "critical", concurrency + 2, True),
-        ("stream:default",  "default",  concurrency,     False),
-        ("stream:compute",  "compute",  min(concurrency, 2), False),
+    cmd = [
+        sys.executable, "-m", "celery",
+        "-A", "backend.streaming.celery_app.celery_app",
+        "worker",
+        "-Q", "stream:ingest",
+        "-n", f"celery-ingest-{os.getpid()}@%h",
+        f"--concurrency={concurrency}",
+        f"--pool={pool}",
+        "--loglevel=info",
     ]
+    if not is_windows:
+        cmd += ["--without-gossip", "--without-mingle"]
 
-    for queue, suffix, n, embed_beat in _worker_specs:
-        cmd = [
-            sys.executable, "-m", "celery",
-            "-A", "backend.streaming.celery_app.celery_app",
-            "worker",
-            "-Q", queue,
-            "-n", f"worker-{suffix}-{os.getpid()}@%h",
-            f"--concurrency={n}",
-            f"--pool={pool}",
-            "--loglevel=info",
-        ]
-        if not is_windows:
-            cmd += ["--without-gossip", "--without-mingle"]
-        if not is_windows and embed_beat:
-            cmd.append("--beat")
-        print(f"[run.py] Starting Celery worker (queue={queue}, concurrency={n}, pool={pool}) ...")
-        procs.append(subprocess.Popen(cmd, env=env, creationflags=_creation_flags))
+    print(f"[run.py] Starting celery-ingest (concurrency={concurrency}, pool={pool}) ...")
+    return [subprocess.Popen(cmd, env=env, creationflags=_creation_flags)]
 
-    # Windows requires beat as a separate process.
-    if is_windows:
-        beat_cmd = [
-            sys.executable, "-m", "celery",
-            "-A", "backend.streaming.celery_app.celery_app",
-            "beat",
-            "--loglevel=info",
-        ]
-        print("[run.py] Starting Celery beat (Windows separate process) ...")
-        procs.append(subprocess.Popen(beat_cmd, env=env, creationflags=_creation_flags))
 
-    time.sleep(2)
-    return procs
 
 
 def _stop_celery(procs: list[subprocess.Popen]) -> None:
@@ -235,6 +204,7 @@ def _write_log_config(log_config: dict) -> str:
 def _start_uvicorn_instances(
     base_port: int,
     count: int,
+    app_module: str,
     log_config_path: str,
 ) -> list[subprocess.Popen]:
     """Start *count* uvicorn instances on consecutive ports starting at *base_port*.
@@ -242,6 +212,7 @@ def _start_uvicorn_instances(
     Args:
         base_port: First port to bind; subsequent instances increment by 1.
         count: Number of instances to start.
+        app_module: Python module path for the ASGI app, e.g. ``"backend.main:app"``.
         log_config_path: Path to the JSON logging config file for ``--log-config``.
 
     Returns:
@@ -253,14 +224,14 @@ def _start_uvicorn_instances(
         port = base_port + i
         cmd = [
             sys.executable, "-m", "uvicorn",
-            "backend.main:app",
+            app_module,
             "--host", "127.0.0.1",
             "--port", str(port),
             "--reload",
             "--reload-dir", "backend",
             "--log-config", log_config_path,
         ]
-        print(f"[run.py] Starting FastAPI instance {i + 1}/{count} on port {port} ...")
+        print(f"[run.py] Starting {app_module} instance {i + 1}/{count} on port {port} ...")
         procs.append(subprocess.Popen(cmd, env=os.environ.copy(), creationflags=_creation_flags))
     return procs
 
@@ -288,8 +259,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the FastAPI server.")
     parser.add_argument("--no-proxy", action="store_true", help="Disable the use of the proxy even if configured.")
     parser.add_argument("--no-celery", action="store_true", help="Skip starting Celery workers (FastAPI fallback threads will be used instead).")
-    parser.add_argument("--celery-concurrency", type=int, default=2, metavar="N", help="Number of Celery worker threads (default: 2).")
-    parser.add_argument("--instances", type=int, default=2, metavar="N", help="Number of FastAPI/uvicorn instances to start (default: 2).")
+    parser.add_argument("--celery-concurrency", type=int, default=8, metavar="N", help="Number of Celery worker threads (default: 8).")
+    parser.add_argument("--runner-instances", type=int, default=4, metavar="N", help="Number of runner FastAPI instances (default: 4, ports FASTAPI_PORT..FASTAPI_PORT+N-1).")
+    parser.add_argument("--assistant-instances", type=int, default=2, metavar="N", help="Number of assistant FastAPI instances (default: 2, ports FASTAPI_ASSISTANT_PORT..+N-1).")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -314,14 +286,29 @@ if __name__ == "__main__":
     log_config_path = _write_log_config(get_logging_config())
     atexit.register(lambda: os.unlink(log_config_path) if os.path.exists(log_config_path) else None)
 
-    uvicorn_procs = _start_uvicorn_instances(
+    # Start runner instances (full LangGraph + Celery capability).
+    runner_procs = _start_uvicorn_instances(
         base_port=settings.FASTAPI_PORT,
-        count=args.instances,
+        count=args.runner_instances,
+        app_module="backend.main:app",
         log_config_path=log_config_path,
     )
-    for _p in uvicorn_procs:
+    for _p in runner_procs:
         _assign_to_job(_job, _p)
-    atexit.register(_stop_uvicorn_instances, uvicorn_procs)
+    atexit.register(_stop_uvicorn_instances, runner_procs)
+
+    # Start assistant instances (non-LangGraph, query-read / data-serve only).
+    assistant_procs = _start_uvicorn_instances(
+        base_port=settings.FASTAPI_ASSISTANT_PORT,
+        count=args.assistant_instances,
+        app_module="backend.assistant.main:app",
+        log_config_path=log_config_path,
+    )
+    for _p in assistant_procs:
+        _assign_to_job(_job, _p)
+    atexit.register(_stop_uvicorn_instances, assistant_procs)
+
+    all_procs = runner_procs + assistant_procs
 
     def _shutdown(signum, frame) -> None:  # type: ignore[misc]
         """Forward SIGTERM/SIGINT to a clean sys.exit so atexit runs."""
@@ -334,12 +321,13 @@ if __name__ == "__main__":
     try:
         while True:
             time.sleep(0.5)
-            if all(p.poll() is not None for p in uvicorn_procs):
+            if all(p.poll() is not None for p in all_procs):
                 break
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
-        _stop_uvicorn_instances(uvicorn_procs)
+        _stop_uvicorn_instances(runner_procs)
+        _stop_uvicorn_instances(assistant_procs)
         if celery_procs:
             print("[run.py] Stopping Celery workers ...")
             _stop_celery(celery_procs)

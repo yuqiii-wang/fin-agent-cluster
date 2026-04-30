@@ -23,15 +23,24 @@ setup_tls() {
         return 0
     fi
 
-    echo "[tls] Generating self-signed TLS certificate for localhost (HTTP/2 SSE port 8889)"
+    echo "[tls] Generating self-signed TLS certificate for localhost"
     mkdir -p "$cert_dir"
     openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
         -keyout "$key_file" -out "$cert_file" \
         -subj "/CN=localhost" \
         -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
     echo "[tls] Certificate written to $cert_file"
-    echo "[tls] ACTION REQUIRED: visit https://localhost:8889 in your browser and"
-    echo "[tls]   accept the cert warning once before using the perf-test panel."
+
+    # If Kong is already running, force-recreate it so it loads the new cert.
+    # Kong reads SSL cert/key files only at nginx worker spawn — a running
+    # container keeps the old cert until restarted.  The bind-mount
+    # (./certs:/certs:ro) ensures the container always sees the latest files,
+    # but the process must be cycled to pick them up.
+    if docker compose ps --status running kong 2>/dev/null | grep -q "kong"; then
+        echo "[tls] Kong is running — restarting to load new certificate..."
+        docker compose up -d --force-recreate kong
+        echo "[tls] Kong restarted."
+    fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

@@ -1,337 +1,177 @@
-# E2E Flow Guide — fin-trading-cluster
-
-This skill describes the end-to-end request/response and streaming pipeline.
-Reference it whenever adding new features, debugging SSE delivery, or tracing lifecycle events.
-
 ---
+name: E2E Flow
+description: Overview of the end-to-end flow for the fin-trading-cluster skill, covering FastAPI instances, Redis Streams, Centrifugo setup, request lifecycle, graph execution, and key events.
+---
+# E2E Flow Skill — fin-trading-cluster
 
-## Architecture Overview
-
-Two distinct flows exist. **Never mix them** in the same feature:
+## Two Flows — Never Mix
 
 | Flow | Transport | Use case |
 |------|-----------|----------|
-| **Streaming** | Redis Streams (tokens) + Redis Pub/Sub (lifecycle) | LLM token delivery, perf-test |
-| **Non-streaming** | REST request/response or SSE lifecycle events | Query submission, status, control |
+| **Streaming** | Redis Streams + Centrifugo WebSocket | LLM tokens, lifecycle events, perf-test |
+| **Non-streaming** | REST | Query submit, control, config |
 
-All events that reach the browser originate from the FastAPI main process (`backend/api/`).
-Celery workers handle **only** Redis Stream batch consumers — they never emit SSE events.
-
----
-
-## Request Lifecycle — Both Branches
-
-### 1. Query Submission (POST /api/v1/users/query)
-
-```
-Client → POST /users/query {query, perf_params}
-  └─ backend/api/queries.py
-       ├─ Dedup guard (SELECT … WHERE status IN ('received','pending','running') AND created_at > -60s)
-       ├─ INSERT user_queries (status='received', extra.perf_params)
-       ├─ set_query_phase(thread_id, "received")      → Redis key query_phase:{thread_id}
-       ├─ emit_query_status(thread_id, "received")    → publish_lifecycle → Redis Pub/Sub
-       ├─ emit_query_received(thread_id)              → publish_lifecycle + push_pending_notify
-       └─ return {thread_id, status='received'}
-```
-
-The graph is **not started** at this point. The client must ACK.
-
-### 2. SSE Subscribe (GET /api/v1/stream/{thread_id})
-
-```
-Client → GET /stream/{thread_id}
-  └─ backend/api/stream.py  _event_gen()
-       ├─ yield connected event
-       ├─ replay_existing(thread_id)        → DB query for current status + all agent_tasks
-       │    └─ injects query_status phase from Redis if status in (running, received)
-       │    └─ injects query_received if status == received
-       │    └─ yields started/completed/failed for each existing task row
-       ├─ if already terminal → yield done → return
-       ├─ if query_status != 'received' and NOT is_task_active_any_instance(thread_id):
-       │    └─ handle_orphaned_query()  ← RACE GUARD: re-reads DB before UPDATE to avoid
-       │         overwriting a just-completed query (runner finished between replay and here)
-       │    └─ yield done → return
-       ├─ open read_lifecycle(thread_id) → Redis Pub/Sub lifecycle:<thread_id>
-       ├─ open read_stream(thread_id)    → Redis Streams XREAD tokens:<thread_id>
-       ├─ post-subscribe re-check: replay_existing() again if no prior replay events
-       └─ dual-source fan-in loop:
-            merged_queue ← _pump_lifecycle + _pump_tokens
-            25s timeout → ping + drain_pending_notify recovery
-            token events → watch-registry filter (only forwarded if task_id matches watched task)
-            perf_token_batch → always forwarded (bypass watch filter)
-            done event → two asyncio.sleep(0) drain + remaining perf_token_batch flush
-```
-
-**Post-subscribe race window fix**: The `replay_existing()` call after LISTEN subscription
-closes the window where `create_task` committed and fired pg_notify while `replay_existing`
-was running (before LISTEN was active).
-
-### 3. Client ACK (POST /api/v1/users/query/{thread_id}/ack)
-
-```
-Client → POST /users/query/{thread_id}/ack
-  └─ backend/api/queries.py  ack_query()
-       ├─ SELECT … FOR UPDATE (row-level lock prevents duplicate ACKs)
-       ├─ if already running & acked → re-emit query_ack_confirmed (idempotent)
-       ├─ UPDATE user_queries status='running', is_ack=True
-       ├─ ack_pending_notify(thread_id, 'query_received')  → mark drain cycle complete
-       ├─ asyncio.create_task(run_graph_async(...))         → FastAPI event loop
-       ├─ running_tasks[thread_id] = task
-       ├─ mark_task_active(thread_id)  → Redis key task_active:{thread_id} (TTL 1h)
-       ├─ emit_query_ack_confirmed(thread_id)  → publish_lifecycle → Redis Pub/Sub → SSE
-```
+**Token path**: Celery `llm_ingest` → `fin:llm:tokens` (Redis Stream) → Centrifugo native consumer → browser. FastAPI not involved.  
+**Lifecycle path**: FastAPI → `publish_lifecycle()` → `publish_to_channel()` → Centrifugo HTTP API → browser.
 
 ---
 
-## Graph Execution — run_graph_async()
+## FastAPI Instances
 
-`backend/graph/runner.py` is the unified execution entrypoint.
+| Type | Count | Ports | Module | Notes |
+|------|-------|-------|--------|-------|
+| Runner | 4 | 8432–8435 | `backend.main:app` | LangGraph + Celery + reads |
+| Assistant | 2 | 8436–8437 | `backend.assistant.main:app` | No LangGraph/Celery |
 
-```
-asyncio.create_task(run_graph_async(thread_id, query, perf_params))
-  └─ set_query_phase("preparing") + emit_query_status("preparing")
-  └─ graph.ainvoke(initial_state, config)
-       ├─ Fin-analysis branch: query_optimizer → market_data_collector → decision_maker
-       └─ Perf-test branch:    perf_test_streamer
-  └─ _running_tasks.pop(thread_id)   ← synchronous before any await
-  └─ UPDATE user_queries SET status='completed' WHERE status='running' RETURNING thread_id
-  └─ if claimed: emit_done(thread_id, 'completed', report)
-  └─ cleanup_thread_session(thread_id)   ← clears task_active Redis key
-```
-
-**Ownership claim**: only one writer (runner or cancel endpoint) can claim the `done`
-transition by atomically updating `WHERE status='running'`. Whoever gets 0 rows is the loser.
+Kong: `POST /users/query` + `/ack` → `runner-upstream`; all else → `assistant-upstream`.
 
 ---
 
-## Event Delivery — Two Channels
+## Redis Streams
 
-### Channel A: Redis Streams — token events
+| Stream | Writer | Reader | Deletion |
+|--------|--------|--------|----------|
+| `fin:llm:tokens` | Celery `llm_ingest` (per token, shard-routed) | Centrifugo XREADGROUP+XACK | Never (MAXLEN~) |
+| `fin:llm:completions` | Celery `llm_ingest` (1/LLM call, shard 0) | Celery `pg_persist` beat | After PG INSERT (XACK+XDEL) |
+| `fin:perf:{thread_id}` | ingest tasks | `dynamic_reader_gen()` | Internal only |
 
-```
-LangGraph node
-  └─ stream_text_task / stream_llm_task / stream_perf_text_task
-       └─ stream_token(thread_id, {event, task_id, data})
-            └─ XADD tokens:{thread_id}  (MAXLEN ~ 10 000)
-                 └─ read_stream() XREAD BLOCK 2000ms in SSE generator
-                      └─ _pump_tokens → merged_queue → SSE generator → browser
-```
-
-Events delivered via Redis Streams: `token`, `perf_token_batch`, `perf_concurrent_status`.
-
-**`stream_perf_text_task` batching**: tokens accumulated exponentially (1 → 2 → 4 → … → 1024)
-then flushed as a single `perf_token_batch` event. `TransmissionQoS` auditor force-flushes
-any stalled stream after 3s so the browser sees its first event quickly.
-
-### Channel B: Redis Pub/Sub — lifecycle events
-
-```
-publish_lifecycle(thread_id, {event, ...})   ← called AFTER session.commit()
-  └─ PUBLISH lifecycle:{thread_id} json      ← direct, shard-routed via RedisRouter
-       └─ read_lifecycle() Pub/Sub subscribe in SSE generator
-            └─ _pump_lifecycle → merged_queue → SSE generator → browser
-```
-
-Events delivered via lifecycle channel: `started`, `completed`, `failed`, `cancelled`, `done`,
-`query_received`, `query_ack_confirmed`, `query_status`,
-`perf_ingest_progress`, `perf_ingest_complete`, `perf_test_stopped`, `perf_test_complete`.
-
-**Ordering guarantee**: `publish_lifecycle` is always called after `session.commit()` so the
-DB row is durable before any subscriber reads it.  No PG NOTIFY/LISTEN or fanout task is
-involved — lifecycle events go directly from the FastAPI process to Redis Pub/Sub.
-
-**`pg_notify_in_session` vs `pg_notify`** — these functions have been removed.
-All lifecycle notification now uses `publish_lifecycle(thread_id, payload)` from
-`backend.sse_notifications.channel`.
+Celery workers: `llm_ingest` (on-demand), `pg_persist` (beat every 10s) — both on `stream:ingest` queue.
 
 ---
 
-## Fin-Analysis Pipeline (Regular Queries)
+## Centrifugo
+
+- 2 nodes: `centrifugo-0` (redis-0, port 8101), `centrifugo-1` (redis-1, port 8102)
+- Shard: `SHA-256(thread_id) % 2` — same in `get_shard_index()` and `RedisRouter._shard_index()`
+- Channel: `thread:{thread_id}` — carries ALL events; namespace `thread`: `history_size=500`, `history_ttl=600s`, `force_recovery=true`
+- Auth: HS256 JWT (`CENTRIFUGO_TOKEN_HMAC_SECRET_KEY`); connection token + subscription token
+- Token endpoint: `GET /api/v1/centrifugo/token?thread_id=` → `{ws_url, connection_token, subscription_token, shard_index, channel}`
+- Publish: `POST http://centrifugo-{n}:8000/api` with `apikey` header — only for lifecycle events
+- Token stream entry format (Centrifugo v6): `{"method":"publish","payload":"{\"channel\":\"thread:{id}\",\"data\":{\"event\":\"token\",...}}"}`
+
+---
+
+## Request Lifecycle
+
+### 1. Submit `POST /api/v1/users/query`
+`backend/api/queries.py` → dedup guard → INSERT `user_queries` (status=`received`) → `set_query_phase("received")` → `emit_query_status("received")` (records in `query_status_ack:{thread_id}`) + `emit_query_received` → return `{thread_id, status:"received"}`.  
+**Frontend**: immediately sets session status to `"received"` from the HTTP response (no need to wait for Centrifugo event). Graph not started yet.
+
+### 2. WebSocket Subscribe
+Frontend: `fetchCentrifugoToken(thread_id)` → `Centrifuge(ws_url)` → `newSubscription(channel, {recoverable:true, since:{epoch:'',offset:0}})` → `sub.on("publication", ctx => dispatch(ctx.data, handlers))`.  
+`since:{epoch:'',offset:0}` forces full history replay, covering events published before WS connected.
+
+### 3. ACK `POST /api/v1/users/query/{thread_id}/ack`
+`ack_query()`: `SELECT FOR UPDATE` (dedup) → UPDATE status=`running` → `asyncio.create_task(run_graph_async(...))` → `mark_task_active()` → `emit_query_ack_confirmed`.
+
+### 4. Query-Status ACK Handshake
+- Backend `emit_query_status(thread_id, phase)` → publishes `query_status` event AND records in `query_status_ack:{thread_id}` hash as `is_ack=False`.
+- Frontend `onQueryStatus` handler → updates status (received/preparing) → `POST /api/v1/stream/{thread_id}/status-ack` with `{phase, is_double_check?}` → assistant marks `is_ack=True`.
+- Assistant status-verifier (background task, `backend/assistant/status_verifier.py`) runs every `STATUS_VERIFIER_INTERVAL_SECS` (default 30s): queries DB for active queries, checks unACKed phases in Redis, re-publishes via Centrifugo **with `is_double_check: True`** in the event payload.
+- On the **2nd+ delivery** (`is_double_check=True`): frontend adds `X-Double-Check: true` header to the ACK request; Kong route `route-stream-double-check` (header-matched, higher specificity) pins these to `fastapi-assistant` upstream.
+
+---
+
+## Graph Execution (`backend/graph/runner.py`)
 
 ```
-query_optimizer node
-  └─ create_task(thread_id, "query_optimizer.extract")  → DB INSERT + pg_notify "started"
-  └─ stream_text_task(...)                              → XADD tokens:{thread_id}
-  └─ complete_task(thread_id, task_id, ...)             → DB UPDATE + pg_notify "completed"
-
-market_data_collector node
-  └─ create_task(...) / complete_task(...) per sub-task (ohlcv, volume, etc.)
-  └─ stream_text_task(...)  for each LLM sub-task
-
-decision_maker node
-  └─ create_task(thread_id, "decision_maker.llm_infer")
-  └─ stream_text_task(...)   → individual `token` events per LLM chunk
-  └─ complete_task(...)
-  └─ create_task(thread_id, "decision_maker.db_insert")
-  └─ complete_task(...)
+run_graph_async(thread_id, query)
+  → set_query_phase("preparing") + emit_query_status
+  → graph.ainvoke()
+      ├─ perf-test (query == "DO STREAMING PERFORMANCE TEST NOW"):  stream_runner → Celery ingest → Centrifugo
+      └─ fin-analyst (all other queries):  fin_analyst_runner (stub — lifecycle events only)
+  → _running_tasks.pop(thread_id)      ← sync, before any await
+  → UPDATE status='completed' WHERE status='running'  ← atomic ownership claim
+  → if claimed: emit_done() + cleanup_thread_session()
 ```
 
-SSE filter: `token` events are only forwarded when `task_id == watched_task_id`
-(watch registered via `PUT /stream/{thread_id}/watch`). This prevents flooding the
-browser with tokens from background tasks the user hasn't opened.
+**Ownership**: runner or cancel — whichever gets 0 rows from the UPDATE is the loser.
+
+---
+
+## Fin-Analysis Node Pattern
+
+Each node: `create_task()` (DB INSERT + emit `started`) → `dispatch_llm()` (Celery tokens) → `_check_signal()` (cancel check) → `complete_task()` (DB UPDATE + emit `completed`).
+
+Nodes: `query_optimizer` → `market_data_collector` (per sub-task) → `decision_maker`.
 
 ---
 
 ## Perf-Test Pipeline
 
-### Throughput Mode
+**Throughput**: ingest 95% → `perf_test_ingest` task complete → ingest last 5% + `stream_perf_text_task` (XREAD `fin:perf:{thread_id}` → `perf_token_batch` → Centrifugo) in parallel.
 
-```
-perf_test_streamer node
-  ├─ set_query_phase("ingesting") + emit_query_status("ingesting")
-  ├─ create_task(thread_id, PERF_TEST_INGEST)
-  │
-  ├─ Phase 1: run_ingest_first_half()
-  │    └─ XADD fin:perf:{thread_id} × 95% of total_tokens (async pipeline)
-  │    └─ emit_perf_ingest_progress(...)  every 1s  → pg_notify → lifecycle SSE
-  │
-  ├─ complete_task(thread_id, PERF_TEST_INGEST, {produced, stop_reason})  → pg_notify "completed"
-  ├─ emit_perf_ingest_complete(thread_id, ingest_ms, produced, stop_reason)  → pg_notify
-  │
-  ├─ set_query_phase("digesting") + emit_query_status("digesting")
-  ├─ create_task(thread_id, PERF_TEST_PUB)
-  │
-  └─ Phase 2: asyncio.gather(
-       run_ingest_second_half()          → XADD remaining 5% + sentinel
-       stream_perf_text_task(
-         dynamic_reader_gen()            → XREAD fin:perf:{thread_id} adaptive batch
-       )                                 → XADD perf_token_batch to tokens:{thread_id}
-     )
-  ├─ complete_task(thread_id, PERF_TEST_PUB, {published, tps})
-  ├─ emit_perf_test_complete() or emit_perf_test_stopped()  → pg_notify
-  └─ (runner) emit_done(thread_id, 'completed')             → pg_notify
-```
+**Concurrency**: Priority-scheduled slice dispatch — a FastAPI async coordinator dispatches short `run_stream_ingest_slice` tasks (2s each) to Celery workers. Multiple streams share the worker pool via time-slicing, ensuring all streams (even > worker count) receive tokens.
 
-### Concurrency Mode
-
-```
-perf_test_streamer node
-  ├─ set_query_phase("digesting") + emit_query_status("digesting")
-  ├─ create_task(thread_id, PERF_TEST_PUB)
-  ├─ register_concurrency_ingest(thread_id, progress)
-  │
-  └─ asyncio.gather(
-       run_rate_limited_ingest()   → rate-limited XADD at token_per_sec
-                                    → emit_perf_ingest_progress every 1s
-                                    → checks progress.stable flag (from frontend stable-signal)
-       stream_perf_text_task(
-         dynamic_reader_gen()      → XREAD fin:perf:{thread_id} adaptive batch
-                                    → emit perf_concurrent_status every window via stream_token
-       )
-     )
-  ├─ unregister_concurrency_ingest(thread_id)
-  ├─ complete_task(thread_id, PERF_TEST_PUB)
-  ├─ emit_perf_test_complete() (stable) or emit_perf_test_stopped() (timeout)
-  └─ (runner) emit_done()
-```
-
-**Multiple concurrent streams**: each session gets its own `thread_id`, isolated Redis Stream,
-Pub/Sub channel, and `asyncio.Task`. `_active_ingest` and `TransmissionQoS._streams` are
-keyed by `thread_id` — no cross-session interference.
+**Concurrency scheduler flow**:
+1. Each stream calls `dispatch_scheduled_ingest(run_id, ...)` — registers in `fin:stream:sched:state:{run_id}:{stream_id}` (shard 0).
+2. First registrant wins coordinator lock (`SETNX fin:stream:sched:coord:{run_id}`).
+3. Coordinator (`_run_scheduler_coordinator`) waits 500ms rendezvous then loops every 250ms:
+   - Reads all states (pipeline batch).
+   - Detects `done=1` streams → pushes result to `fin:stream:ingest:done:{stream_id}` (stream's shard).
+   - Scores active non-inflight streams: `produced==0 → -inf`, `produced>0 → exp(shard_pending / 5000)`.
+   - Dispatches top-priority slices up to `MAX_INFLIGHT=8`.
+4. `run_stream_ingest_slice` runs ingest for `slice_secs`, updates progress, sets `done=1` on terminal stop, clears inflight flag.
+5. FastAPI dispatcher BLPOPs `done_key` and returns `(produced, stop_reason, ingest_ms)`.
 
 ---
 
-## Key Redis Keys (all routed per thread_id hash to consistent shard)
+## Key Redis Keys
 
-| Key pattern | Type | Set by | Read by |
-|-------------|------|--------|---------|
-| `tokens:{thread_id}` | Stream | `stream_token()` XADD | SSE `read_stream()` XREAD |
-| `fin:perf:{thread_id}` | Stream | ingest tasks | `dynamic_reader_gen()` XREAD |
-| `lifecycle:{thread_id}` | Pub/Sub channel | `lifecycle_fanout` PUBLISH | SSE `read_lifecycle()` SUBSCRIBE |
-| `task_active:{thread_id}` | String (TTL 1h) | `mark_task_active()` | `is_task_active_any_instance()` |
-| `query_phase:{thread_id}` | String | `set_query_phase()` | `get_query_phase()` in replay |
-| `watch:{thread_id}` | String | `register_watch()` | SSE token filter |
-| `pending_notify:{thread_id}:*` | Hash | `push_pending_notify()` | `drain_pending_notify()` 25s timeout |
-| `lock:lifecycle_fanout` | String (TTL 300s) | `RedisLock` leader | leader election |
-
----
-
-## Known Race Windows and Their Fixes
-
-### Race 1: started event before SSE client subscribes
-**Window**: `create_task()` commits and fires pg_notify before client opens `read_lifecycle()`.
-**Fix**: `post-subscribe re-check` — after opening both channels, **always** call
-`replay_existing()` again and emit any tasks NOT already in `replayed_task_ids` (the set
-collected during initial replay).  Previously this was guarded by `if not replay_events`,
-which meant a task created in the race window during an active reconnect was silently dropped.
-
-### Race 2: done event arrives before last perf_token_batch events
-**Window**: pg_notify `done` arrives via Pub/Sub faster than the last Redis Stream XREAD cycle.
-**Fix**: `stream.py` two `asyncio.sleep(0)` after receiving `done` drains remaining
-`perf_token_batch` entries from the merged queue before closing.
-
-### Race 3: orphan detection incorrectly marks a completed query as failed
-**Window**: SSE generator calls `replay_existing()` → returns "running", then between this
-and `is_task_active_any_instance()` the runner completes and clears the task_active flag.
-**Fix** (`backend/streaming/sse_session.py`): `handle_orphaned_query` re-reads DB status;
-if already terminal, returns the existing status without any UPDATE. UPDATE uses
-`.where(status.in_(['running', 'received']))` guard; on 0 rows re-reads to return true status.
-
-### Race 4: duplicate done events (runner vs cancel endpoint)
-**Fix**: Atomic `UPDATE WHERE status='running' RETURNING thread_id` — only one writer
-gets rows, only that writer calls `emit_done()`.
-
-### Race 5 (CRITICAL): `cleanup_thread_session` destroys `done`-event drain recovery
-**Window**: After `emit_done()` calls `push_pending_notify(done)`, the runner immediately
-calls `cleanup_thread_session()` which was deleting `notify_pending:{thread_id}`.  If the
-`done` Pub/Sub message was lost (network gap, fanout reconnect), the SSE generator's 25-second
-drain cycle would call `drain_pending_notify()` and find an empty hash → it could only yield
-pings forever, leaving the frontend in a permanent loading state (never completed).
-**Fix** (`backend/db/redis/lock_manager/session_cleanup.py`): removed `_pending_key(thread_id)`
-from the `cleanup_thread_session` key list.  The hash carries its own TTL (~19 min) and is
-cleared only by `clear_pending_notify()` in the SSE `finally` block.
-
-### Race 6: Watch stuck on first task — tokens suppressed for sequential later tasks
-**Window**: Watch auto-registration used `not await is_thread_watching()` guard, so once the
-first task set the watch the subsequent tasks' `started` events never updated it.  For
-sequential fin-analysis tasks (query_optimizer → market_data_collector → decision_maker), all
-tokens after the first task were silently suppressed.
-**Fix** (`backend/api/stream.py`): removed the `not is_thread_watching()` guard from the live
-`started` auto-registration.  The watch now always follows the **latest** started task.  The
-user can still override via `PUT /stream/{thread_id}/watch`.
-
-### `notify_pending` Key Ownership
-| Action | Who | When |
-|--------|-----|------|
-| Create entry | `push_pending_notify()` | after each pg_notify emit |
-| Delete one entry | `ack_pending_notify()` | SSE generator on receipt |
-| Delete entire hash | `clear_pending_notify()` | SSE `finally` block on clean close |
-| TTL expiry | Redis | ~19 min after last push (fallback if client never reconnects) |
-| **NOT deleted by** | `cleanup_thread_session()` | (intentional — would destroy drain recovery) |
+| Key | Type | Writer | Reader |
+|-----|------|--------|--------|
+| `fin:llm:tokens` | Stream | Celery ingest/slice tasks | Centrifugo consumer |
+| `fin:llm:completions` | Stream | Celery `llm_ingest` | Celery `pg_persist` |
+| `fin:perf:{thread_id}` | Stream | ingest tasks | `dynamic_reader_gen` |
+| `fin:stream:sched:state:{run_id}:{stream_id}` | Hash (shard 0) | `register_stream`, slice task | coordinator |
+| `fin:stream:sched:inflight:{run_id}:{stream_id}` | String TTL (shard 0) | `mark_stream_inflight` | coordinator batch check |
+| `fin:stream:sched:coord:{run_id}` | String TTL (shard 0) | `try_become_coordinator` | coordinator (SETNX) |
+| `fin:stream:sched:streams:{run_id}` | Set (shard 0) | `register_stream` | coordinator |
+| `fin:stream:ingest:done:{stream_id}` | List (thread shard) | coordinator `_push_final_result` | FastAPI BLPOP |
+| `task_active:{thread_id}` | String TTL 1h | `mark_task_active()` | `is_task_active_any_instance()` |
+| `query_phase:{thread_id}` | String | `set_query_phase()` | `get_query_phase()` |
+| `query_status_ack:{thread_id}` | Hash TTL 30m | `record_query_status_event()` | assistant verifier + `ack_query_status_event()` |
 
 ---
 
-## SSE Event Reference
+## Event Reference (channel `thread:{thread_id}`)
 
-| Event | Channel | Fired by | Frontend handler |
-|-------|---------|----------|-----------------|
-| `connected` | (inline) | SSE generator on connect | — |
-| `query_received` | lifecycle | `emit_query_received()` | `onQueryReceived` → POST /ack |
-| `query_ack_confirmed` | lifecycle | `emit_query_ack_confirmed()` | `onQueryAckConfirmed` → stop retrying |
-| `query_status` | lifecycle | `emit_query_status()` | `onQueryStatus` → phase label |
-| `started` | lifecycle | `create_task()` | `onStarted` → add task to list |
-| `token` | Redis Stream | `stream_text_task` / `stream_llm_task` | `onToken` → append to buffer |
-| `perf_token_batch` | Redis Stream | `stream_perf_text_task` | `onPerfTokenBatch` → count += batch.count |
-| `perf_concurrent_status` | Redis Stream | `dynamic_reader_gen` | `onPerfConcurrentStatus` → metrics panel |
-| `perf_ingest_progress` | lifecycle | `emit_perf_ingest_progress()` | `onPerfIngestProgress` → progress bar |
-| `perf_ingest_complete` | lifecycle | `emit_perf_ingest_complete()` | `onPerfIngestComplete` → ingest done |
-| `completed` | lifecycle | `complete_task()` | `onCompleted` → mark task done |
-| `failed` | lifecycle | `fail_task()` | `onFailed` → show error |
-| `cancelled` | lifecycle | `cancel_task()` | `onCancelled` → terminate |
-| `perf_test_stopped` | lifecycle | `emit_perf_test_stopped()` | `onPerfTestStopped` → timeout |
-| `perf_test_complete` | lifecycle | `emit_perf_test_complete()` | `onPerfTestComplete` → completed |
-| `done` | lifecycle | `emit_done()` | `onDone` → close stream |
-| `ping` | (inline) | 25s timeout | — |
+| Event | Source | Frontend |
+|-------|--------|----------|
+| `query_received` | `emit_query_received()` | `onQueryReceived` → POST /ack |
+| `query_ack_confirmed` | `emit_query_ack_confirmed()` | `onQueryAckConfirmed` |
+| `query_status` | `emit_query_status()` | `onQueryStatus` → phase label |
+| `started` | `create_task()` | `onStarted` |
+| `token` | Celery → `fin:llm:tokens` → Centrifugo | `onToken` |
+| `perf_token_batch` | `stream_perf_text_task` | `onPerfTokenBatch` |
+| `perf_concurrent_status` | `dynamic_reader_gen` | `onPerfConcurrentStatus` |
+| `perf_ingest_progress` | `emit_perf_ingest_progress()` | `onPerfIngestProgress` |
+| `perf_ingest_complete` | `emit_perf_ingest_complete()` | `onPerfIngestComplete` |
+| `completed` | `complete_task()` | `onCompleted` |
+| `failed` / `cancelled` | `fail_task()` / `cancel_task()` | `onFailed` / `onCancelled` |
+| `perf_test_complete` / `perf_test_stopped` | `emit_perf_test_*()` | `onPerfTest*` |
+| `done` | `emit_done()` | `onDone` → close stream |
 
 ---
 
-## Adding a New Feature Checklist
+## Kong Routes
 
-1. **Decide the flow**: streaming (Redis Streams + Pub/Sub) or non-streaming (REST/SSE lifecycle)?
-2. **DB write + notify**: use `pg_notify_in_session()` inside the same transaction for atomicity.
-3. **Ephemeral event** (no DB write): use `pg_notify()` autocommit raw connection.
-4. **High-frequency token data** (>10 events/s): use `stream_token()` → Redis Streams.
-5. **Frontend event handler**: add `es.addEventListener('my_event', ...)` in `stream.ts`.
-6. **SSE generator passthrough**: verify `event_type` is not accidentally suppressed by the watch filter in `stream.py` (only `token` events are filtered).
-7. **Pending-notify store**: push lifecycle events via `push_pending_notify()` so the 25s drain cycle recovers missed deliveries.
-8. **Race guards**: if the new event could race with `done`, handle ordering explicitly.
+| Route | Path | Notes |
+|-------|------|-------|
+| `route-centrifugo-token` | `/api/v1/centrifugo` | HTTP token endpoint |
+| `route-centrifugo-0/1` | `/centrifugo-0/1` | strip_path=true, ws/wss |
+| `route-stream-double-check` | `/api/v1/stream` + `X-Double-Check: true` | higher specificity → assistant; for verifier re-delivery ACKs |
+| `route-stream-utils` | `/api/v1/stream` | `POST /{id}/done-ack`, `POST /{id}/status-ack` → assistant |
+
+---
+
+## New Feature Checklist
+
+1. **Pick flow**: streaming (Centrifugo WS) or REST — never mix.
+2. **Lifecycle event**: `publish_lifecycle(thread_id, payload)` after `session.commit()`.
+3. **Token/high-freq**: `stream_token()` → Celery → `fin:llm:tokens` → Centrifugo native consumer.
+4. **Frontend**: add `case "my_event":` in `dispatch()` in `frontend/src/api/stream.ts`.
+5. **Race**: if event can race with `done`, handle ordering explicitly.
+6. **History**: Centrifugo covers last 500 events / 600s — no extra replay logic.
+7. **Errors**: add to nearest `errors/codes.py`; log and return to UI.
+

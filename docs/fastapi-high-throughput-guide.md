@@ -1402,3 +1402,167 @@ The only unavoidable serial DB write before `chain.astream()` is
 | 4 — Pre-warm `get_llm()` | 50–200 ms (first query only) | Move provider init off critical path |
 | 5 — Parallel `start_node_execution` + `build_chain` | 5–15 ms | Overlap DB write with chain prep |
 | **Total (fixes 1+2+5, per query)** | **50–235 ms** | Serial critical path compressed |
+
+---
+
+## 8. Concurrent Stream Fanout — Scaling to Tens of Thousands
+
+This section documents bottlenecks found during high-concurrency testing
+(200 streams, 196 stable) and the fixes applied.
+
+### 8.1 Architecture Overview
+
+Each concurrency test stream follows this path:
+
+```
+Browser POST /query × N
+   │ (Kong round-robins to 4 FastAPI runners)
+   ▼
+FastAPI: dispatch_scheduled_ingest()
+   ├─ sched_register() ── Redis shard 0: HSET state, SADD to run set
+   ├─ try_become_coordinator() ── SETNX coord lock
+   │   └─ (winner only) asyncio.create_task(_run_rendezvous_and_dispatch)
+   └─ BLPOP done_key (timeout = 3×timeout_secs + 60 s)
+
+Coordinator task:
+   sleep(RENDEZVOUS_WINDOW_SECS)
+   SMEMBERS run set → fetch all states → dispatch run_fanout_batch.delay()
+
+Celery worker:
+   asyncio.run(_run_all([...N stream configs...]))
+   asyncio.gather(*[_ingest_one(cfg) for cfg in configs])
+   each _ingest_one → XADD fin:llm:tokens → Centrifugo → browser
+   each _ingest_one → RPUSH done_key → unblocks FastAPI BLPOP
+```
+
+### 8.2 Bug: Silent Stream Drop in `_dispatch_batch` (196/200 Cause)
+
+**Root cause**: There is a < 1 ms race on Redis shard 0 between `SADD` (adds
+stream_id to the run set) and `HSET` (writes the per-stream state hash).  When
+the coordinator's rendezvous window fires immediately after `SMEMBERS`, some
+stream_ids appear in the set but return an empty hash from `HGETALL`.
+
+**Original code (broken)**:
+
+```python
+for sid in new_ids:
+    state = states.get(sid, {})
+    if not state:
+        logger.warning("missing state ...")
+        continue              # ← stream skipped, never dispatched
+    configs.append(...)
+
+dispatched_ids.update(new_ids)   # ← BUG: marks skipped streams as dispatched
+                                 #   → they BLPOP for 240 s → SCHED_COORDINATOR_TIMEOUT
+```
+
+**Fix applied** (`coordinator.py`):
+
+```python
+skipped: list[str] = []
+for sid in new_ids:
+    state = states.get(sid, {})
+    if not state:
+        skipped.append(sid)   # ← collect, don't silently ignore
+        continue
+    configs.append(...)
+
+if skipped:
+    await _push_timeout_for_ids(run_id, skipped, states)  # ← unblock BLPOP immediately
+
+# Only mark successfully-dispatched streams
+dispatched_ids.update(cfg["stream_id"] for cfg in configs)  # ← not new_ids
+```
+
+**Error code**: `SCHED_STREAM_STATE_MISSING` — logged at WARNING level.
+
+### 8.3 Bug: Browser HTTP/1.1 Connection Limit Fragments the Fanout
+
+**Root cause**: Chromium limits **6 concurrent HTTP connections per origin**
+over HTTP/1.1.  With 200 simultaneous `POST /query` requests, only 6 reach
+Kong at once.  The remaining 194 queue in the browser.  With
+`RENDEZVOUS_WINDOW_SECS = 0.5`, the coordinator dispatches before most streams
+register, creating 7 separate fanout tasks with staggered starts.
+
+Log evidence from run `b9b4b73b` (200 streams):
+
+```
+T+0.544s  dispatched batch=31   total=31   tasks=1
+T+1.059s  dispatched batch=32   total=63   tasks=1
+T+1.575s  dispatched batch=30   total=93   tasks=1
+T+2.101s  dispatched batch=30   total=123  tasks=1
+T+2.642s  dispatched batch=32   total=155  tasks=1
+T+3.160s  dispatched batch=25   total=180  tasks=1
+T+3.680s  dispatched batch=20   total=200  tasks=1
+```
+
+Each batch starts a separate Celery task on a separate worker.  The 4 streams
+in the last batch (started at T+3.68s) may not have `digest_start_ms` set when
+the group-stability check fires, excluding them from the stable signal.
+
+**Fix applied**: `RENDEZVOUS_WINDOW_SECS` increased from `0.5 s → 2.0 s` so all
+200 streams register before the first dispatch.  All streams enter a single
+fanout task and token delivery is uniformly synchronized.
+
+**Trade-off**: The 2-second delay before ingest starts is only felt at the
+coordinator instance; all other streams already wait (BLPOP).  For production
+LLM queries (not perf-test mode), the rendezvous window is not used.
+
+### 8.4 Celery Worker Pool Saturation at Scale
+
+**Root cause**: `run_fanout_batch` blocks one Celery worker for the full
+`timeout_secs` (60 s) via `asyncio.run(_run_all(...))`.  With
+`MAX_STREAMS_PER_FANOUT_TASK = 200` and 8 workers:
+
+```
+10,000 streams → 50 fanout tasks
+8 workers → batch 9 starts at T=60 s
+BLPOP deadline = 3×60+60 = 240 s
+Batch 41 starts at T = 40×60 = 2400 s > 240 s → SCHED_COORDINATOR_TIMEOUT
+```
+
+**Fix applied**: `MAX_STREAMS_PER_FANOUT_TASK` raised from `200 → 2000`.
+
+```
+10,000 streams → 5 fanout tasks
+8 workers → all 5 tasks dispatched immediately, 3 wait in queue
+Batch 5 starts at T ≤ 60 s << 240 s BLPOP deadline → all succeed
+```
+
+`asyncio.gather` handles thousands of I/O-bound coroutines in one event loop
+without issue — each `_ingest_one` coroutine spends ≥ 99% of its time in
+`await asyncio.sleep()` (rate limiter) or `await xadd_sharded()` (Redis I/O),
+not consuming CPU.
+
+| `MAX_STREAMS_PER_FANOUT_TASK` | Max streams before queue overflow |
+|---|---|
+| 200 (old) | ~8 workers × 200 = **1,600 streams** |
+| 2000 (new) | ~8 workers × 2000 = **16,000 streams** |
+
+### 8.5 Key Parameter Summary
+
+| Parameter | Old value | New value | Reason |
+|---|---|---|---|
+| `RENDEZVOUS_WINDOW_SECS` | 0.5 s | **2.0 s** | Absorbs browser HTTP/1.1 6-conn limit stagger |
+| `LATE_JOIN_INTERVAL_SECS` | 0.5 s | **1.0 s** | Reduce coordinator event-loop overhead |
+| `MAX_STREAMS_PER_FANOUT_TASK` | 200 | **2000** | Prevent Celery queue overflow at 10k streams |
+| `_DONE_KEY_TTL_SECS` | 120 (local) | **120** (constant) | Consistent TTL for all safety-net pushes |
+
+### 8.6 Remaining Blockers for Tens of Thousands
+
+The following issues are NOT yet fixed but limit scale beyond ~16,000 streams:
+
+1. **Redis BLPOP connection pool**: `aioredis.from_url` creates an unlimited
+   connection pool by default.  At 10,000 streams, each FastAPI instance holds
+   2,500 concurrent BLPOP connections × 2 shards = 5,000 Redis connections.
+   Fix: set `max_connections` on the Redis router pool, or replace BLPOP with
+   a Redis Pub/Sub subscriber per stream that shares one TCP connection.
+
+2. **FastAPI event-loop at 2,500 coroutines/instance**: Each
+   `asyncio.create_task(run_graph_async(...))` runs for 240 s holding the
+   coordinator BLPOP.  The event loop scheduling overhead grows O(N) with
+   active coroutines.  Measurable stall above ~5,000/instance.
+
+3. **Kong upstream keepalive**: Default `keepalive_pool_size = 60` per upstream.
+   At 10,000 simultaneous POSTs, Kong opens 9,940 new TCP connections.
+   Fix: enable HTTP/2 in Kong (multiplexes N requests per TCP connection).

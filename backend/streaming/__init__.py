@@ -1,63 +1,32 @@
-"""Redis Streams MQ/buffer layer for fin-trading real-time events.
+"""Redis Streams MQ/buffer layer -- LLM completion ingest.
 
-This package replaces the ephemeral Redis Pub/Sub pattern with a persistent,
-consumer-group–aware Redis Streams topology.  Celery workers batch-consume each
-stream while the FastAPI layer exposes HTTP and SSE bridges for external clients
-(routed through Kong).
-
-Stream topology
----------------
-Stream name                  Consumer groups              Publishers
-fin:graph:events             celery-graph                 graph nodes
-fin:market:ticks             celery-market, analytics     resource_api.quant_api
-fin:news:enriched            celery-news, analytics       resource_api.news_api
-fin:signals:trade            celery-signals, analytics    decision_maker agent
-fin:llm:completions          celery-llm, analytics        llm.factory callback
+The only active stream is ``fin:llm:completions``, consumed by the
+``celery-ingest`` worker.  All LangGraph execution, market data fetching,
+and trade signal processing runs directly in the FastAPI event loop.
 
 Sub-modules
 -----------
-config      — StreamTopicConfig + all topic instances (single source of truth)
-streams     — RedisStreamClient + stream operations (xadd, xread, …)
-schemas     — Pydantic message models for each stream topic
-celery_app  — Celery application factory
-workers     — Celery consumer tasks (graph_events, market_data, signals)
+config      -- StreamTopicConfig + LLM_COMPLETIONS topic (single source of truth)
+streams     -- Redis stream operations (xadd, xread, ...)
+schemas     -- Pydantic message models
+celery_app  -- Celery application factory
+workers     -- celery-ingest consumer task (llm_ingest)
+fallback    -- FastAPI-native fallback when celery-ingest is not running
+errors      -- Streaming worker and domain error code registries
 """
 
 from backend.streaming.config import (
     ACTIVE_TOPICS,
     ALL_TOPICS,
-    GRAPH_EVENTS,
     LLM_COMPLETIONS,
-    MARKET_TICKS,
-    NEWS_ENRICHED,
-    TRADE_SIGNALS,
+    QUEUE_INGEST,
     StreamTopicConfig,
 )
 from backend.streaming.fallback import celery_workers_available, start_fallback_workers
-from backend.streaming.generator import build_sse_generator
 from backend.streaming.log_filters import CeleryTaskSummaryFilter
-from backend.streaming.status import get_session_status
-from backend.streaming.transmission_qos import TransmissionQoS, transmission_qos
-from backend.streaming.lifecycle import (
-    LIFECYCLE_EVENTS,
-    get_watched_task,
-    handle_orphaned_query,
-    is_thread_watching,
-    register_watch,
-    replay_existing,
-    unregister_watch,
-    ack_done,
-)
 from backend.streaming.streams import (
-    GROUP_CELERY_GRAPH,
-    GROUP_CELERY_MARKET,
-    GROUP_CELERY_NEWS,
-    GROUP_CELERY_SIGNALS,
-    STREAM_GRAPH_EVENTS,
+    GROUP_CELERY_INGEST,
     STREAM_LLM_COMPLETIONS,
-    STREAM_MARKET_TICKS,
-    STREAM_NEWS_ENRICHED,
-    STREAM_TRADE_SIGNALS,
     ensure_group,
     xack,
     xadd,
@@ -67,13 +36,10 @@ from backend.streaming.streams import (
 )
 
 __all__ = [
-    # Config — topic wiring
+    # Config -- topic wiring
     "StreamTopicConfig",
-    "GRAPH_EVENTS",
-    "MARKET_TICKS",
-    "TRADE_SIGNALS",
-    "NEWS_ENRICHED",
     "LLM_COMPLETIONS",
+    "QUEUE_INGEST",
     "ALL_TOPICS",
     "ACTIVE_TOPICS",
     # Celery / fallback control
@@ -81,20 +47,10 @@ __all__ = [
     "start_fallback_workers",
     # Log filters
     "CeleryTaskSummaryFilter",
-    # SSE generator + session health
-    "build_sse_generator",
-    "get_session_status",
-    # Stream name constants (aliases — derived from config)
-    "STREAM_GRAPH_EVENTS",
-    "STREAM_MARKET_TICKS",
-    "STREAM_NEWS_ENRICHED",
-    "STREAM_TRADE_SIGNALS",
+    # Stream name constants
     "STREAM_LLM_COMPLETIONS",
-    # Consumer group constants (aliases — derived from config)
-    "GROUP_CELERY_GRAPH",
-    "GROUP_CELERY_MARKET",
-    "GROUP_CELERY_NEWS",
-    "GROUP_CELERY_SIGNALS",
+    # Consumer group constants
+    "GROUP_CELERY_INGEST",
     # Stream operations
     "xadd",
     "xread",
@@ -102,16 +58,4 @@ __all__ = [
     "xack",
     "xlen",
     "ensure_group",
-    # SSE session helpers
-    "LIFECYCLE_EVENTS",
-    "register_watch",
-    "unregister_watch",
-    "get_watched_task",
-    "is_thread_watching",
-    "replay_existing",
-    "handle_orphaned_query",
-    "ack_done",
-    # Transmission QoS
-    "TransmissionQoS",
-    "transmission_qos",
 ]

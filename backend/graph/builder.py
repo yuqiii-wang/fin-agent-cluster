@@ -1,134 +1,94 @@
-"""Graph builders — assembles the financial analysis graphs.
+"""Graph builders — two-level routed graph.
 
-Financial analysis topology::
+Topology::
 
-    START → query_optimizer → market_data_collector → decision_maker → END
+    Outer graph:
+        START → (conditional route) → stream_subgraph | fin_analyst_subgraph → END
 
-Performance-test topology::
+    stream_subgraph (inner graph — triggered by perf-test query):
+        START → stream_runner → END
 
-    START → perf_test_streamer → END
+    fin_analyst_subgraph (inner graph — all other queries):
+        START → fin_analyst_runner → END
 
-Unified graph topology::
+Routing is query-text driven:
 
-    START → (router: perf test trigger?) → perf_test_streamer → END
-                                         → query_optimizer → market_data_collector → decision_maker → END
+    ``"DO STREAMING PERFORMANCE TEST NOW"``  → stream_subgraph
+    all other queries                        → fin_analyst_subgraph
+
+The compiled outer graph is initialised once at startup via
+:func:`~backend.graph.compiled.init_compiled_graph`.
 """
 
 from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from backend.graph.agents.decision_maker import decision_maker
-from backend.graph.agents.market_data import market_data_collector
-from backend.graph.agents.query_optimizer import query_optimizer
-from backend.graph.state import FinAnalysisState, PerfTestState, UnifiedGraphState
+from backend.graph.state import StreamRunState
 
-#: Exact query string that triggers the perf-test branch in the unified graph.
+#: Exact trigger phrase (case-insensitive comparison) to activate the perf-test streamer.
 PERF_TEST_TRIGGER: str = "DO STREAMING PERFORMANCE TEST NOW"
 
 
-def build_graph() -> StateGraph:
-    """Construct the 3-node financial analysis graph (uncompiled).
+def _route_query(state: StreamRunState) -> str:
+    """Select the agent sub-graph based on query text.
 
-    Returns:
-        A :class:`~langgraph.graph.StateGraph` ready to be compiled with a
-        checkpointer and served via FastAPI.
-    """
-    builder = StateGraph(FinAnalysisState)
-
-    builder.add_node("query_optimizer", query_optimizer)
-    builder.add_node("market_data_collector", market_data_collector)
-    builder.add_node("decision_maker", decision_maker)
-
-    builder.add_edge(START, "query_optimizer")
-    builder.add_edge("query_optimizer", "market_data_collector")
-    builder.add_edge("market_data_collector", "decision_maker")
-    builder.add_edge("decision_maker", END)
-
-    return builder
-
-
-def build_streaming_perf_test_graph() -> StateGraph:
-    """Construct the single-node streaming performance-test graph (uncompiled).
-
-    Topology::
-
-        START → perf_test_streamer → END
-
-    The node reads mock tokens from the Celery-produced Redis Stream and pipes
-    them through :func:`~backend.graph.utils.task_stream.stream_text_task`,
-    producing identical ``started / token / completed`` SSE events to any real
-    LangGraph node.
-
-    Returns:
-        A :class:`~langgraph.graph.StateGraph` ready to be compiled.
-    """
-    from backend.graph.agents.perf_test import perf_test_streamer  # noqa: PLC0415
-
-    builder = StateGraph(PerfTestState)
-    builder.add_node("perf_test_streamer", perf_test_streamer)
-    builder.add_edge(START, "perf_test_streamer")
-    builder.add_edge("perf_test_streamer", END)
-    return builder
-
-
-def _route_query(state: UnifiedGraphState) -> str:
-    """Return the first node to run based on whether the query is a perf test.
+    The perf-test trigger phrase may be followed by additional metadata appended
+    by the frontend (e.g. ``" - Stream #1 [run-uuid]"``) so the dedup index
+    never collides across concurrent sessions.  A ``startswith`` check covers
+    all such variants.
 
     Args:
-        state: Unified graph state containing the ``query`` field.
+        state: Current graph state carrying the user ``query``.
 
     Returns:
-        ``"perf_test_streamer"`` for the perf-test trigger; otherwise
-        ``"query_optimizer"`` to start the fin-analysis pipeline.
+        ``"stream_subgraph"`` for the perf-test trigger,
+        ``"fin_analyst_subgraph"`` for all other queries.
     """
-    if state.get("query", "").strip().startswith(PERF_TEST_TRIGGER):
-        return "perf_test_streamer"
-    return "query_optimizer"
+    query: str = state.get("query", "")
+    if query.strip().upper().startswith(PERF_TEST_TRIGGER):
+        return "stream_subgraph"
+    return "fin_analyst_subgraph"
 
 
-def build_unified_graph() -> StateGraph:
-    """Construct the unified parent graph that routes to either the fin-analysis
-    pipeline or the perf-test node (uncompiled).
+def build_graph() -> StateGraph:
+    """Construct the two-level routed graph (uncompiled).
 
-    Topology::
+    The outer graph conditionally routes to one of two compiled inner graphs:
 
-        START ──(perf test trigger?)──► perf_test_streamer ──► END
-              └──────────────────────► query_optimizer ──► market_data_collector
-                                           ──► decision_maker ──► END
-
-    Routing is done by :func:`_route_query` at the START edge so both branches
-    share a single Celery task (``run_graph``) and a single per-thread Redis
-    queue — no separate runner or asyncio.Task needed for the perf-test path.
+    * ``stream_subgraph`` — performance-test streamer (Celery ingest).
+    * ``fin_analyst_subgraph`` — financial analysis agent.
 
     Returns:
-        A :class:`~langgraph.graph.StateGraph` ready to be compiled with a
-        checkpointer and served via the Celery ``run_graph`` worker.
+        The outer :class:`~langgraph.graph.StateGraph` ready to be compiled
+        with a checkpointer.
     """
-    from backend.graph.agents.perf_test import perf_test_streamer  # noqa: PLC0415
+    from backend.graph.agents.streamer import stream_runner  # noqa: PLC0415
+    from backend.graph.agents.fin_analyst import fin_analyst_runner  # noqa: PLC0415
 
-    builder = StateGraph(UnifiedGraphState)
+    # ── Streamer inner sub-graph ───────────────────────────────────────────
+    streamer_inner = StateGraph(StreamRunState)
+    streamer_inner.add_node("stream_runner", stream_runner)
+    streamer_inner.add_edge(START, "stream_runner")
+    streamer_inner.add_edge("stream_runner", END)
+    compiled_streamer = streamer_inner.compile()
 
-    builder.add_node("query_optimizer", query_optimizer)
-    builder.add_node("market_data_collector", market_data_collector)
-    builder.add_node("decision_maker", decision_maker)
-    builder.add_node("perf_test_streamer", perf_test_streamer)
+    # ── Fin-analyst inner sub-graph ────────────────────────────────────────
+    analyst_inner = StateGraph(StreamRunState)
+    analyst_inner.add_node("fin_analyst_runner", fin_analyst_runner)
+    analyst_inner.add_edge(START, "fin_analyst_runner")
+    analyst_inner.add_edge("fin_analyst_runner", END)
+    compiled_analyst = analyst_inner.compile()
 
-    builder.add_conditional_edges(
-        START,
-        _route_query,
-        {
-            "query_optimizer": "query_optimizer",
-            "perf_test_streamer": "perf_test_streamer",
-        },
-    )
+    # ── Outer graph with conditional routing ──────────────────────────────
+    outer = StateGraph(StreamRunState)
+    outer.add_node("stream_subgraph", compiled_streamer)
+    outer.add_node("fin_analyst_subgraph", compiled_analyst)
+    outer.add_conditional_edges(START, _route_query, {
+        "stream_subgraph": "stream_subgraph",
+        "fin_analyst_subgraph": "fin_analyst_subgraph",
+    })
+    outer.add_edge("stream_subgraph", END)
+    outer.add_edge("fin_analyst_subgraph", END)
 
-    # Fin-analysis pipeline
-    builder.add_edge("query_optimizer", "market_data_collector")
-    builder.add_edge("market_data_collector", "decision_maker")
-    builder.add_edge("decision_maker", END)
-
-    # Perf-test path
-    builder.add_edge("perf_test_streamer", END)
-
-    return builder
+    return outer

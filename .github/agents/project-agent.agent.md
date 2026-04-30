@@ -17,6 +17,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 
 * Do NOT add hardcoded time lag or grace period for any flow; if got racing or other safety concerns, implement proper locking or queuing mechanism to ensure safety without hardcoded time lag.
 * Debug on git bash, although backend runs on WSL2, only try wsl if want to `python run.py` to launch the whole backend, for other debugging purposes, use git bash to run individual files or commands, do not use wsl for debugging.
+* Most of the infra, e.g., KONG API, Redis, Postgres, Centrifugo, Grafana stack are run in docker.
 
 ### Backend and Frontend Communications
 
@@ -38,7 +39,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 * In there are bulk static config or dict maps, write into sql then on backend start read from sql, do not hard code in the backend code.
 * Do not hardcode any API response, do not hardcode any dicts/maps, but to traverse project to see/import class definitions and usages to generate response.
 * streaming related flow be with redis streams with celery; others are with SSE or request/response.
-* Backend runs on WSL2 so it is prefork to celery.
+* Backend runs on WSL2 so it is `--pool=prefork` to celery, but test can just run `--pool=solo` on windows git bash.
 
 About agent nodes:
 
@@ -56,6 +57,7 @@ About DB and SQL:
 * Favor small code change in brevity over large code changes.
 * Use `antd` CLI for all antd related queries and operations, do not search antd APIs from memory or the web.
 * Do NOT hardcode any UI element in the frontend, all UI elements should be generated from backend APIs, including but not limited to: form fields, buttons, dropdown options, etc.
+* `cd frontend && npm run dev` to start frontend to launch browser to debug UI.
 
 ### Skill Checkup
 
@@ -64,4 +66,5 @@ For diagram, draw mermaid.
 
 ### Debug
 
-logs are in backend/logs, check logs for debugging and understanding the flow of the project.
+* logs are in backend/logs, check logs for debugging and understanding the flow of the project.
+* Ignore timeout or cancel since they are triggered by requested timeout or manual cancel

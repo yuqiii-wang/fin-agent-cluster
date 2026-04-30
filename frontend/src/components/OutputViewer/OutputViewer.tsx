@@ -6,16 +6,14 @@
  *  2. Task failed                            → ErrorDisplay
  *  3. Task running (LLM, no tokens yet)      → LlmWaitingStatus
  *  4. Task running (non-LLM)                 → RunningDescription (task_key label)
- *  5. Completed output with bars array       → CandlestickChart (data-driven)
- *  6. Any other completed output             → JsonViewer
- *  7. No output                              → "No output available"
+ *  5. Any other completed output             → JsonViewer
+ *  6. No output                              → "No output available"
  */
 
 import { Flex, Typography } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import type { TaskInfo, TaskTypeMeta } from "../../types";
 import { JsonViewer } from "../JsonViewer";
-import { CandlestickChart, type OHLCVBar } from "../CandlestickChart";
 import { isLlmTask, isPerfTokenTask } from "./helpers";
 import {
   ThinkingStream,
@@ -103,29 +101,6 @@ export function OutputViewer({ task, stream, provider, taskMeta }: Props) {
         No output available.
       </Text>
     );
-  }
-
-  if (task.output?.chart_type === "candlestick") {
-    const dates = task.output.dates as string[] | undefined;
-    const matrix = task.output.ohlcv as number[][] | undefined;
-    if (dates?.length && matrix?.length) {
-      const bars: OHLCVBar[] = dates.map((date, i) => ({
-        date,
-        open: matrix[i][0],
-        high: matrix[i][1],
-        low: matrix[i][2],
-        close: matrix[i][3],
-        volume: matrix[i][4],
-      }));
-      const sym = typeof task.output.symbol === "string" ? task.output.symbol : "";
-      return (
-        <CandlestickChart
-          bars={bars}
-          symbol={sym}
-          taskKey={task.task_key}
-        />
-      );
-    }
   }
 
   return <JsonViewer data={task.output} maxHeight={400} />;

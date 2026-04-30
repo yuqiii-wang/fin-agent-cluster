@@ -28,10 +28,10 @@
  */
 
 export { DoneConditionGuard } from "./doneGuard";
-export { sendDoneAck } from "./ack";
+export { sendDoneAck, sendStatusAck } from "./ack";
 export type {
   StreamLifecyclePhase,
   DoneConditionFn,
   DoneGuardOptions,
 } from "./types";
-export type { DoneAckPayload, DoneAckResponse } from "./ack";
+export type { DoneAckPayload, DoneAckResponse, StatusAckPayload, StatusAckResponse } from "./ack";

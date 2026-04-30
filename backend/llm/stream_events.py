@@ -37,6 +37,9 @@ async def publish_completion(
     thread_id: Optional[str] = None,
     task_key: Optional[str] = None,
     node_name: Optional[str] = None,
+    prompts: Optional[str] = None,
+    thinking: Optional[str] = None,
+    answer: Optional[str] = None,
 ) -> None:
     """Publish a single LLM completion record to ``fin:llm:completions``.
 
@@ -44,7 +47,7 @@ async def publish_completion(
     ``asyncio.ensure_future(publish_completion(...))``.
 
     Args:
-        provider:          LLM provider name (e.g. ``'ollama'``, ``'ark'``).
+        provider:          LLM provider name (e.g. ``'ollama'``, ``'ark'``, ``'mock'``).
         model:             Model identifier (e.g. ``'qwen3.5-27b'``).
         prompt_tokens:     Input token count from the completion metadata.
         completion_tokens: Output token count.
@@ -52,6 +55,9 @@ async def publish_completion(
         thread_id:         Originating LangGraph thread UUID.
         task_key:          Agent sub-task key.
         node_name:         Agent node name.
+        prompts:           Serialised input messages sent to the LLM.
+        thinking:          Chain-of-thought / reasoning text.
+        answer:            Final response text returned by the LLM.
     """
     msg = LLMCompletionMessage(
         provider=provider,
@@ -63,6 +69,9 @@ async def publish_completion(
         thread_id=thread_id,
         task_key=task_key,
         node_name=node_name,
+        prompts=prompts,
+        thinking=thinking,
+        answer=answer,
     )
     try:
         await xadd(STREAM_LLM_COMPLETIONS, msg.model_dump())

@@ -158,7 +158,6 @@ export interface ChatMessage {
   /** True when this message was produced by the streaming perf test. */
   isPerfTest?: boolean;
   nodes?: NodeGroup[];
-  report?: StrategyReport;
 }
 
 /** Node-level input/output snapshot from the backend. */
@@ -171,31 +170,76 @@ export interface NodeExecutionInfo {
   elapsed_ms: number;
 }
 
-/** Full strategy report — mirrors fin_strategies.reports with reference tasks. */
-export interface StrategyReport {
+// ── Threads API (GET /api/v1/threads/*) ──────────────────────────────────────
+
+/** Paginated list of thread summaries from GET /api/v1/threads. */
+export interface ThreadListResponse {
+  items: ThreadSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** Single LLM completion record from fin_agents.llm_responses. */
+export interface LlmResponseRecord {
   id: number;
-  symbol: string;
-  short_term_technical_desc: string;
-  long_term_technical_desc: string;
-  news_desc: string;
-  basic_biz_desc: string;
-  industry_desc: string;
-  significant_event_desc: string | null;
-  short_term_risk_desc: string | null;
-  long_term_risk_desc: string | null;
-  short_term_growth_desc: string | null;
-  long_term_growth_desc: string | null;
-  recent_trade_anomalies: string | null;
-  likely_today_fall_desc: string | null;
-  likely_tom_fall_desc: string | null;
-  likely_short_term_fall_desc: string | null;
-  likely_long_term_fall_desc: string | null;
-  likely_today_rise_desc: string | null;
-  likely_tom_rise_desc: string | null;
-  likely_short_term_rise_desc: string | null;
-  likely_long_term_rise_desc: string | null;
-  last_quote_quant_stats_id: number | null;
-  market_data_task_ids: number[] | null;
-  created_at: string;
-  reference_tasks: TaskInfo[];
+  event_id: string;
+  ts: string;
+  provider: string;
+  model: string;
+  task_key: string | null;
+  node_name: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+  thinking: string | null;
+  answer: string | null;
+}
+
+/** LLM completion records for a thread from GET /api/v1/threads/{thread_id}/llm-responses. */
+export interface LlmResponseList {
+  thread_id: string;
+  records: LlmResponseRecord[];
+}
+
+/** LangGraph checkpoint state from GET /api/v1/threads/{thread_id}/state. */
+export interface ThreadStateResponse {
+  thread_id: string;
+  checkpoint_id: string | null;
+  /** Raw LangGraph state dict; empty object when no checkpoint exists yet. */
+  state: Record<string, unknown>;
+}
+
+/** Request body for POST /api/v1/threads/{thread_id}/status. */
+export interface UpdateThreadStatusRequest {
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  error?: string | null;
+  emit_event?: boolean;
+}
+
+/** Response from POST /api/v1/threads/{thread_id}/status. */
+export interface UpdateThreadStatusResponse {
+  thread_id: string;
+  status: string;
+  event_emitted: boolean;
+}
+
+/** Request body for POST /api/v1/threads/{thread_id}/events/emit. */
+export interface EmitEventRequest {
+  event: string;
+  payload?: Record<string, unknown>;
+}
+
+/** Response from POST /api/v1/threads/{thread_id}/events/emit. */
+export interface EmitEventResponse {
+  thread_id: string;
+  event: string;
+  published: boolean;
+}
+
+/** Response from POST /api/v1/threads/{thread_id}/events/resync. */
+export interface ResyncResponse {
+  thread_id: string;
+  events_emitted: number;
 }

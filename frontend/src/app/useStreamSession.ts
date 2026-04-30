@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type React from "react";
 import type { ChatMessage, ThreadSummary } from "../types";
-import { cancelQuery, createAckHandlers, fetchHistory, fetchStreamingStatus, openStream, submitQuery } from "../api";
+import { cancelQuery, createAckHandlers, fetchHistory, openStream, submitQuery } from "../api";
+import { fetchQueryStatus } from "../api/queries";
 import { buildSseHandlers } from "./sseHandlers";
 import { sendDoneAck } from "../services/streaming/lifecycle";
 
@@ -47,6 +48,12 @@ export function useStreamSession(
   const activeThreadId = useRef<string | null>(null);
   /** Timestamp (Date.now()) of the last SSE token event received. Reset to Date.now() on session start. */
   const lastTokenAtRef = useRef<number>(0);
+  /**
+   * Set to true when `query_ack_confirmed` is received.  Reset on each new
+   * submission / recover so `onSubscribed` can detect when history contained
+   * no `query_received` event (query already past `received` phase).
+   */
+  const ackConfirmedRef = useRef<boolean>(false);
 
   // ── Token accumulation buffers (never trigger React renders directly) ────
   /** msgId → text delta accumulated since last 100 ms flush. */
@@ -102,42 +109,7 @@ export function useStreamSession(
   }, []);
 
   // ── 5-second stall detection ──────────────────────────────────────────────
-  // When loading is true and no token has been received for ≥ 5 seconds, poll
-  // the backend streaming-status endpoint to check whether the task is still
-  // alive.  If the backend task is gone but the DB still shows 'running' the
-  // session is orphaned and should be marked failed immediately.
-  useEffect(() => {
-    if (!loading) {
-      lastTokenAtRef.current = Date.now();
-      return;
-    }
-    const tid = activeThreadId.current;
-    if (!tid) return;
-    let lastStatusCheckAt = 0;
-    const intervalId = setInterval(async () => {
-      const elapsed = Date.now() - lastTokenAtRef.current;
-      if (elapsed < 5_000) return;
-      if (Date.now() - lastStatusCheckAt < 5_000) return;
-      lastStatusCheckAt = Date.now();
-      try {
-        const status = await fetchStreamingStatus(tid);
-        console.debug(
-          "[useStreamSession] stream_stall tid=%s elapsed=%dms query_status=%s is_active=%s running_tasks=%d last_token_ms_ago=%s",
-          tid, elapsed, status.query_status, status.is_active, status.running_tasks.length, status.last_token_ms_ago,
-        );
-        // Backend task gone without emitting done → orphan; surface as failure.
-        if (!status.is_active && status.query_status === "running") {
-          const msgId = threadToMsgId.current.get(tid);
-          if (msgId) updateMessage(msgId, { status: "failed" as ChatMessage["status"], streamingCursor: false });
-          activeThreadId.current = null;
-          setLoading(false);
-        }
-      } catch (err) {
-        console.warn("[useStreamSession] stream_stall_check failed tid=%s", tid, err);
-      }
-    }, 1_000);
-    return () => clearInterval(intervalId);
-  }, [loading, updateMessage]);
+  // When loading is true, track last token timestamp for diagnostics.
   // ─────────────────────────────────────────────────────────────────────────
 
   const recoverThread = useCallback((thread: ThreadSummary) => {
@@ -195,7 +167,9 @@ export function useStreamSession(
           setLoading(false);
         },
       });
-      const close = openStream(thread.thread_id, {
+      ackConfirmedRef.current = false;
+      const recoverAckHandlers = userToken ? createAckHandlers(thread.thread_id, userToken, "recoverThread") : {};
+      const close = openStream(thread.thread_id, userToken ?? "", {
         ...baseHandlers,
         // Intercept token events to update stall-detection timer.
         onToken: (data) => {
@@ -203,7 +177,35 @@ export function useStreamSession(
           baseHandlers.onToken?.(data);
         },
         // Handle query_received if recovering a thread that hasn't been ACKed yet.
-        ...(userToken ? createAckHandlers(thread.thread_id, userToken, "recoverThread") : {}),
+        ...recoverAckHandlers,
+        onQueryAckConfirmed: (data) => {
+          ackConfirmedRef.current = true;
+          (recoverAckHandlers as { onQueryAckConfirmed?: (d: unknown) => void }).onQueryAckConfirmed?.(data);
+        },
+        // Proactively poll status when subscription is active but no lifecycle events arrived.
+        onSubscribed: () => {
+          if (ackConfirmedRef.current || !userToken) return;
+          const tid = thread.thread_id;
+          fetchQueryStatus(tid)
+            .then((result) => {
+              if (activeThreadId.current !== tid) return;
+              const s = result.status;
+              if (s === "completed" || s === "cancelled" || s === "failed") {
+                console.info("[useStreamSession] recoverThread onSubscribed: query terminal status=%s thread_id=%s", s, tid);
+                sendDoneAck(tid, userToken, s).catch(() => {});
+                updateMessage(asstMsgId, { status: s as ChatMessage["status"], streamingCursor: false });
+                activeThreadId.current = null;
+                closeRef.current();
+                setLoading(false);
+                if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
+              } else if (s === "running") {
+                ackConfirmedRef.current = true;
+              }
+            })
+            .catch((err) => {
+              console.warn("[useStreamSession] recoverThread onSubscribed status poll failed thread_id=%s", tid, err);
+            });
+        },
       });
       closeRef.current = close;
       cleanupSse.current = close;
@@ -269,7 +271,6 @@ export function useStreamSession(
           setTaskProviders,
           appendMessageText,
           updateMessage,
-          withReport: true,
           onDone: (status) => {
             sendDoneAck(threadId, userToken, status).catch(() => {});
             if (status === "cancelled") {
@@ -295,7 +296,7 @@ export function useStreamSession(
             setLoading(false);
           },
         });
-        const close = openStream(threadId, {
+        const close = openStream(threadId, userToken ?? "", {
           ...nackBase,
           onToken: (data) => {
             lastTokenAtRef.current = Date.now();
@@ -320,7 +321,6 @@ export function useStreamSession(
         setTaskProviders,
         appendMessageText,
         updateMessage,
-        withReport: true,
         onDone: (status) => {
           sendDoneAck(threadId, userToken, status).catch(() => {});
           if (status === "cancelled") {
@@ -346,14 +346,44 @@ export function useStreamSession(
           setLoading(false);
         },
       });
-      const close = openStream(threadId, {
+      ackConfirmedRef.current = false;
+      const ackHandlers = createAckHandlers(threadId, userToken, "useStreamSession");
+      const close = openStream(threadId, userToken ?? "", {
         ...baseHandlers,
         // Intercept token events to update stall-detection timer.
         onToken: (data) => {
           lastTokenAtRef.current = Date.now();
           baseHandlers.onToken?.(data);
         },
-        ...createAckHandlers(threadId, userToken, "useStreamSession"),
+        ...ackHandlers,
+        onQueryAckConfirmed: (data) => {
+          ackConfirmedRef.current = true;
+          ackHandlers.onQueryAckConfirmed?.(data);
+        },
+        // Proactively poll status when subscription is active but no lifecycle
+        // events arrived from history (query already past `received` phase).
+        onSubscribed: () => {
+          if (ackConfirmedRef.current) return;
+          fetchQueryStatus(threadId)
+            .then((result) => {
+              if (activeThreadId.current !== threadId) return;
+              const s = result.status;
+              if (s === "completed" || s === "cancelled" || s === "failed") {
+                console.info("[useStreamSession] onSubscribed: query terminal status=%s thread_id=%s", s, threadId);
+                sendDoneAck(threadId, userToken, s).catch(() => {});
+                updateMessage(asstMsgId, { status: s as ChatMessage["status"], streamingCursor: false });
+                activeThreadId.current = null;
+                closeRef.current();
+                setLoading(false);
+                if (userToken) fetchHistory(userToken).then(setHistoryItems).catch(console.error);
+              } else if (s === "running") {
+                ackConfirmedRef.current = true;
+              }
+            })
+            .catch((err) => {
+              console.warn("[useStreamSession] onSubscribed status poll failed thread_id=%s", threadId, err);
+            });
+        },
       });
       closeRef.current = close;
       cleanupSse.current = close;

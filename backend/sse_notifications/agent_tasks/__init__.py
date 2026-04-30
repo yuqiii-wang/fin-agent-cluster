@@ -25,7 +25,6 @@ from backend.sse_notifications.agent_tasks.lifecycle import (
 )
 from backend.sse_notifications.agent_tasks.token_stream import (
     stream_llm_task,
-    stream_perf_text_task,
     stream_text_task,
 )
 
@@ -49,5 +48,4 @@ __all__ = [
     # token streaming
     "stream_llm_task",
     "stream_text_task",
-    "stream_perf_text_task",
 ]

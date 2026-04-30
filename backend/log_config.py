@@ -4,7 +4,8 @@ Logger hierarchy and file routing
 ----------------------------------
 Component              Logger prefix                        Output file
 ────────────────────   ──────────────────────────────────   ─────────────────────
-FastAPI routes         backend.api                          logs/api.log
+ FastAPI routes         backend.api                          logs/api.log
+Centrifugo client      backend.centrifugo                   logs/centrifugo.log
 Database / PostgreSQL  backend.db.postgres                  logs/db.log
 Database / Redis       backend.db.redis                     logs/db.log
 LangGraph + agents     backend.graph                        logs/graph.log
@@ -64,10 +65,11 @@ _COMPONENT_LABELS: list[tuple[str, str]] = [
     ("backend.graph.agents.decision_maker",         "Agent/Decision"),
     ("backend.graph.agents.market_data",             "Agent/Market"),
     ("backend.graph.agents.query_optimizer",         "Agent/QueryOpt"),
-    ("backend.graph.agents.perf_test",               "PerfTest"),
+    ("backend.graph.agents.streamer",               "Streamer"),
     ("backend.graph.agents",                         "Graph/Agents"),
     ("backend.graph.utils",                          "Graph/Utils"),
     ("backend.graph",                                "Graph"),
+    ("backend.centrifugo",                           "Centrifugo"),
     ("backend.db.postgres",                          "DB/Postgres"),
     ("backend.db.redis",                             "DB/Redis"),
     ("backend.db",                                   "DB"),
@@ -77,7 +79,7 @@ _COMPONENT_LABELS: list[tuple[str, str]] = [
     ("backend.resource_api.news_api",                "ResAPI/News"),
     ("backend.resource_api",                         "ResAPI"),
     ("backend.sse_notifications.agent_tasks",        "SSE/Tasks"),
-    ("backend.sse_notifications.perf_test",          "SSE/PerfTest"),
+    ("backend.sse_notifications.streamer",          "SSE/Streamer"),
     ("backend.sse_notifications.node_io",            "SSE/NodeIO"),
     ("backend.sse_notifications",                    "SSE/Notify"),
     ("backend.streaming.workers",                    "Stream/Workers"),
@@ -298,6 +300,7 @@ def get_logging_config() -> dict[str, Any]:
                 "level": "WARNING",  # catch-all for unexpected warnings
             },
             "api_file":                {**_file("api.log"),                "level": "DEBUG"},
+            "centrifugo_file":          {**_file("centrifugo.log"),          "level": "DEBUG"},
             "db_file":                 {**_file("db.log"),                 "level": "DEBUG"},
             "graph_file":              {**_file("graph.log"),              "level": "DEBUG"},
             "perf_test_file":          {**_file("perf_test.log"),          "level": "DEBUG"},
@@ -333,6 +336,11 @@ def get_logging_config() -> dict[str, Any]:
             # ── Application component loggers ──────────────────────────────
             "backend.api": {
                 "handlers": ["console", "api_file", "app_file"],
+                "level": "DEBUG",
+                "propagate": False,
+            },
+            "backend.centrifugo": {
+                "handlers": ["console", "centrifugo_file", "app_file"],
                 "level": "DEBUG",
                 "propagate": False,
             },
@@ -377,6 +385,14 @@ def get_logging_config() -> dict[str, Any]:
                 "propagate": False,
             },
             "backend.streaming": {
+                "handlers": ["console", "streaming_file", "app_file"],
+                "level": "DEBUG",
+                "propagate": False,
+            },
+            "backend.streaming.workers": {
+                # Explicit entry so Celery prefork worker sub-processes route
+                # fanout and throughput task logs directly to streaming.log
+                # without relying on propagation through backend.streaming.
                 "handlers": ["console", "streaming_file", "app_file"],
                 "level": "DEBUG",
                 "propagate": False,

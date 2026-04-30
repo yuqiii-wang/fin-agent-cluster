@@ -3,18 +3,21 @@
 #
 # Source fragments:
 #   _shared/          upstreams, services, global plugins
-#   api/v1/auth/      POST /api/v1/auth/*
-#   api/v1/users/     POST|GET /api/v1/users/query/*
-#   api/v1/stream/    GET /api/v1/stream/* (SSE)
-#   api/v1/reports/   GET /api/v1/reports/*
-#   api/v1/tasks/     GET|POST /api/v1/tasks/*
-#   api/v1/quant/     GET /api/v1/quant/*
+#   api/v1/auth/      POST /api/v1/auth/*                  → fastapi-assistant
+#   api/v1/centrifugo/ GET /api/v1/centrifugo/token        → fastapi-assistant
+#   api/v1/users/     POST /users/query, /ack              → fastapi-runner
+#                     GET|POST /users/query/* (reads)      → fastapi-assistant
+#   api/v1/stream/    POST /api/v1/stream/*                → fastapi-assistant
+#   api/v1/reports/   GET /api/v1/reports/*                → fastapi-assistant
+#   api/v1/tasks/     GET|POST /api/v1/tasks/*             → fastapi-assistant
+#   api/v1/quant/     GET /api/v1/quant/*                  → fastapi-assistant
+#   api/v1/threads/   GET|POST /api/v1/threads/*           → fastapi-assistant
 #   llm/              POST /llm/* (Kong AI Gateway ai-proxy)
 
 _format_version: '3.0'
 _transform: true
 upstreams:
-- name: fastapi-upstream
+- name: runner-upstream
   algorithm: round-robin
   healthchecks:
     active:
@@ -31,7 +34,11 @@ upstreams:
     weight: 100
   - target: host.docker.internal:8433
     weight: 100
-- name: fastapi-sse-upstream
+  - target: host.docker.internal:8434
+    weight: 100
+  - target: host.docker.internal:8435
+    weight: 100
+- name: assistant-upstream
   algorithm: round-robin
   healthchecks:
     active:
@@ -44,22 +51,66 @@ upstreams:
       http_path: /health
       timeout: 5
   targets:
-  - target: host.docker.internal:8432
+  - target: host.docker.internal:8436
     weight: 100
-  - target: host.docker.internal:8433
+  - target: host.docker.internal:8437
+    weight: 100
+- name: centrifugo-0-upstream
+  algorithm: round-robin
+  healthchecks:
+    active:
+      healthy:
+        interval: 10
+        successes: 1
+      unhealthy:
+        interval: 5
+        http_failures: 3
+      http_path: /health
+      timeout: 5
+  targets:
+  - target: centrifugo-0:8000
+    weight: 100
+- name: centrifugo-1-upstream
+  algorithm: round-robin
+  healthchecks:
+    active:
+      healthy:
+        interval: 10
+        successes: 1
+      unhealthy:
+        interval: 5
+        http_failures: 3
+      http_path: /health
+      timeout: 5
+  targets:
+  - target: centrifugo-1:8000
     weight: 100
 services:
-- name: fastapi
-  host: fastapi-upstream
+- name: fastapi-runner
+  host: runner-upstream
   port: 80
   protocol: http
   connect_timeout: 10000
   write_timeout: 30000
   read_timeout: 30000
-- name: fastapi-sse
-  host: fastapi-sse-upstream
+- name: fastapi-assistant
+  host: assistant-upstream
   port: 80
   protocol: http
+  connect_timeout: 10000
+  write_timeout: 30000
+  read_timeout: 30000
+- name: centrifugo-0
+  host: centrifugo-0-upstream
+  port: 80
+  protocol: ws
+  connect_timeout: 10000
+  write_timeout: 3600000
+  read_timeout: 3600000
+- name: centrifugo-1
+  host: centrifugo-1-upstream
+  port: 80
+  protocol: ws
   connect_timeout: 10000
   write_timeout: 3600000
   read_timeout: 3600000
@@ -70,15 +121,47 @@ services:
   read_timeout: 3600000
 routes:
 - name: route-auth
-  service: fastapi
+  service: fastapi-assistant
   paths:
   - /api/v1/auth
   strip_path: false
   protocols:
   - http
   - https
+- name: route-centrifugo-token
+  service: fastapi-assistant
+  paths:
+  - /api/v1/centrifugo
+  strip_path: false
+  protocols:
+  - http
+  - https
+  plugins:
+  - name: rate-limiting
+    config:
+      minute: 6000
+      hour: 100000
+      policy: local
+      limit_by: ip
+      hide_client_headers: false
+- name: route-centrifugo-0
+  service: centrifugo-0
+  paths:
+  - /centrifugo-0
+  strip_path: true
+  protocols:
+  - ws
+  - wss
+- name: route-centrifugo-1
+  service: centrifugo-1
+  paths:
+  - /centrifugo-1
+  strip_path: true
+  protocols:
+  - ws
+  - wss
 - name: route-quant
-  service: fastapi
+  service: fastapi-assistant
   paths:
   - /api/v1/quant
   strip_path: false
@@ -86,121 +169,68 @@ routes:
   - http
   - https
 - name: route-reports
-  service: fastapi
+  service: fastapi-assistant
   paths:
   - /api/v1/reports
   strip_path: false
   protocols:
   - http
   - https
-- name: route-stream
-  service: fastapi-sse
+- name: route-stream-double-check
+  service: fastapi-assistant
+  paths:
+  - /api/v1/stream
+  headers:
+    x-double-check:
+    - 'true'
+  strip_path: false
+  protocols:
+  - http
+  - https
+  plugins:
+  - name: rate-limiting
+    config:
+      minute: 60000
+      hour: 600000
+      policy: local
+      limit_by: ip
+      hide_client_headers: false
+- name: route-stream-utils
+  service: fastapi-assistant
   paths:
   - /api/v1/stream
   strip_path: false
   protocols:
   - http
   - https
-  response_buffering: false
   plugins:
   - name: rate-limiting
     config:
-      minute: 10000
-      hour: 500000
-      policy: redis
+      minute: 60000
+      hour: 600000
+      policy: local
       limit_by: ip
       hide_client_headers: false
-      redis:
-        host: redis
-        port: 6379
-        database: 1
-        timeout: 2000
-- name: route-streaming-sse
-  service: fastapi-sse
-  paths:
-  - /api/v1/streaming/sse
-  methods:
-  - GET
-  - OPTIONS
-  strip_path: false
-  protocols:
-  - http
-  - https
-  response_buffering: false
-  plugins:
-  - name: rate-limiting
-    config:
-      minute: 10000
-      hour: 500000
-      policy: redis
-      limit_by: ip
-      hide_client_headers: false
-      redis:
-        host: redis
-        port: 6379
-        database: 1
-        timeout: 2000
-- name: route-streaming-poll
-  service: fastapi-sse
-  paths:
-  - /api/v1/streaming/poll
-  methods:
-  - GET
-  - OPTIONS
-  strip_path: false
-  protocols:
-  - http
-  - https
-  response_buffering: false
-  plugins:
-  - name: rate-limiting
-    config:
-      minute: 10000
-      hour: 500000
-      policy: redis
-      limit_by: ip
-      hide_client_headers: false
-      redis:
-        host: redis
-        port: 6379
-        database: 1
-        timeout: 2000
-- name: route-streaming-info
-  service: fastapi
-  paths:
-  - /api/v1/streaming/info
-  methods:
-  - GET
-  - OPTIONS
-  strip_path: false
-  protocols:
-  - http
-  - https
-  plugins:
-  - name: rate-limiting
-    config:
-      minute: 10000
-      hour: 500000
-      policy: redis
-      limit_by: ip
-      hide_client_headers: false
-      redis:
-        host: redis
-        port: 6379
-        database: 1
-        timeout: 2000
 - name: route-tasks
-  service: fastapi
+  service: fastapi-assistant
   paths:
   - /api/v1/tasks
   strip_path: false
   protocols:
   - http
   - https
-- name: route-query-submit
-  service: fastapi
+- name: route-threads
+  service: fastapi-assistant
   paths:
-  - /api/v1/users/query$
+  - /api/v1/threads
+  strip_path: false
+  protocols:
+  - http
+  - https
+- name: route-query-submit
+  service: fastapi-runner
+  paths:
+  - ~/api/v1/users/query$
   methods:
   - POST
   - OPTIONS
@@ -213,22 +243,36 @@ routes:
     config:
       minute: 6000
       hour: 100000
-      policy: redis
+      policy: local
       limit_by: ip
       hide_client_headers: false
-      redis:
-        host: redis
-        port: 6379
-        database: 1
-        timeout: 2000
+- name: route-query-ack
+  service: fastapi-runner
+  paths:
+  - ~/api/v1/users/query/[^/]+/ack$
+  methods:
+  - POST
+  - OPTIONS
+  strip_path: false
+  protocols:
+  - http
+  - https
 - name: route-queries
-  service: fastapi
+  service: fastapi-assistant
   paths:
   - /api/v1/users
   strip_path: false
   protocols:
   - http
   - https
+  plugins:
+  - name: rate-limiting
+    config:
+      minute: 6000
+      hour: 100000
+      policy: local
+      limit_by: ip
+      hide_client_headers: false
 - name: route-llm-chat
   service: llm-proxy
   paths:
@@ -246,16 +290,11 @@ routes:
     config:
       minute: 6000
       hour: 100000
-      policy: redis
+      policy: local
       limit_by: ip
       hide_client_headers: false
-      redis:
-        host: redis
-        port: 6379
-        database: 1
-        timeout: 2000
 - name: route-docs
-  service: fastapi
+  service: fastapi-runner
   paths:
   - /docs
   - /redoc
@@ -281,9 +320,17 @@ plugins:
   config:
     origins:
     - http://localhost:3000
+    - https://localhost:3000
+    - http://localhost:22332
+    - https://localhost:22332
+    - http://127.0.0.1:22332
+    - https://127.0.0.1:22332
     - http://localhost:8886
+    - https://localhost:8886
     - http://127.0.0.1:3000
+    - https://127.0.0.1:3000
     - http://127.0.0.1:8886
+    - https://127.0.0.1:8886
     methods:
     - GET
     - POST
@@ -299,6 +346,7 @@ plugins:
     - Cache-Control
     - X-Requested-With
     - Last-Event-ID
+    - X-Double-Check
     exposed_headers:
     - X-Auth-Token
     - X-Kong-Upstream-Latency
@@ -314,14 +362,9 @@ plugins:
   config:
     minute: 300
     hour: 5000
-    policy: redis
+    policy: local
     limit_by: ip
     hide_client_headers: false
-    redis:
-      host: redis
-      port: 6379
-      database: 1
-      timeout: 2000
 - name: correlation-id
   config:
     header_name: X-Request-ID

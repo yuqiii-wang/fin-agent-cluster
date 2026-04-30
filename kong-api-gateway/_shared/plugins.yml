@@ -4,10 +4,18 @@ plugins:
   - name: cors
     config:
       origins:
-        - "http://localhost:3000"   # Vite dev server
-        - "http://localhost:8886"   # Kong Manager
+        - "http://localhost:3000"    # Vite dev server (HTTP fallback)
+        - "https://localhost:3000"   # Vite dev server (HTTPS / HTTP2)
+        - "http://localhost:22332"   # Production UI (nginx direct port)
+        - "https://localhost:22332"  # Production UI (HTTPS)
+        - "http://127.0.0.1:22332"
+        - "https://127.0.0.1:22332"
+        - "http://localhost:8886"    # Kong Manager
+        - "https://localhost:8886"
         - "http://127.0.0.1:3000"
+        - "https://127.0.0.1:3000"
         - "http://127.0.0.1:8886"
+        - "https://127.0.0.1:8886"
       methods:
         - GET
         - POST
@@ -23,6 +31,7 @@ plugins:
         - Cache-Control
         - X-Requested-With
         - Last-Event-ID    # SSE reconnection — client sends this to resume a stream
+        - X-Double-Check   # Stream status-ack double-check header
       exposed_headers:
         - X-Auth-Token
         - X-Kong-Upstream-Latency
@@ -37,19 +46,14 @@ plugins:
       allowed_payload_size: 10   # MB
       size_unit: megabytes
 
-  # Rate limiting — Redis policy for consistent counters across Kong workers/nodes
+  # Rate limiting — local policy (per-worker counters, no external Redis needed)
   - name: rate-limiting
     config:
       minute: 300
       hour: 5000
-      policy: redis
+      policy: local
       limit_by: ip
       hide_client_headers: false
-      redis:
-        host: "{REDIS_HOST}"
-        port: {REDIS_PORT}
-        database: 1       # DB 0 reserved for app; Kong uses DB 1
-        timeout: 2000
 
   # Correlation ID — adds X-Request-ID to every response for traceability
   - name: correlation-id

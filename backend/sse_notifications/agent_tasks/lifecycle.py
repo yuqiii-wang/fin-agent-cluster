@@ -25,7 +25,6 @@ from typing import Optional
 from sqlalchemy import update
 
 from backend.db.postgres.engine import get_session_factory
-from backend.db.redis.streams.publisher import delete_stream, push_pending_notify
 from backend.db.redis.session.task_ack_store import record_task_step
 from backend.sse_notifications.channel import publish_lifecycle
 
@@ -49,6 +48,7 @@ async def create_task(
     task_key: str,
     node_execution_id: Optional[int] = None,
     provider: Optional[str] = None,
+    extra_payload: Optional[dict] = None,
 ) -> int:
     """Insert a running task record in DB and emit a ``started`` SSE notification.
 
@@ -56,11 +56,12 @@ async def create_task(
 
     Args:
         thread_id:         LangGraph thread UUID.
-        task_key:          Full dot-separated task key, e.g.
-                           ``"market_data_collector.ohlcv.15min"``.
+        task_key:          Full dot-separated task key.
         node_execution_id: FK to the parent ``node_executions`` row (optional).
-        provider:          LLM provider name to include in the ``started``
-                           payload (optional).
+        provider:          LLM provider name for the ``started`` payload (optional).
+        extra_payload:     Additional fields merged into the ``started`` event
+                           payload (e.g. ``node_id``, ``leaf_node_id``,
+                           ``stream_id``).
 
     Returns:
         DB primary key of the newly created task row.
@@ -90,6 +91,8 @@ async def create_task(
         }
         if provider:
             payload["provider"] = provider
+        if extra_payload:
+            payload.update(extra_payload)
         logger.info(
             "[task_lifecycle] publish event=started task_id=%d task_key=%s node=%s thread_id=%s",
             task_id,
@@ -102,7 +105,6 @@ async def create_task(
     await publish_lifecycle(thread_id, payload)
     # Record step and push ack-store entry AFTER commit.
     await record_task_step(thread_id, task_id, "digesting")
-    await push_pending_notify(thread_id, "started", task_id, json.dumps(payload))
 
     logger.info(
         "[task_lifecycle] created task_id=%d key=%s node=%s thread_id=%s",
@@ -164,10 +166,6 @@ async def complete_task(
     )
     # Record step and push ack-store entry after commit.
     await record_task_step(thread_id, task_id, "completed")
-    await push_pending_notify(
-        thread_id, "completed", task_id,
-        json.dumps({"event": "completed", "task_id": task_id, "node_name": node, "task_key": task_key, "output": output_val}),
-    )
 
     logger.info(
         "[task_lifecycle] completed task_id=%d key=%s node=%s thread_id=%s output_keys=%s",
@@ -200,7 +198,7 @@ async def fail_task(
                     without an extra API round-trip.
     """
     from backend.graph.models import AgentTask  # deferred to avoid circular import
-    from backend.streaming.lifecycle.errors import STREAMING_ERRORS  # deferred
+    from backend.streaming.errors import STREAMING_ERRORS  # deferred
 
     node = _node_name(task_key)
     output_val: dict = {"error": error[:500]}
@@ -239,10 +237,6 @@ async def fail_task(
     await publish_lifecycle(thread_id, _failed_payload)
     # Record step and push ack-store entry after commit.
     await record_task_step(thread_id, task_id, "failed")
-    await push_pending_notify(
-        thread_id, "failed", task_id,
-        json.dumps(_failed_payload),
-    )
 
     logger.warning(
         "[task_lifecycle] failed task_id=%d key=%s node=%s error=%r thread_id=%s",
@@ -304,10 +298,6 @@ async def cancel_task(
     )
     # Record step and push ack-store entry after commit.
     await record_task_step(thread_id, task_id, "cancelled")
-    await push_pending_notify(
-        thread_id, "cancelled", task_id,
-        json.dumps({"event": "cancelled", "task_id": task_id, "node_name": node, "task_key": task_key, "output": output_val}),
-    )
 
     logger.info(
         "[task_lifecycle] cancelled task_id=%d key=%s node=%s thread_id=%s",
@@ -324,12 +314,18 @@ async def emit_done(
     report: str = "",
     error_code: str | None = None,
 ) -> None:
-    """Emit a terminal ``done`` SSE event and clean up the Redis token stream.
+    """Emit a terminal ``done`` SSE event for the thread.
 
     Called once after the entire graph finishes (success, failure, cancellation,
     or timeout) so the frontend knows the session is over and can close the SSE
     connection.  The ``status`` value is forwarded verbatim so the frontend can
     distinguish ``"timeout"`` from a regular ``"cancelled"`` action.
+
+    The Redis token stream (``tokens:{thread_id}``) is intentionally **not**
+    deleted here.  It is cleaned up by
+    :func:`~backend.db.redis.lock_manager.session_cleanup.cleanup_thread_session`
+    at true thread lifecycle end (after ``emit_done`` returns in the runner)
+    so that any in-flight SSE drain can still read buffered tokens.
 
     Args:
         thread_id:  LangGraph thread UUID.
@@ -341,7 +337,7 @@ async def emit_done(
                     when ``status`` is ``"failed"``; embedded in the ``done``
                     payload so the frontend can surface a rich error tooltip.
     """
-    from backend.streaming.lifecycle.errors import STREAMING_ERRORS  # deferred
+    from backend.streaming.errors import STREAMING_ERRORS  # deferred
 
     _done_payload: dict = {"event": "done", "status": status, "data": report[:500] if report else ""}
     if error_code:
@@ -355,9 +351,6 @@ async def emit_done(
         thread_id,
     )
     await publish_lifecycle(thread_id, _done_payload)
-    # Push ack-store entry so the SSE generator can recover if the Redis publish was lost.
-    await push_pending_notify(thread_id, "done", None, json.dumps(_done_payload))
-    await delete_stream(thread_id)
     logger.info(
         "[task_lifecycle] done_emitted status=%s thread_id=%s",
         status,

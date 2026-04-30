@@ -4,7 +4,6 @@ Error code prefixes
 -------------------
 ``API_QUERY_``   — User query lifecycle errors (not found, status conflict).
 ``API_TASK_``    — Agent task control errors.
-``API_STREAM_``  — SSE / streaming endpoint errors.
 ``API_QUANT_``   — Quant stats / indicator endpoint errors.
 ``API_REPORT_``  — Report retrieval errors.
 """
@@ -27,14 +26,6 @@ API_QUERY_STATUS_CONFLICT = "API_QUERY_STATUS_CONFLICT"
 
 #: task_id path parameter is not a positive integer.
 API_TASK_ID_INVALID = "API_TASK_ID_INVALID"
-
-# ── Streaming / SSE ──────────────────────────────────────────────────────────
-
-#: Requested Redis stream key is not in the allowed set.
-API_STREAM_UNKNOWN_KEY = "API_STREAM_UNKNOWN_KEY"
-
-#: Redis XREAD call failed during SSE stream delivery.
-API_STREAM_READ_FAILED = "API_STREAM_READ_FAILED"
 
 # ── Quant stats ───────────────────────────────────────────────────────────────
 
@@ -61,6 +52,17 @@ API_QUANT_NO_CURRENCY = "API_QUANT_NO_CURRENCY"
 #: Report not found for the requested symbol or report_id.
 API_REPORT_NOT_FOUND = "API_REPORT_NOT_FOUND"
 
+# ── Threads ──────────────────────────────────────────────────────────────────
+
+#: thread_id not found in fin_agents.user_queries.
+API_THREAD_NOT_FOUND = "API_THREAD_NOT_FOUND"
+
+#: Event type is not permitted via the manual emit endpoint.
+API_THREAD_EMIT_INVALID_EVENT = "API_THREAD_EMIT_INVALID_EVENT"
+
+#: Requested status value is not in the allowed set.
+API_THREAD_STATUS_INVALID = "API_THREAD_STATUS_INVALID"
+
 # ---------------------------------------------------------------------------
 # Description registry
 # ---------------------------------------------------------------------------
@@ -77,14 +79,6 @@ API_ERRORS: dict[str, str] = {
     ),
     API_TASK_ID_INVALID: (
         "The task_id must be a positive integer."
-    ),
-    API_STREAM_UNKNOWN_KEY: (
-        "The requested Redis stream key is not recognised. "
-        "Use one of the supported stream keys."
-    ),
-    API_STREAM_READ_FAILED: (
-        "Failed to read from the Redis stream. "
-        "The stream service may be temporarily unavailable."
     ),
     API_QUANT_INVALID_GRANULARITY: (
         "The requested bar granularity is not supported. "
@@ -111,5 +105,16 @@ API_ERRORS: dict[str, str] = {
     API_REPORT_NOT_FOUND: (
         "The requested analysis report was not found. "
         "The symbol may not have any completed reports yet."
+    ),
+    API_THREAD_NOT_FOUND: (
+        "The requested thread was not found."
+    ),
+    API_THREAD_EMIT_INVALID_EVENT: (
+        "Event type is not permitted via the manual emit endpoint. "
+        "High-frequency stream events (token/perf_token) are excluded."
+    ),
+    API_THREAD_STATUS_INVALID: (
+        "The requested status value is not in the allowed set. "
+        "Valid values: pending, running, completed, failed, cancelled."
     ),
 }

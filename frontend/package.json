@@ -5,10 +5,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:ws-load": "node tests/ws_load_test.mjs"
   },
   "dependencies": {
     "antd": "^5.20.0",
+    "centrifuge": "^5.5.3",
     "lightweight-charts": "^5.1.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
@@ -21,6 +23,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "typescript": "^5.5.0",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "ws": "^8.20.0"
   }
 }

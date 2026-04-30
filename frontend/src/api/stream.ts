@@ -1,223 +1,205 @@
-import { BASE, SSE_ORIGIN } from "./config";
+/**
+ * Centrifugo WebSocket streaming client.
+ *
+ * Replaces the previous EventSource/SSE implementation.  All real-time events
+ * (token, started, completed, failed, cancelled, done, query_* perf_*) arrive
+ * on the ``thread:{threadId}`` Centrifugo channel.
+ *
+ * Usage:
+ *   const cleanup = openStream(threadId, { onToken, onDone, ... });
+ *   // later:
+ *   cleanup();
+ */
 
-// ── SSE Streaming ────────────────────────────────────────────────────────────
+import type { Subscription } from "centrifuge";
+import { getOrCreateShardClient } from "./centrifugoClient";
+import { BASE, KONG_ORIGIN } from "./config";
 
-/** Health snapshot for an active streaming session (GET /stream/{thread_id}/status). */
-export interface StreamingStatusData {
-  thread_id: string;
-  /** Current user_queries.status value, e.g. "running", "completed". */
-  query_status: string;
-  /** Tasks whose DB status is still "running". */
-  running_tasks: Array<{ task_id: number; task_key: string; node_name: string }>;
-  /**
-   * Milliseconds since the most-recent token was published to Redis Streams.
-   * null if the stream key no longer exists (e.g. stream was deleted on done).
-   */
-  last_token_ms_ago: number | null;
-  /** True if an asyncio.Task for this thread is alive in the backend registry. */
-  is_active: boolean;
+// ── Token bootstrap ──────────────────────────────────────────────────────────
+
+export interface CentrifugoTokenResponse {
+  ws_url: string;
+  connection_token: string;
+  subscription_token: string;
+  shard_index: number;
+  channel: string;
 }
 
-/**
- * Poll the backend streaming-health endpoint.
- *
- * Call when no SSE token event has been received for ≥ 5 seconds while the
- * session is still in loading state.  Returns diagnostic info about whether
- * the backend task is alive and when it last produced tokens.
- */
-export async function fetchStreamingStatus(threadId: string): Promise<StreamingStatusData> {
-  const res = await fetch(`${BASE}/stream/${threadId}/status`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+/** Fetch Centrifugo connection + subscription tokens from FastAPI. */
+export async function fetchCentrifugoToken(
+  threadId: string,
+  userToken: string
+): Promise<CentrifugoTokenResponse> {
+  const url = `${BASE}/centrifugo/token?thread_id=${encodeURIComponent(threadId)}`;
+  const res = await fetch(url, {
+    headers: { "X-User-Token": userToken },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching Centrifugo token`);
   return res.json();
 }
 
-/** Open an SSE stream for a thread, invoking callbacks on each event.
- *  Returns a cleanup function that closes the connection. */
-export function openStream(
-  threadId: string,
-  handlers: {
-    onStarted?: (data: unknown) => void;
-    onToken?: (data: unknown) => void;
-    /** perf_token_batch events — carries `count` field; always forwarded for silent metric aggregation. */
-    onPerfTokenBatch?: (data: unknown) => void;
-    /** perf_ingest_progress — emitted ~every second during the ingest phase with produced/total/tps. */
-    onPerfIngestProgress?: (data: unknown) => void;
-    onCompleted?: (data: unknown) => void;
-    onFailed?: (data: unknown) => void;
-    onCancelled?: (data: unknown) => void;
-    onDone?: (data: unknown) => void;
-    /** perf_concurrent_status — emitted every 3 s during concurrent ingest+read; carries batch_size, digest_tps, ingest_tps, stream_len. */
-    onPerfConcurrentStatus?: (data: unknown) => void;
-    /** perf_ingest_complete — backend ingest phase finished; carries produced, stop_reason. */
-    onPerfIngestComplete?: (data: unknown) => void;
-    /** perf_test_stopped — timeout fired; freeze all sessions and show final stats. */
-    onPerfTestStopped?: (data: unknown) => void;
-    /** perf_test_complete — all requested tokens were streamed for this session. */
-    onPerfTestComplete?: (data: unknown) => void;
-    /**
-     * query_status — backend phase transition event.
-     * Fired at each processing phase: "received" | "preparing" | "ingesting" | "digesting".
-     * Also replayed by the stream endpoint for late-connecting clients via Redis phase store.
-     */
-    onQueryStatus?: (data: unknown) => void;
-    /**
-     * query_received — backend accepted the query and persisted it with status='received'.
-     * Client must call POST /users/query/{thread_id}/ack to start graph execution.
-     * Retried by the pending-notify drain cycle until the ACK is confirmed.
-     */
-    onQueryReceived?: (data: unknown) => void;
-    /**
-     * query_ack_confirmed — backend received the client ACK and started LangGraph.
-     * Client should stop sending further ACK retries on receipt.
-     */
-    onQueryAckConfirmed?: (data: unknown) => void;
-    onClose?: () => void;
-  }
-): () => void {
-  const sseUrl = `${SSE_ORIGIN}/api/v1/stream/${threadId}`;
-  const es = new EventSource(sseUrl);
-  console.debug("[stream] EventSource opened url=%s", sseUrl);
-  // Prevent onClose from firing more than once (e.g. error then explicit close).
-  let closed = false;
-  const notifyClose = () => {
-    if (closed) return;
-    closed = true;
-    handlers.onClose?.();
-  };
+// ── Stream event handlers ────────────────────────────────────────────────────
 
-  // Detect persistent CONNECTING failures (e.g. TLS cert not accepted).
-  // The browser auto-retries an EventSource in CONNECTING state after each
-  // onerror, but if the underlying cause is a rejected TLS certificate the
-  // connection will never succeed and the UI stays stuck at "connecting".
-  // After _TLS_ERROR_THRESHOLD consecutive errors while still CONNECTING
-  // we surface an actionable error via onFailed and stop the EventSource.
-  const _TLS_ERROR_THRESHOLD = 3;
-  let _connectingErrorCount = 0;
-  let _firstEventReceived = false;
-  const _markFirstEvent = () => { _firstEventReceived = true; _connectingErrorCount = 0; };
-
-  const parse = (raw: string): unknown => {
-    try { return JSON.parse(raw); } catch { return {}; }
-  };
-
-  // Mark connection as established on first successful open so the TLS error
-  // detector does not trigger on legitimate transient reconnects mid-stream.
-  es.onopen = () => { _markFirstEvent(); };
-
-  es.addEventListener("started", (e: MessageEvent) => {
-    _markFirstEvent();
-    console.debug("[stream] ⇒ started threadId=%s data=%s", threadId, e.data);
-    handlers.onStarted?.(parse(e.data));
-  });
-  // Track first-token timing for debugging.
-  let _firstToken = true;
-  es.addEventListener("token", (e: MessageEvent) => {
-    if (_firstToken) {
-      _firstToken = false;
-      console.debug("[stream] ⇒ first_token threadId=%s data=%s", threadId, e.data.slice(0, 80));
-    }
-    handlers.onToken?.(parse(e.data));
-  });
-  es.addEventListener("perf_token_batch", (e: MessageEvent) => {
-    handlers.onPerfTokenBatch?.(parse(e.data));
-  });
-  es.addEventListener("perf_ingest_progress", (e: MessageEvent) => {
-    handlers.onPerfIngestProgress?.(parse(e.data));
-  });
-  es.addEventListener("perf_ingest_complete", (e: MessageEvent) => {
-    handlers.onPerfIngestComplete?.(parse(e.data));
-  });
-  es.addEventListener("perf_concurrent_status", (e: MessageEvent) => {
-    handlers.onPerfConcurrentStatus?.(parse(e.data));
-  });
-  es.addEventListener("completed", (e: MessageEvent) => {
-    console.debug("[stream] ⇒ completed threadId=%s", threadId);
-    handlers.onCompleted?.(parse(e.data));
-  });
-  es.addEventListener("failed", (e: MessageEvent) => {
-    console.debug("[stream] ⇒ failed threadId=%s data=%s", threadId, e.data);
-    handlers.onFailed?.(parse(e.data));
-  });
-  es.addEventListener("cancelled", (e: MessageEvent) => {
-    console.debug("[stream] ⇒ cancelled threadId=%s", threadId);
-    handlers.onCancelled?.(parse(e.data));
-  });
-  es.addEventListener("done", (e: MessageEvent) => {
-    console.debug("[stream] ⇒ done threadId=%s data=%s", threadId, e.data);
-    handlers.onDone?.(parse(e.data));
-  });
-  es.addEventListener("perf_test_stopped", (e: MessageEvent) => {
-    console.debug("[stream] ⇒ perf_test_stopped threadId=%s data=%s", threadId, e.data);
-    handlers.onPerfTestStopped?.(parse(e.data));
-  });
-  es.addEventListener("perf_test_complete", (e: MessageEvent) => {
-    console.debug("[stream] ⇒ perf_test_complete threadId=%s data=%s", threadId, e.data);
-    handlers.onPerfTestComplete?.(parse(e.data));
-  });
-
-  es.addEventListener("query_status", (e: MessageEvent) => {
-    console.debug("[stream] ⇒ query_status threadId=%s data=%s", threadId, e.data);
-    handlers.onQueryStatus?.(parse(e.data));
-  });
-  es.addEventListener("query_received", (e: MessageEvent) => {
-    console.debug("[stream] ⇒ query_received threadId=%s", threadId);
-    handlers.onQueryReceived?.(parse(e.data));
-  });
-  es.addEventListener("query_ack_confirmed", (e: MessageEvent) => {
-    console.debug("[stream] ⇒ query_ack_confirmed threadId=%s", threadId);
-    handlers.onQueryAckConfirmed?.(parse(e.data));
-  });
-  // EventSource.CLOSED = 2; only treat a persistent error as a real drop.
-  // Transient errors (CONNECTING = 0) are browser-managed retries.
-  // However, if the connection never opens (e.g. TLS cert not accepted),
-  // errors keep firing in CONNECTING state — detect this and surface a
-  // clear error so the user knows to accept the certificate.
-  es.onerror = () => {
-    if (es.readyState === EventSource.CLOSED) {
-      notifyClose();
-      return;
-    }
-    // readyState === CONNECTING — browser is auto-retrying.
-    if (!_firstEventReceived) {
-      _connectingErrorCount++;
-      if (_connectingErrorCount >= _TLS_ERROR_THRESHOLD) {
-        const sseHost = new URL(sseUrl).host;
-        console.error(
-          "[stream] SSE connection failed after %d retries threadId=%s url=%s — " +
-          "likely TLS certificate not accepted. Visit %s in this browser and accept the cert.",
-          _connectingErrorCount, threadId, sseUrl, SSE_ORIGIN,
-        );
-        closed = true;
-        es.close();
-        handlers.onFailed?.({
-          message:
-            `SSE connection refused (TLS certificate not accepted for ${sseHost}). ` +
-            `Open ${SSE_ORIGIN} in this browser tab and click "Accept" / "Proceed anyway", then retry.`,
-          error: "tls_cert_not_accepted",
-        });
-      }
-    }
-  };
-
-  // Intentional close (component cleanup / explicit teardown): set `closed`
-  // directly so any subsequent onerror cannot fire onClose, but do NOT invoke
-  // notifyClose() — callers that need to react to close (e.g. closeSession)
-  // have already handled their own status patching.
-  return () => {
-    closed = true;
-    es.close();
-  };
+export interface StreamHandlers {
+  onStarted?: (data: unknown) => void;
+  onToken?: (data: unknown) => void;
+  onTokenBatch?: (data: unknown) => void;
+  onIngestComplete?: (data: unknown) => void;
+  onStreamStopped?: (data: unknown) => void;
+  onStreamComplete?: (data: unknown) => void;
+  onCompleted?: (data: unknown) => void;
+  onFailed?: (data: unknown) => void;
+  onCancelled?: (data: unknown) => void;
+  onDone?: (data: unknown) => void;
+  onQueryStatus?: (data: unknown) => void;
+  onQueryReceived?: (data: unknown) => void;
+  onQueryAckConfirmed?: (data: unknown) => void;
+  /**
+   * Fired when the Centrifugo subscription becomes active and all channel history
+   * has been delivered as `publication` events.  Use this as the signal to
+   * proactively poll `GET /users/query/{threadId}` if no lifecycle events were
+   * received from history (i.e. the query is already past the `received` phase).
+   */
+  onSubscribed?: () => void;
+  onClose?: () => void;
 }
 
-/** Register the task the client currently has expanded in the TaskDrawer.
- *  Passing null unwatches (panel collapsed / drawer closed).
- *  The SSE stream will then suppress token events for tasks not being watched. */
-export async function watchTask(threadId: string, taskId: number | null): Promise<void> {
-  console.debug("[stream] watchTask threadId=%s taskId=%s", threadId, taskId);
-  await fetch(`${BASE}/stream/${encodeURIComponent(threadId)}/watch`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_id: taskId }),
-  });
-  console.debug("[stream] watchTask PUT done threadId=%s taskId=%s", threadId, taskId);
+/** Dispatch a Centrifugo publication payload to the correct handler. */
+function dispatch(data: unknown, handlers: StreamHandlers): void {
+  if (!data || typeof data !== "object") return;
+  const ev = (data as Record<string, unknown>)["event"] as string | undefined;
+  if (!ev) return;
+
+  switch (ev) {
+    case "started":               handlers.onStarted?.(data); break;
+    case "token":                 handlers.onToken?.(data); break;
+    case "token_batch":          handlers.onTokenBatch?.(data); break;
+    case "ingest_complete":       handlers.onIngestComplete?.(data); break;
+    case "stream_stopped":        handlers.onStreamStopped?.(data); break;
+    case "stream_complete":       handlers.onStreamComplete?.(data); break;
+    case "completed":             handlers.onCompleted?.(data); break;
+    case "failed":                handlers.onFailed?.(data); break;
+    case "cancelled":             handlers.onCancelled?.(data); break;
+    case "done":                  handlers.onDone?.(data); break;
+    case "query_status":          handlers.onQueryStatus?.(data); break;
+    case "query_received":        handlers.onQueryReceived?.(data); break;
+    case "query_ack_confirmed":   handlers.onQueryAckConfirmed?.(data); break;
+    default:
+      break;
+  }
+}
+
+// ── Main openStream function ─────────────────────────────────────────────────
+
+/**
+ * Connect to Centrifugo and subscribe to the ``thread:{threadId}`` channel.
+ *
+ * Fetches JWT tokens from FastAPI, establishes a WebSocket connection to the
+ * correct Centrifugo shard, and invokes callbacks on publication events.
+ *
+ * @param threadId  LangGraph thread UUID.
+ * @param userToken X-User-Token from localStorage.
+ * @param handlers  Event callbacks.
+ * @returns Cleanup function that disconnects the WebSocket.
+ */
+export function openStream(
+  threadId: string,
+  userToken: string,
+  handlers: StreamHandlers
+): () => void {
+  let sub: Subscription | null = null;
+  let closed = false;
+  // Set before calling sub.unsubscribe() so the unsubscribed event handler
+  // can distinguish a manual cleanup from an unexpected server-side close.
+  let manualClose = false;
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    manualClose = true;
+    sub?.unsubscribe();
+    sub?.removeAllListeners();
+    // Do NOT disconnect the shared shard client — other subscriptions are still active.
+  };
+
+  // Fetch tokens then connect.
+  fetchCentrifugoToken(threadId, userToken)
+    .then(({ ws_url, connection_token, subscription_token, channel, shard_index }) => {
+      if (closed) {
+        // cleanup() was called before the Centrifugo connection could be established
+        // (e.g. the session was cancelled or the component unmounted while the token
+        // fetch was in flight).  Log so the browser console can surface which streams
+        // hit this race and under what circumstances.
+        console.error(
+          "[stream] CLOSED GUARD: cleanup fired before Centrifugo connect threadId=%s — " +
+          "stream will stay at its current status. If this recurs, check for premature " +
+          "cleanup calls (freezeAll, handleRestart, or component unmount).",
+          threadId,
+        );
+        return;
+      }
+
+      // Rewrite the backend-returned ws_url (Docker-internal hostname) to use
+      // the current page origin so the WS upgrade goes through the same proxy
+      // that serves the page:
+      //  - Dev (Vite proxy):  ws://localhost:3000/centrifugo-{n}/connection/websocket
+      //  - Prod (nginx 22332): wss://localhost:22332/centrifugo-{n}/connection/websocket
+      // The backend already includes the /centrifugo-{shard}/ path prefix, so
+      // only the scheme+host needs to be rewritten.
+      const wsScheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const localWsUrl = ws_url.replace(
+        /^wss?:\/\/[^/]+/,
+        `${wsScheme}//${window.location.host}`,
+      );
+
+      // Reuse (or create) the shared Centrifuge connection for this shard.
+      // This keeps the total WebSocket count at 1 per shard regardless of how
+      // many concurrent streams are open.
+      const centrifuge = getOrCreateShardClient(localWsUrl, connection_token);
+
+      sub = centrifuge.newSubscription(channel, {
+        token: subscription_token,
+        recoverable: true,
+        since: { epoch: '', offset: 0 }, // recover all history on first subscription
+      });
+
+      sub.on("publication", (ctx) => {
+        dispatch(ctx.data, handlers);
+      });
+
+      sub.on("error", (ctx) => {
+        console.warn("[stream] subscription error channel=%s threadId=%s code=%s msg=%s",
+          channel, threadId, ctx.error?.code, ctx.error?.message);
+      });
+
+      sub.on("subscribed", () => {
+        // All channel history has been delivered as publication events at this point.
+        // Signal callers so they can poll backend status if no lifecycle events arrived.
+        handlers.onSubscribed?.();
+      });
+
+      sub.on("unsubscribed", (ctx) => {
+        // Only propagate onClose for unexpected server-side unsubscriptions.
+        // manualClose is set by cleanup() before calling sub.unsubscribe(), so
+        // that path is suppressed.
+        if (!manualClose && !closed) {
+          console.warn(
+            "[stream] subscription unsubscribed unexpectedly channel=%s threadId=%s code=%d",
+            channel, threadId, ctx.code,
+          );
+          handlers.onClose?.();
+          closed = true;
+        }
+      });
+
+      sub.subscribe();
+      console.info("[stream] Centrifugo subscribed threadId=%s channel=%s ws=%s shard=%d", threadId, channel, localWsUrl, shard_index);
+    })
+    .catch((err) => {
+      if (closed) return;
+      console.error("[stream] failed to fetch Centrifugo token threadId=%s", threadId, err);
+      handlers.onFailed?.({ event: "failed", message: String(err), error: "centrifugo_token_error" });
+    });
+
+  return cleanup;
 }

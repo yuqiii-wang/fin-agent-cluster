@@ -1,10 +1,8 @@
-"""Streaming subsystem configuration — single source of truth for all topic wiring.
+"""Streaming subsystem configuration — single source of truth for the LLM ingest topic.
 
-Each Redis Stream topic is described by a :class:`StreamTopicConfig` that
-bundles the stream name, consumer group, worker settings, and schedule.
-``celery_app.py`` derives ``include`` and ``beat_schedule`` from
-:data:`ACTIVE_TOPICS`; ``fallback.py`` uses ``fallback_interval`` for asyncio
-poll loops; ``streams.py`` builds consumer-group maps from :data:`ALL_TOPICS`.
+The only active Celery worker is ``celery-ingest``, which reads from the
+``fin:llm:completions`` stream.  All other processing (LangGraph, market
+data, trade signals) runs directly in the FastAPI event loop.
 """
 
 from __future__ import annotations
@@ -35,18 +33,20 @@ _CELERY_WORKER_CONFIG_BASE: dict = {
     "worker_hijack_root_logger": False,
     "worker_log_format": "%(asctime)s | %(levelname)-8s | Celery | %(message)s",
     "worker_task_log_format": "%(asctime)s | %(levelname)-8s | Celery/Task | %(message)s",
-    # Prefetch = 1 prevents workers from hoarding tasks before the previous batch finishes.
     "worker_prefetch_multiplier": 1,
     "broker_connection_retry_on_startup": True,
+    # Prevent concurrent async_result.get() calls from sharing a single
+    # backend Redis connection — each thread gets its own client instance.
+    "result_backend_thread_safe": True,
 }
 
-# Windows: gevent pool — generous heartbeat because greenlets may not respond immediately.
+# Windows: gevent pool.
 _CELERY_WORKER_CONFIG_WINDOWS: dict = {
-    "worker_heartbeat_timeout": 300,   # 5 min
+    "worker_heartbeat_timeout": 300,
     "heartbeat_interval": 30,
 }
 
-# Unix: prefork pool — recycle workers periodically to cap memory growth.
+# Unix: prefork pool.
 _CELERY_WORKER_CONFIG_UNIX: dict = {
     "worker_heartbeat_timeout": 60,
     "heartbeat_interval": 10,
@@ -61,15 +61,11 @@ CELERY_WORKER_CONFIG: dict = {
 
 
 # ---------------------------------------------------------------------------
-# Celery queue names
+# Queue name — single queue for the one active worker
 # ---------------------------------------------------------------------------
 
-#: Low-latency queue for SSE-driving streams (GRAPH_EVENTS).
-QUEUE_CRITICAL: str = "stream:critical"
-#: Default queue for regular data-ingestion streams.
-QUEUE_DEFAULT: str = "stream:default"
-#: Background queue for CPU/IO-heavy compute tasks.
-QUEUE_COMPUTE: str = "stream:compute"
+#: The only Celery queue: LLM ingest.
+QUEUE_INGEST: str = "stream:ingest"
 
 
 # ---------------------------------------------------------------------------
@@ -81,26 +77,19 @@ QUEUE_COMPUTE: str = "stream:compute"
 class StreamTopicConfig:
     """All wiring parameters for a single Redis Streams topic.
 
-    Centralising these here makes the producer/consumer relationship explicit
-    and easy to trace during debugging.  To add a new topic, create a new
-    instance below and append it to :data:`ALL_TOPICS`.
-
     Attributes:
-        stream_key:        Redis stream name (e.g. ``"fin:graph:events"``).
-        consumer_group:    Celery consumer group name (e.g. ``"celery-graph"``).
-        consumer_name:     Unique consumer ID within the group
-                           (e.g. ``"worker-graph-events"``).
-        human_key:         API-facing key used in HTTP/SSE endpoints
-                           (e.g. ``"graph-events"``).
+        stream_key:        Redis stream name (e.g. ``"fin:llm:completions"``).
+        consumer_group:    Celery consumer group name.
+        consumer_name:     Unique consumer ID within the group.
+        human_key:         API-facing key used in HTTP/SSE endpoints.
         beat_interval:     Celery beat polling interval in seconds.
+                           ``None`` means the task is on-demand (not beat-scheduled).
         fallback_interval: asyncio fallback poll interval in seconds.
-        batch_size:        Maximum messages per ``consume_batch`` call.
+        batch_size:        Maximum messages per batch read.
         max_retries:       Celery task max retry attempts on failure.
         retry_delay:       Celery task retry back-off in seconds.
-        task_path:         Fully-qualified Celery task dotted name used to
-                           register the beat entry.  ``None`` means no Celery
-                           worker is implemented yet — the topic is omitted
-                           from the beat schedule and worker include list.
+        task_path:         Fully-qualified Celery task dotted name
+                           (used for module include; ``None`` skips include).
         queue:             Celery queue name this task is dispatched to.
     """
 
@@ -108,109 +97,65 @@ class StreamTopicConfig:
     consumer_group: str
     consumer_name: str
     human_key: str
-    beat_interval: float
+    beat_interval: float | None
     fallback_interval: float
     batch_size: int = 50
     max_retries: int = 3
     retry_delay: float = 5.0
     task_path: str | None = None
-    queue: str = QUEUE_DEFAULT
+    queue: str = QUEUE_INGEST
 
 
 # ---------------------------------------------------------------------------
-# Topic instances  ← edit here to tune or add streams
+# Stream key for per-token events (shard-routed, consumed by Centrifugo)
 # ---------------------------------------------------------------------------
 
-#: LangGraph node lifecycle events (started / token / completed / failed).
-GRAPH_EVENTS = StreamTopicConfig(
-    stream_key="fin:graph:events",
-    consumer_group="celery-graph",
-    consumer_name="worker-graph-events",
-    human_key="graph-events",
-    beat_interval=2.0,       # low latency — drives SSE UI events
-    fallback_interval=2.0,
-    task_path="backend.streaming.workers.graph_events.consume_batch",
-    queue=QUEUE_CRITICAL,
-)
+#: Redis stream name for raw LLM token events.  Shard-routed by thread_id so
+#: each Centrifugo node reads only from the Redis shard it already backs.
+STREAM_LLM_TOKENS: str = "fin:llm:tokens"
 
-#: OHLCV market data published by resource_api.quant_api.
-MARKET_TICKS = StreamTopicConfig(
-    stream_key="fin:market:ticks",
-    consumer_group="celery-market",
-    consumer_name="worker-market-data",
-    human_key="market-ticks",
-    beat_interval=5.0,
-    fallback_interval=5.0,
-    retry_delay=10.0,
-    task_path="backend.streaming.workers.market_data.consume_batch",
-    queue=QUEUE_DEFAULT,
-)
 
-#: Trade recommendations produced by the decision_maker agent.
-TRADE_SIGNALS = StreamTopicConfig(
-    stream_key="fin:signals:trade",
-    consumer_group="celery-signals",
-    consumer_name="worker-signals",
-    human_key="trade-signals",
-    beat_interval=5.0,
-    fallback_interval=5.0,
-    retry_delay=10.0,
-    task_path="backend.streaming.workers.signals.consume_batch",
-    queue=QUEUE_DEFAULT,
-)
+# ---------------------------------------------------------------------------
+# Topic instances
+# ---------------------------------------------------------------------------
 
-#: News articles fetched by resource_api.news_api (no worker yet).
-NEWS_ENRICHED = StreamTopicConfig(
-    stream_key="fin:news:enriched",
-    consumer_group="celery-news",
-    consumer_name="worker-news",
-    human_key="news-enriched",
-    beat_interval=10.0,
-    fallback_interval=10.0,
-)
-
-#: LLM token usage records from llm.factory (no worker yet).
+#: LLM completions stream — one record per complete LLM call.
+#: Written by ``invoke_llm`` after streaming all tokens.
+#: ``beat_interval=None`` means on-demand only (invoke_llm is not beat-scheduled).
 LLM_COMPLETIONS = StreamTopicConfig(
     stream_key="fin:llm:completions",
-    consumer_group="celery-llm",
-    consumer_name="worker-llm",
+    consumer_group="celery-ingest",
+    consumer_name="worker-llm-ingest",
     human_key="llm-completions",
-    beat_interval=10.0,
+    beat_interval=None,
     fallback_interval=10.0,
+    batch_size=100,
+    task_path="backend.streaming.workers.llm_ingest.invoke_llm",
+    queue=QUEUE_INGEST,
 )
 
-#: Quant stats compute jobs — OHLCV bars published by market_data_collector;
-#: worker runs pandas-ta indicators + DB upsert in a Celery process.
-QUANT_COMPUTE = StreamTopicConfig(
-    stream_key="fin:market:quant_compute",
-    consumer_group="celery-quant-compute",
-    consumer_name="worker-quant-compute",
-    human_key="quant-compute",
-    beat_interval=5.0,
-    fallback_interval=5.0,
-    batch_size=20,
-    max_retries=3,
-    retry_delay=10.0,
-    task_path="backend.streaming.workers.quant_compute.consume_batch",
-    queue=QUEUE_COMPUTE,
+#: PG persistence beat topic — reads ``fin:llm:completions`` and persists to DB.
+#: Beat-scheduled every 10 seconds.  Replaces the old FastAPI background loop.
+PG_PERSIST = StreamTopicConfig(
+    stream_key="fin:llm:completions",
+    consumer_group="pg-persist",
+    consumer_name="worker-pg-persist",
+    human_key="pg-persist",
+    beat_interval=10.0,
+    fallback_interval=10.0,
+    batch_size=100,
+    task_path="backend.streaming.workers.pg_persist.persist_llm_completions",
+    queue=QUEUE_INGEST,
 )
 
 # ---------------------------------------------------------------------------
 # Topic registry
 # ---------------------------------------------------------------------------
 
-#: Every registered stream topic (active and pending).
-ALL_TOPICS: tuple[StreamTopicConfig, ...] = (
-    GRAPH_EVENTS,
-    MARKET_TICKS,
-    TRADE_SIGNALS,
-    NEWS_ENRICHED,
-    LLM_COMPLETIONS,
-    QUANT_COMPUTE,
-)
+#: All registered stream topics.
+ALL_TOPICS: tuple[StreamTopicConfig, ...] = (LLM_COMPLETIONS, PG_PERSIST)
 
-#: Topics that have a registered Celery worker (``task_path`` is set).
-#: Used by ``celery_app.py`` to build the ``include`` list and beat schedule.
+#: Topics that have a registered Celery worker module (``task_path`` is set).
 ACTIVE_TOPICS: tuple[StreamTopicConfig, ...] = tuple(
     t for t in ALL_TOPICS if t.task_path is not None
 )
@@ -219,16 +164,11 @@ __all__ = [
     "CELERY_BROKER_DB",
     "CELERY_BACKEND_DB",
     "CELERY_WORKER_CONFIG",
-    "QUEUE_CRITICAL",
-    "QUEUE_DEFAULT",
-    "QUEUE_COMPUTE",
+    "QUEUE_INGEST",
     "StreamTopicConfig",
-    "GRAPH_EVENTS",
-    "MARKET_TICKS",
-    "TRADE_SIGNALS",
-    "NEWS_ENRICHED",
+    "STREAM_LLM_TOKENS",
     "LLM_COMPLETIONS",
-    "QUANT_COMPUTE",
+    "PG_PERSIST",
     "ALL_TOPICS",
     "ACTIVE_TOPICS",
 ]

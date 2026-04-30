@@ -1,0 +1,46 @@
+# Centrifugo WebSocket routes -- real-time event streaming via two Centrifugo nodes.
+# Each route proxies WebSocket (and HTTP) connections to the corresponding Centrifugo shard.
+# strip_path: true removes the /centrifugo-{n} prefix so Centrifugo sees the path as
+# /connection/websocket, /api, /health, etc.
+#
+# Token endpoint for bootstrap:
+#   GET /api/v1/centrifugo/token?thread_id=...  -- served by FastAPI (route-centrifugo-token)
+#
+# WebSocket connections (from browser via centrifuge JS SDK):
+#   WS  /centrifugo-0/connection/websocket      -- Centrifugo shard 0 (-> redis-0)
+#   WS  /centrifugo-1/connection/websocket      -- Centrifugo shard 1 (-> redis-1)
+routes:
+  # FastAPI token bootstrap endpoint
+  - name: route-centrifugo-token
+    service: fastapi-assistant
+    paths:
+      - /api/v1/centrifugo
+    strip_path: false
+    protocols: [http, https]
+    plugins:
+      # Override the global 300/min per IP limit — token endpoint is pure JWT signing
+      # (no DB work) and must handle bursts of 100+ simultaneous sessions all
+      # requesting tokens at once during high-concurrency perf tests.
+      - name: rate-limiting
+        config:
+          minute: 6000
+          hour: 100000
+          policy: local
+          limit_by: ip
+          hide_client_headers: false
+
+  # Centrifugo shard 0 -- WebSocket only
+  - name: route-centrifugo-0
+    service: centrifugo-0
+    paths:
+      - /centrifugo-0
+    strip_path: true
+    protocols: [ws, wss]
+
+  # Centrifugo shard 1 -- WebSocket only
+  - name: route-centrifugo-1
+    service: centrifugo-1
+    paths:
+      - /centrifugo-1
+    strip_path: true
+    protocols: [ws, wss]

@@ -1,0 +1,56 @@
+{
+  "engine": {
+    "type": "redis",
+    "redis": {
+      "address": "redis-1:6379"
+    }
+  },
+  "client": {
+    "channel_limit": 1024,
+    "allowed_origins": [
+      "http://localhost:3000",
+      "https://localhost:3000",
+      "http://localhost:22332",
+      "https://localhost:22332",
+      "http://localhost:8886",
+      "https://localhost:8886",
+      "http://localhost:8888",
+      "https://localhost:8443",
+      "http://127.0.0.1:3000",
+      "https://127.0.0.1:3000",
+      "http://127.0.0.1:22332",
+      "https://127.0.0.1:22332",
+      "http://127.0.0.1:8888",
+      "https://127.0.0.1:8443"
+    ]
+  },
+  "channel": {
+    "namespaces": [
+      {
+        "name": "thread",
+        "history_size": 2000,
+        "history_ttl": "600s",
+        "force_recovery": true
+      }
+    ]
+  },
+  "consumers": [
+    {
+      "enabled": true,
+      "name": "token_consumer",
+      "type": "redis_stream",
+      "redis_stream": {
+        "address": ["redis-1:6379"],
+        "streams": ["fin:llm:tokens"],
+        "consumer_group": "centrifugo-1-token",
+        "num_workers": 32
+      }
+    }
+  ],
+  "health": {
+    "enabled": true
+  },
+  "log": {
+    "level": "debug"
+  }
+}

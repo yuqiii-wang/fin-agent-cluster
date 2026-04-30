@@ -6,7 +6,7 @@
 #   GET /api/v1/quant/symbol-currency/{symbol}           currency info for a symbol
 routes:
   - name: route-quant
-    service: fastapi
+    service: fastapi-assistant
     paths:
       - /api/v1/quant
     strip_path: false

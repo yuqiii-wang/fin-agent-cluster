@@ -1,0 +1,16 @@
+# Threads routes — thread inspection and lifecycle event management.
+# Source: api/v1/threads/routes.yml
+#
+#   GET  /api/v1/threads                                list threads for authenticated user
+#   GET  /api/v1/threads/{thread_id}/llm-responses     LLM completion records from DB
+#   GET  /api/v1/threads/{thread_id}/state             LangGraph checkpoint state (read-only)
+#   POST /api/v1/threads/{thread_id}/status            update thread DB status + optional event
+#   POST /api/v1/threads/{thread_id}/events/emit       publish lifecycle event to Centrifugo channel
+#   POST /api/v1/threads/{thread_id}/events/resync     re-emit current thread state to reconnecting clients
+routes:
+  - name: route-threads
+    service: fastapi-assistant
+    paths:
+      - /api/v1/threads
+    strip_path: false
+    protocols: [http, https]

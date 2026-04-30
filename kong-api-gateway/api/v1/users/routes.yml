@@ -1,20 +1,26 @@
 # Query routes — submit, cancel, and poll financial analysis queries.
 # Source: api/v1/users/routes.yml
 #
-#   POST /api/v1/users/query                               submit a new query
-#   POST /api/v1/users/query/{thread_id}/cancel            cancel a running query
-#   POST /api/v1/users/query/{thread_id}/perf-stable       signal stable TPS (concurrency mode)
-#   GET  /api/v1/users/query/{thread_id}                   poll query status
-#   GET  /api/v1/users/query/{thread_id}/tasks             list agent sub-tasks
-#   GET  /api/v1/users/query/{thread_id}/nodes             node-level I/O snapshots
+# Request classification:
+#   fastapi-runner    — LangGraph-triggering routes (submit, ack)
+#   fastapi-assistant — Non-LangGraph routes (reads, cancel, perf-stable)
+#
+#   POST /api/v1/users/query                               submit a new query      → runner
+#   POST /api/v1/users/query/{thread_id}/ack               start LangGraph run     → runner
+#   POST /api/v1/users/query/{thread_id}/cancel            cancel a running query  → assistant
+#   POST /api/v1/users/query/{thread_id}/perf-stable       signal stable TPS       → assistant
+#   GET  /api/v1/users/query/{thread_id}                   poll query status       → assistant
+#   GET  /api/v1/users/query/{thread_id}/tasks             list agent sub-tasks    → assistant
+#   GET  /api/v1/users/query/{thread_id}/nodes             node-level I/O          → assistant
 routes:
-  # Dedicated route for query submission with a relaxed rate limit so
-  # high-concurrency perf-test sessions (50-100+ concurrent streams) can
-  # burst-submit all queries without hitting the global 300/min cap.
+  # ── Runner routes (LangGraph-triggering) ────────────────────────────────────
+
+  # Dedicated route for query submission — routes to runners only.
+  # Relaxed rate limit so high-concurrency perf-test sessions can burst-submit.
   - name: route-query-submit
-    service: fastapi
+    service: fastapi-runner
     paths:
-      - /api/v1/users/query$
+      - ~/api/v1/users/query$
     methods: [POST, OPTIONS]
     strip_path: false
     protocols: [http, https]
@@ -23,17 +29,35 @@ routes:
         config:
           minute: 6000
           hour: 100000
-          policy: redis
+          policy: local
           limit_by: ip
           hide_client_headers: false
-          redis:
-            host: "{REDIS_HOST}"
-            port: {REDIS_PORT}
-            database: 1
-            timeout: 2000
+
+  # ACK route — starts LangGraph execution; must go to a runner instance.
+  - name: route-query-ack
+    service: fastapi-runner
+    paths:
+      - ~/api/v1/users/query/[^/]+/ack$
+    methods: [POST, OPTIONS]
+    strip_path: false
+    protocols: [http, https]
+
+  # ── Assistant routes (non-LangGraph) ────────────────────────────────────────
+
+  # All remaining user/query endpoints: reads, cancel, perf-stable.
+  # Raised rate limit: cancel is a lightweight fire-and-forget operation and
+  # must not 429 during high-concurrency load tests (N streams all timing out).
   - name: route-queries
-    service: fastapi
+    service: fastapi-assistant
     paths:
       - /api/v1/users
     strip_path: false
     protocols: [http, https]
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 6000
+          hour: 100000
+          policy: local
+          limit_by: ip
+          hide_client_headers: false

@@ -3,11 +3,9 @@ import { Button, Col, Divider, Dropdown, Form, InputNumber, Row, Segmented, Spac
 import { CheckCircleOutlined, DownOutlined, PauseCircleOutlined, ReloadOutlined, SyncOutlined } from "@ant-design/icons";
 import { useSessionManager } from "./useSessionManager";
 import { buildColumns } from "./columns";
-import { StreamTaskDrawer } from "./StreamTaskDrawer";
 import { AggregateStatsHeader } from "./AggregateStatsHeader";
 import { useStyles } from "./StreamingPerfTestPanel.styles";
 import type { PerfTestConfig, ThreadSession } from "./types";
-import type { TaskTypeMeta } from "../../types";
 import { DEFAULT_PERF_CONFIG } from "./types";
 
 const { Title } = Typography;
@@ -15,15 +13,12 @@ const { Title } = Typography;
 export interface StreamingPerfTestPanelProps {
   /** Guest user token for submitting stream requests. */
   userToken: string;
-  /** Task type metadata for rendering the StreamTaskDrawer. */
-  taskMeta?: TaskTypeMeta | null;
   /** Called when the user clicks Complete — signals App to mark the top node as completed. */
   onComplete?: () => void;
 }
 
 export function StreamingPerfTestPanel({
   userToken,
-  taskMeta = null,
   onComplete,
 }: StreamingPerfTestPanelProps) {
   const { token } = theme.useToken();
@@ -33,13 +28,20 @@ export function StreamingPerfTestPanel({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [customAddVal, setCustomAddVal] = useState<number | null>(null);
   const [customAddError, setCustomAddError] = useState<string>("");
-  const [taskDrawerThreadId, setTaskDrawerThreadId] = useState<string | null>(null);
   /** thread_id of the session whose streaming token log is currently visible.
    *  At most one session may be expanded at a time. */
   const [expandedTokenLogId, setExpandedTokenLogId] = useState<string | null>(null);
 
   const handleToggleTokenLog = useCallback((thread_id: string) => {
     setExpandedTokenLogId((prev) => (prev === thread_id ? null : thread_id));
+  }, []);
+
+  /** thread_id of the session whose identity stack is currently expanded.
+   *  Accordion: at most one row is expanded at a time. */
+  const [expandedIdentityId, setExpandedIdentityId] = useState<string | null>(null);
+
+  const handleToggleIdentity = useCallback((thread_id: string) => {
+    setExpandedIdentityId((prev) => (prev === thread_id ? null : thread_id));
   }, []);
 
   /** Measured height of the sticky control-panel header — used as offsetHeader for the Table. */
@@ -52,6 +54,16 @@ export function StreamingPerfTestPanel({
     obs.observe(el);
     return () => obs.disconnect();
   }, []);
+
+  /** Track window height so the virtual Table gets a numeric scroll.y (required by rc-virtual-list). */
+  const [windowHeight, setWindowHeight] = useState(() => window.innerHeight);
+  useEffect(() => {
+    const handler = () => setWindowHeight(window.innerHeight);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  // tableSection padding: top 12px + bottom 16px = 28px
+  const tableScrollY = Math.max(200, windowHeight - stickyHeaderH - 28);
 
   // Presets differ by mode: Concurrency tests need 10× more streams.
   const ADD_PRESETS = config.testMode === "concurrency"
@@ -86,6 +98,7 @@ export function StreamingPerfTestPanel({
     activeCount,
     completedCount,
     aggregateStats,
+    activeDigestingCount,
     frozen,
     handleAddRequest,
     handleRestart,
@@ -98,8 +111,8 @@ export function StreamingPerfTestPanel({
   const isActive = activeCount > 0;
 
   const columns = useMemo(
-    () => buildColumns(handleCancelOne, config.tokenCount, frozen, setTaskDrawerThreadId, config.testMode, config.timeoutSecs, token, config.tokenPerSec, expandedTokenLogId, handleToggleTokenLog),
-    [handleCancelOne, config.tokenCount, config.testMode, config.timeoutSecs, config.tokenPerSec, frozen, token, expandedTokenLogId, handleToggleTokenLog],
+    () => buildColumns(handleCancelOne, config.tokenCount, frozen, undefined, config.testMode, config.timeoutSecs, token, config.tokenPerSec, expandedTokenLogId, handleToggleTokenLog, expandedIdentityId, handleToggleIdentity),
+    [handleCancelOne, config.tokenCount, config.testMode, config.timeoutSecs, config.tokenPerSec, frozen, token, expandedTokenLogId, handleToggleTokenLog, expandedIdentityId, handleToggleIdentity],
   );
 
   return (
@@ -244,7 +257,7 @@ export function StreamingPerfTestPanel({
           <Col span={8}><Statistic title="Active Streams" value={activeCount} /></Col>
           <Col span={8}><Statistic title="Completed" value={completedCount} /></Col>
         </Row>
-        <AggregateStatsHeader stats={aggregateStats} />
+        <AggregateStatsHeader stats={aggregateStats} isDigesting={activeDigestingCount > 0} />
       </div>
 
       {/* ── Scrollable grid ── */}
@@ -256,15 +269,12 @@ export function StreamingPerfTestPanel({
           pagination={false}
           size="small"
           bordered
-          sticky={{ offsetHeader: stickyHeaderH }}
+          virtual
+          scroll={{ y: tableScrollY }}
+          sticky={{ offsetHeader: 0 }}
         />
       </div>
 
-      <StreamTaskDrawer
-        threadId={taskDrawerThreadId}
-        taskMeta={taskMeta}
-        onClose={() => setTaskDrawerThreadId(null)}
-      />
     </div>
   );
 }

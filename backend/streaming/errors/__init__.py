@@ -1,14 +1,13 @@
-"""Streaming workers error code registry package.
+"""Streaming error code registry package.
 
-Re-exports all error code constants and the ``STREAMING_WORKER_ERRORS``
-description dict::
+Re-exports all streaming worker and graph/task domain error codes::
 
     from backend.streaming.errors import (
         STREAMING_WORKER_ERRORS,
-        STREAM_WORKER_BATCH_FAILED,
-        STREAM_WORKER_MSG_FAILED,
-        STREAM_FALLBACK_MODE,
-        STREAM_ORPHAN_DETECTED,
+        STREAMING_ERRORS,
+        GRAPH_EXECUTION_FAILED,
+        LLM_INFERENCE_FAILED,
+        ...
     )
 """
 
@@ -20,7 +19,23 @@ from backend.streaming.errors.codes import (
     STREAM_WORKER_MSG_FAILED,
     STREAM_FALLBACK_MODE,
     STREAM_ORPHAN_DETECTED,
-    STREAM_QOS_STALL,
+)
+from backend.streaming.errors.domain_codes import (
+    STREAMING_ERRORS,
+    GRAPH_EXECUTION_FAILED,
+    TASK_EXECUTION_FAILED,
+    ORPHAN_SERVER_RESTART,
+    PERF_CELERY_REVOKED,
+    PERF_LOCUST_STREAM_INTERRUPTED,
+    PERF_INGEST_TIMEOUT,
+    PERF_PUBLISH_FAILED,
+    SCHED_COORDINATOR_TIMEOUT,
+    SCHED_STREAM_STALE,
+    MARKET_DATA_FETCH_FAILED,
+    LLM_INFERENCE_FAILED,
+    DB_INSERT_FAILED,
+    WEB_SEARCH_FAILED,
+    QO_EXTRACTION_FAILED,
 )
 
 __all__ = [
@@ -29,5 +44,19 @@ __all__ = [
     "STREAM_WORKER_MSG_FAILED",
     "STREAM_FALLBACK_MODE",
     "STREAM_ORPHAN_DETECTED",
-    "STREAM_QOS_STALL",
+    "STREAMING_ERRORS",
+    "GRAPH_EXECUTION_FAILED",
+    "TASK_EXECUTION_FAILED",
+    "ORPHAN_SERVER_RESTART",
+    "PERF_CELERY_REVOKED",
+    "PERF_LOCUST_STREAM_INTERRUPTED",
+    "PERF_INGEST_TIMEOUT",
+    "PERF_PUBLISH_FAILED",
+    "SCHED_COORDINATOR_TIMEOUT",
+    "SCHED_STREAM_STALE",
+    "MARKET_DATA_FETCH_FAILED",
+    "LLM_INFERENCE_FAILED",
+    "DB_INSERT_FAILED",
+    "WEB_SEARCH_FAILED",
+    "QO_EXTRACTION_FAILED",
 ]

@@ -1,80 +1,32 @@
-"""Shared state schema for the financial analysis LangGraph workflow."""
+"""State schema for the LangGraph workflow (shared across all agents)."""
 
 from __future__ import annotations
 
-from typing import Annotated, TypedDict
-from typing import NotRequired
+from typing import NotRequired, TypedDict
 
 
-def _merge_lists(a: list[str], b: list[str]) -> list[str]:
-    """Reducer that concatenates two step-log lists across parallel branches."""
-    return a + b
+class StreamRunState(TypedDict):
+    """Shared state for the multi-agent LangGraph graph.
 
+    The outer graph routes to the appropriate sub-graph based on ``query``.
+    Each agent sub-graph populates ``node_id``, ``leaf_node_id``, ``task_id``,
+    ``stream_id`` (where applicable), and ``result`` at runtime.
 
-class PerfTestState(TypedDict):
-    """Minimal state for the single-node streaming performance-test graph."""
-
-    thread_id: str
-    total_tokens: int
-    timeout_secs: int
-    test_mode: str   # "throughput" | "concurrency"
-    token_per_sec: int  # concurrency mode: target ingest rate
-    result: str  # summary string written by perf_test_streamer
-
-
-class FinAnalysisState(TypedDict):
-    """Typed state passed between all graph nodes.
-
-    Fields are populated incrementally as each node runs.
+    Fields
+    ------
+    thread_id    : UUID of the LangGraph run (generated at query submit).
+    query        : Raw query text used for agent routing and processing.
+    node_id      : UUID of the sub-graph node execution (set by agent node).
+    leaf_node_id : UUID of the leaf node execution (set by agent node).
+    task_id      : DB primary-key of the ``fin_agents.tasks`` row.
+    stream_id    : UUID of the streaming session (set by streamer agent).
+    result       : Summary string set by the active agent after completion.
     """
 
-    query: str
-    thread_id: str           # Correlation ID for logging / checkpointing
-    ticker: str              # Resolved ticker symbol (set by query_optimizer)
-    ticker_indexes: list[str]        # Major stock index tickers the ticker belongs to (set by query_optimizer)
-    peer_tickers: list[str]      # Peer tickers for comparative data (set by query_optimizer)
-    market_data_input: dict      # Structured {query, quants, news} output from query_optimizer
-    market_data_output: dict     # Serialised MarketDataOutput from market_data_collector
-    market_data: str
-    fundamental_analysis: str
-    technical_analysis: str
-    risk_assessment: str
-    report: str
-    # Accumulate step-by-step logs so every node's I/O is traceable.
-    steps: Annotated[list[str], _merge_lists]
-
-
-class UnifiedGraphState(TypedDict):
-    """Merged state for the unified parent graph that routes to either the
-    financial analysis pipeline or the perf-test node.
-
-    All fields from both :class:`FinAnalysisState` and :class:`PerfTestState`
-    are present so the routing node and all downstream nodes can read from a
-    single consistent dict.  Fields irrelevant to the active branch are
-    populated with empty/zero defaults in the initial state set by the
-    Celery runner and are simply ignored by the nodes that don't need them.
-    """
-
-    # --- shared ---
     thread_id: str
     query: str
-    steps: Annotated[list[str], _merge_lists]
-
-    # --- fin analysis fields ---
-    ticker: str
-    ticker_indexes: list[str]
-    peer_tickers: list[str]
-    market_data_input: dict
-    market_data_output: dict
-    market_data: str
-    fundamental_analysis: str
-    technical_analysis: str
-    risk_assessment: str
-    report: str
-
-    # --- perf test fields (optional; perf_test_streamer uses its own defaults) ---
-    total_tokens: NotRequired[int]
-    timeout_secs: NotRequired[int]
-    test_mode: NotRequired[str]   # "throughput" | "concurrency"
-    token_per_sec: NotRequired[int]  # concurrency mode: target ingest rate
+    node_id: NotRequired[str]
+    leaf_node_id: NotRequired[str]
+    task_id: NotRequired[int]
+    stream_id: NotRequired[str]
     result: NotRequired[str]

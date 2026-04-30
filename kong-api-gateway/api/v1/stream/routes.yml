@@ -1,35 +1,46 @@
-# Stream routes — real-time SSE event feed for a running query.
-# Source: api/v1/stream/routes.yml
-# These connections are long-lived (minutes); routed through the dedicated
-# fastapi-sse service/upstream so they are isolated from the regular-request
-# keepalive pool.
+# Stream utility routes -- done-ack, status-ack.
+# Real-time streaming is via Centrifugo WebSocket (see centrifugo/routes.yml).
 #
-#   GET  /api/v1/stream/{thread_id}         subscribe to SSE event stream
-#   PUT  /api/v1/stream/{thread_id}/watch   register which task to watch for tokens
+#   POST /api/v1/stream/{thread_id}/done-ack    -- done acknowledgement
+#   POST /api/v1/stream/{thread_id}/status-ack  -- query_status phase acknowledgement
+#
+# route-stream-double-check (higher priority): requests carrying X-Double-Check: true
+# are re-delivery ACKs triggered by the assistant verifier; pin them explicitly to
+# the assistant upstream so they are always handled by the same process that
+# manages the query_status_ack Redis store.
 routes:
-  - name: route-stream
-    service: fastapi-sse
+  - name: route-stream-double-check
+    service: fastapi-assistant
+    paths:
+      - /api/v1/stream
+    headers:
+      x-double-check:
+        - "true"
+    strip_path: false
+    protocols: [http, https]
+    plugins:
+      # Raised rate limit: double-check re-delivery ACKs are lightweight and
+      # must not 429 during high-concurrency load tests (N streams × M phases).
+      - name: rate-limiting
+        config:
+          minute: 60000
+          hour: 600000
+          policy: local
+          limit_by: ip
+          hide_client_headers: false
+  - name: route-stream-utils
+    service: fastapi-assistant
     paths:
       - /api/v1/stream
     strip_path: false
     protocols: [http, https]
-    # SSE requires response buffering disabled so events are flushed
-    # immediately instead of being held in Kong's nginx buffer.
-    response_buffering: false
-    # Rate-limiting is meaningless for long-lived SSE connections: each stream
-    # is a single GET request held open for minutes. Override the global
-    # 300/min cap with a very high limit so high-concurrency perf tests
-    # (100+ streams) can open all connections without hitting 429s.
     plugins:
+      # Raised rate limit: status-ack / done-ack are lightweight fire-and-forget
+      # operations; must not 429 under high-concurrency load (N sessions × phases).
       - name: rate-limiting
         config:
-          minute: 10000
-          hour: 500000
-          policy: redis
+          minute: 60000
+          hour: 600000
+          policy: local
           limit_by: ip
           hide_client_headers: false
-          redis:
-            host: "{REDIS_HOST}"
-            port: {REDIS_PORT}
-            database: 1
-            timeout: 2000

@@ -1,12 +1,10 @@
-# Kong upstreams — FastAPI backend (two pools: regular + SSE-dedicated).
-# HTTP/2 on Kong's HTTPS listener handles browser→Kong multiplexing (no 6-conn limit).
-# Two separate upstreams handle Kong→FastAPI isolation:
-#   fastapi-upstream       — regular short-lived requests (keepalive pool reuse)
-#   fastapi-sse-upstream   — long-lived SSE connections (keepalive disabled;
-#                            connections are closed after each stream ends)
-# BACKEND_HOST / BACKEND_PORT are injected via docker-compose environment variables.
+# Kong upstreams -- FastAPI backend (runners + assistants) and Centrifugo WebSocket shards.
+# HTTP/2 on Kong's HTTPS listener handles browser->Kong multiplexing (no 6-conn limit).
+# BACKEND_HOST / RUNNER_PORT_* / ASSISTANT_PORT_* are injected via environment variables.
+# CENTRIFUGO_0_HOST and CENTRIFUGO_1_HOST default to the Docker service names.
 upstreams:
-  - name: fastapi-upstream
+  # Runner upstream — 4 full FastAPI instances that handle ALL request types including LangGraph.
+  - name: runner-upstream
     algorithm: round-robin
     healthchecks:
       active:
@@ -19,16 +17,17 @@ upstreams:
         http_path: /health
         timeout: 5
     targets:
-      - target: "{BACKEND_HOST}:{BACKEND_PORT}"
+      - target: "{BACKEND_HOST}:{RUNNER_PORT_1}"
         weight: 100
-      - target: "{BACKEND_HOST}:{BACKEND_PORT_2}"
+      - target: "{BACKEND_HOST}:{RUNNER_PORT_2}"
+        weight: 100
+      - target: "{BACKEND_HOST}:{RUNNER_PORT_3}"
+        weight: 100
+      - target: "{BACKEND_HOST}:{RUNNER_PORT_4}"
         weight: 100
 
-  # Dedicated upstream for long-lived SSE connections.
-  # KONG_NGINX_UPSTREAM_KEEPALIVE=32 is set in docker-compose.yml for the
-  # regular pool; SSE connections are closed by the upstream when the stream
-  # ends (FastAPI closes the response), so they don't linger in the pool.
-  - name: fastapi-sse-upstream
+  # Assistant upstream — 2 lightweight FastAPI instances for non-LangGraph requests only.
+  - name: assistant-upstream
     algorithm: round-robin
     healthchecks:
       active:
@@ -41,7 +40,42 @@ upstreams:
         http_path: /health
         timeout: 5
     targets:
-      - target: "{BACKEND_HOST}:{BACKEND_PORT}"
+      - target: "{BACKEND_HOST}:{ASSISTANT_PORT_1}"
         weight: 100
-      - target: "{BACKEND_HOST}:{BACKEND_PORT_2}"
+      - target: "{BACKEND_HOST}:{ASSISTANT_PORT_2}"
         weight: 100
+
+  # Centrifugo shard 0 -- backed by redis-0
+  - name: centrifugo-0-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        healthy:
+          interval: 10
+          successes: 1
+        unhealthy:
+          interval: 5
+          http_failures: 3
+        http_path: /health
+        timeout: 5
+    targets:
+      - target: "{CENTRIFUGO_0_HOST}:8000"
+        weight: 100
+
+  # Centrifugo shard 1 -- backed by redis-1
+  - name: centrifugo-1-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        healthy:
+          interval: 10
+          successes: 1
+        unhealthy:
+          interval: 5
+          http_failures: 3
+        http_path: /health
+        timeout: 5
+    targets:
+      - target: "{CENTRIFUGO_1_HOST}:8000"
+        weight: 100
+

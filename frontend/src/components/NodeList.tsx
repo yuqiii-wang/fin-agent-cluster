@@ -126,11 +126,9 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
     }
     if (!needsRefresh || !selectedNodeName) return;
 
-    console.debug("[NodeList] auto-refresh executions selectedNode=%s threadId=%s", selectedNodeName, threadId);
     setLoading(true);
     fetchNodeExecutions(threadId)
       .then((list) => {
-        console.debug("[NodeList] auto-refresh ok count=%d", list.length);
         const map: Record<string, NodeExecutionInfo | null> = {};
         for (const e of list) map[e.node_name] = e;
         setExecutions(map);
@@ -143,7 +141,6 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
 
   const handleClick = useCallback((node: NodeGroup) => {
     const name = node.node_name;
-    console.debug("[NodeList] click node=%s status=%s threadId=%s", name, node.status, threadId);
     if (selectedNodeName === name) {
       setSelectedNodeName(null);
       onNodeClick(node);
@@ -157,13 +154,10 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
     const stale = cached !== undefined && node.status === "completed" &&
       Object.keys(cached?.output ?? {}).length === 0;
 
-    console.debug("[NodeList] cached=%o stale=%s", cached, stale);
     if (!(name in executions) || stale) {
       setLoading(true);
-      console.debug("[NodeList] fetching executions threadId=%s", threadId);
       fetchNodeExecutions(threadId)
         .then((list) => {
-          console.debug("[NodeList] fetchNodeExecutions ok count=%d", list.length, list);
           const map: Record<string, NodeExecutionInfo | null> = {};
           for (const e of list) map[e.node_name] = e;
           setExecutions(map);

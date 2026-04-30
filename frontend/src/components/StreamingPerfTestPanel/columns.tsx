@@ -5,10 +5,71 @@ import { InfoCircleOutlined, PauseCircleOutlined, UnorderedListOutlined } from "
 import type { ThreadSession } from "./types";
 import { TERMINAL_STATUSES } from "./types";
 import { isSessionStable } from "./useSessionManager";
+import { isSessionSuspicious } from "./aggregateStats";
 import { styles, getColumnColors } from "./columns.styles";
 import { ThinkingStream } from "../OutputViewer/subRenderers";
 
 const { Text } = Typography;
+
+/** One labelled row in the Identity stack cell. */
+interface IdentityRowProps {
+  label: string;
+  /** The full value — UUID or number. Shown in Tooltip; display truncates UUIDs. */
+  value: string;
+  /** When true the value is displayed as-is (not truncated). */
+  numeric?: boolean;
+}
+
+function IdentityRow({ label, value, numeric }: IdentityRowProps) {
+  const display = numeric ? value : value;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, lineHeight: "18px" }}>
+      <span style={{ color: "#8c8c8c", width: 44, flexShrink: 0, fontSize: 10 }}>{label}</span>
+      <Text code style={{ fontSize: 10, userSelect: "all" }}>{display}</Text>
+    </div>
+  );
+}
+
+/**
+ * Identity cell: collapsed = Stream ID only (click to expand).
+ * Expanded = full stack: Thread, Node, Leaf, Task, Stream.
+ * Falls back gracefully before the `started` event arrives (stream_id is null).
+ * Controlled: parent manages accordion state via `expanded` + `onToggle`.
+ */
+function IdentityStack({ record, expanded, onToggle }: { record: ThreadSession; expanded: boolean; onToggle: () => void }) {
+
+  if (!expanded) {
+    return (
+      <div
+        style={{ fontFamily: "monospace", cursor: "pointer" }}
+        onClick={onToggle}
+        title="Click to expand IDs"
+      >
+        {record.stream_id ? (
+          <IdentityRow label="Stream" value={record.stream_id} />
+        ) : record.thread_id ? (
+          <IdentityRow label="Thread" value={record.thread_id} />
+        ) : (
+          <Text type="secondary" style={{ fontSize: 10 }}>—</Text>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{ fontFamily: "monospace", cursor: "pointer" }}
+      onClick={onToggle}
+      title="Click to collapse"
+    >
+      <IdentityRow label="Thread" value={record.thread_id} />
+      {record.node_id      && <IdentityRow label="Node"   value={record.node_id} />}
+      {record.leaf_node_id && <IdentityRow label="Leaf"   value={record.leaf_node_id} />}
+      {record.task_id != null && <IdentityRow label="Task" value={String(record.task_id)} numeric />}
+      {record.stream_id    && <IdentityRow label="Stream" value={record.stream_id} />}
+    </div>
+  );
+}
 
 /** Format a duration in milliseconds for display.
  *  < 1 ms  → "1ms"  (minimum resolution)
@@ -37,6 +98,8 @@ export function buildColumns(
   tokenPerSec: number = 500,
   expandedTokenLogId?: string | null,
   onToggleTokenLog?: (thread_id: string) => void,
+  expandedIdentityId?: string | null,
+  onToggleIdentity?: (thread_id: string) => void,
 ): ColumnsType<ThreadSession> {
   const colors = token ? getColumnColors(token) : getColumnColors({
     colorPrimary: "#1677ff",
@@ -46,11 +109,16 @@ export function buildColumns(
   });
   return [
     {
-      title: "Stream",
-      dataIndex: "label",
-      key: "label",
-      width: 100,
-      render: (label: string) => <Text strong>{label}</Text>,
+      title: "Identity",
+      key: "identity",
+      width: 320,
+      render: (_: unknown, record: ThreadSession) => (
+        <IdentityStack
+          record={record}
+          expanded={expandedIdentityId === record.thread_id}
+          onToggle={() => onToggleIdentity?.(record.thread_id)}
+        />
+      ),
     },
     {
       title: "Mode",
@@ -105,8 +173,8 @@ export function buildColumns(
     {
       title: (
         <span>
-          Ingest{" "}
-          <Tooltip title="Token writes to the Redis perf stream. Throughput: produced/total with write rate. Concurrency: continuous write alongside digest until timeout.">
+          Ingest Time{" "}
+          <Tooltip title="Elapsed time for the ingest phase (writing tokens to the Redis perf stream). Shows live progress while running; shows final elapsed time once complete.">
             <InfoCircleOutlined style={colors.infoIcon} />
           </Tooltip>
         </span>
@@ -115,50 +183,32 @@ export function buildColumns(
       width: 160,
       align: "right",
       render: (_: unknown, record: ThreadSession) => {
-        const { ingest_status, ingest_produced, ingest_total, ingest_tps } = record;
-        const rowMode = record.test_mode;
+        const { ingest_status, ingest_produced, ingest_ms } = record;
         if (!ingest_status && ingest_produced === undefined) return <Text type="secondary">—</Text>;
         const produced = ingest_produced ?? 0;
-        // total_tokens=0 from backend means concurrency mode (no fixed total).
-        const total = (ingest_total && ingest_total > 0) ? ingest_total : null;
-        const tpsLabel = ingest_tps != null ? ` @ ${ingest_tps.toLocaleString()} tps` : "";
-        const label = total
-          ? `${produced.toLocaleString()} / ${total.toLocaleString()}${tpsLabel}`
-          : `${produced.toLocaleString()}${tpsLabel}`;
-        if (ingest_status === "running") {
-          const pctText = total
-            ? `${((produced / total) * 100).toFixed(1)}% ingested${tpsLabel}`
-            : rowMode === "concurrency"
-              ? `continuous ingest${tpsLabel}`
-              : `ingesting${tpsLabel}`;
-          // In concurrency mode the ingest runs alongside streaming for the full
-          // test duration — show a green (success) dot since this is the expected
-          // healthy state, not a transient "working" indicator.
-          const badgeStatus = rowMode === "concurrency" ? "success" as const : "processing" as const;
-          return (
-            <Tooltip title={pctText}>
-              <Badge status={badgeStatus} text={<Text style={styles.smallText}>{label}</Text>} />
-            </Tooltip>
-          );
-        }
+        const timeLabel = ingest_ms != null
+          ? ingest_ms >= 1000
+            ? `${(ingest_ms / 1000).toFixed(2)}s`
+            : `${ingest_ms}ms`
+          : null;
         if (ingest_status === "completed") {
           return (
-            <Tooltip title="Ingest complete">
-              <Badge status="success" text={<Text style={styles.smallText}>{produced.toLocaleString()}</Text>} />
+            <Tooltip title={`Ingest complete — ${produced.toLocaleString()} tokens`}>
+              <Badge status="success" text={<Text style={styles.smallText}>{timeLabel ?? produced.toLocaleString()}</Text>} />
             </Tooltip>
           );
         }
         if (ingest_status === "timeout") {
           // In concurrency mode timeout is the expected end state — show success.
-          const badgeStatus = rowMode === "concurrency" ? "success" : "warning";
-          const tooltipText = rowMode === "concurrency" ? "Ingest ended (timeout — expected)" : "Ingest timed out";
+          const badgeStatus = record.test_mode === "concurrency" ? "success" : "warning";
+          const tooltipText = record.test_mode === "concurrency" ? "Ingest ended (timeout — expected)" : "Ingest timed out";
           return (
-            <Tooltip title={tooltipText}>
-              <Badge status={badgeStatus} text={<Text style={styles.smallText}>{label}</Text>} />
+            <Tooltip title={`${tooltipText} — ${produced.toLocaleString()} tokens`}>
+              <Badge status={badgeStatus} text={<Text style={styles.smallText}>{timeLabel ?? produced.toLocaleString()}</Text>} />
             </Tooltip>
           );
         }
-        return <Text style={styles.smallText}>{label}</Text>;
+        return <Text style={styles.smallText}>{timeLabel ?? produced.toLocaleString()}</Text>;
       },
     },
     {
@@ -174,41 +224,20 @@ export function buildColumns(
       width: 180,
       align: "right",
       render: (_: unknown, record: ThreadSession) => {
-        const { concurrent_batch_size, concurrent_digest_tps, concurrent_ingest_tps, concurrent_stream_len } = record;
         const { batch_first, batch_max, batch_ave, batch_last } = record;
-        const hasBatchStats = batch_first !== undefined;
-        const hasConcurrent = concurrent_batch_size != null;
-        if (!hasBatchStats && !hasConcurrent) return <Text type="secondary">—</Text>;
-        const concurrentLabel = hasConcurrent ? (() => {
-          const digestTps = concurrent_digest_tps ?? 0;
-          const ingestTps = concurrent_ingest_tps ?? 0;
-          const ratio = ingestTps > 0 ? (digestTps / ingestTps).toFixed(1) : "∞";
-          const backlog = concurrent_stream_len != null ? concurrent_stream_len.toLocaleString() : "?";
-          return (
-            <Tooltip title={`adaptive batch | digest/ingest ratio: ${ratio}×  |  backlog: ${backlog} tokens`}>
-              <Text style={styles.smallText}>
-                cur: <strong>{concurrent_batch_size}</strong>
-              </Text>
-            </Tooltip>
-          );
-        })() : null;
+        if (batch_first === undefined) return <Text type="secondary">—</Text>;
         return (
-          <Space direction="vertical" size={0} style={{ textAlign: "right" }}>
-            {hasBatchStats && (
-              <Tooltip title="1st / max / ave / last token count per read batch">
-                <Text style={styles.smallText}>
-                  {batch_first}
-                  {" / "}
-                  <strong>{batch_max}</strong>
-                  {" / "}
-                  {batch_ave}
-                  {" / "}
-                  {batch_last}
-                </Text>
-              </Tooltip>
-            )}
-            {concurrentLabel}
-          </Space>
+          <Tooltip title="1st / max / ave / last token count per read batch">
+            <Text style={styles.smallText}>
+              {batch_first}
+              {" / "}
+              <strong>{batch_max}</strong>
+              {" / "}
+              {batch_ave}
+              {" / "}
+              {batch_last}
+            </Text>
+          </Tooltip>
         );
       },
     },
@@ -216,7 +245,7 @@ export function buildColumns(
       title: (
         <span>
           Progress{" "}
-          <Tooltip title={`Throughput: tokens received / target. Concurrency: elapsed time since first token / timeout (per stream). Stable = ≥20% of prior buckets (excl. last 2s) exceeded 90% of the ${tokenPerSec} tps target — backend then concludes the stream as completed.`}>
+          <Tooltip title={`Throughput: tokens received / target. Concurrency: elapsed time since first token / timeout (per stream). Stable = last ${Math.max(3, Math.ceil(timeoutSecs * 0.2))}s window (${timeoutSecs}s × 20%) — ≥70% of 1-second buckets must reach 90% of the ${tokenPerSec} tps target.`}>
             <InfoCircleOutlined style={colors.infoIcon} />
           </Tooltip>
         </span>
@@ -232,9 +261,9 @@ export function buildColumns(
           const endMs = isFrozen ? record.last_token_ms : Date.now();
           const elapsedMs = Math.max(0, endMs - refMs);
           const pct = Math.min((elapsedMs / (timeoutSecs * 1000)) * 100, 100);
-          const stable = isSessionStable(record.tps_history ?? [], tokenPerSec);
+          const stable = isSessionStable(record.tps_history ?? [], tokenPerSec, timeoutSecs);
           return (
-              <Tooltip title={`${(elapsedMs / 1000).toFixed(1)}s / ${timeoutSecs}s${stable ? ` — TPS stable: ≥20% of prior history buckets (excl. last 2s) exceeded 90% of the ${tokenPerSec} tps target. Backend is concluding the stream as completed.` : ""}`}>
+              <Tooltip title={`${(elapsedMs / 1000).toFixed(1)}s / ${timeoutSecs}s${stable ? ` — TPS stable: ≥70% of last ${Math.max(3, Math.ceil(timeoutSecs * 0.1))} 1-second buckets exceeded 90% of the ${tokenPerSec} tps target.` : ""}`}>
               <span>
                 {pct.toFixed(1)}%
                 {stable && (
@@ -265,8 +294,15 @@ export function buildColumns(
         const allConsumedRate = record.test_mode === "throughput" && record.tokens >= totalTokensPerStream;
         const isFrozenRate = record.closed || allConsumedRate || TERMINAL_STATUSES.has(record.status);
         const endMs = isFrozenRate ? record.last_token_ms : Date.now();
-        const elapsed = (endMs - digestStart) / 1000;
-        const rate = elapsed > 0 ? (record.tokens / elapsed) : 0;
+        const rawElapsedMs = endMs - digestStart;
+        // Floor the elapsed window with ingest_ms (actual wall-clock work) so that
+        // sub-millisecond digest windows (Centrifugo delivers all tokens in <1ms)
+        // don't produce astronomically inflated TPS figures.  Fall back to 10ms
+        // when ingest_ms is unavailable.
+        const floorMs = record.ingest_ms != null && record.ingest_ms > 0 ? record.ingest_ms : 10;
+        const elapsedMs = Math.max(rawElapsedMs, floorMs);
+        const elapsed = elapsedMs / 1000;
+        const rate = record.tokens > 0 ? (record.tokens / elapsed) : 0;
         const usingFallback = record.digest_start_ms == null;
         const tooltipText = usingFallback
           ? `Using ${record.pub_start_ms != null ? "pub_start_ms" : "start_ms"} as digest start (first token batch not yet received)`
@@ -297,8 +333,14 @@ export function buildColumns(
         if (startMs == null) return <Text type="secondary">—</Text>;
         const allConsumed = record.test_mode === "throughput" && record.tokens >= totalTokensPerStream;
         const isFrozenDuration = record.closed || allConsumed || TERMINAL_STATUSES.has(record.status);
+        // Out-of-sync: session is digesting but tokens stopped flowing. Show — so
+        // the growing elapsed time is not shown for a stalled stream.
+        if (!isFrozenDuration && isSessionSuspicious(record, Date.now())) {
+          return <Text type="secondary">—</Text>;
+        }
         const endMs = isFrozenDuration ? record.last_token_ms : Date.now();
         const elapsedMs = Math.max(0, endMs - startMs);
+        if (elapsedMs === 0) return <Text type="secondary">—</Text>;
         return fmtDuration(elapsedMs);
       },
     },
@@ -317,7 +359,9 @@ export function buildColumns(
         const BAR_W = 3;
         const BAR_GAP = 1;
         const CHART_H = 28;
-        const MAX_BARS = 50;
+        // Fit bars within the column width (180px) minus a small padding.
+        const COLUMN_W = 172;
+        const MAX_BARS = Math.floor(COLUMN_W / (BAR_W + BAR_GAP));
 
         const history = record.tps_history ?? [];
         if (history.length === 0) return <Text type="secondary">—</Text>;
@@ -346,6 +390,7 @@ export function buildColumns(
           : `Last 1s: ${tpsLast.toLocaleString()} tps  |  Peak: ${tpsPeak.toLocaleString()}  |  ${bars.length}s`;
         return (
           <Tooltip title={tooltipText}>
+            <div style={{ width: COLUMN_W, overflow: "hidden" }}>
             <svg
               width={chartW}
               height={CHART_H}
@@ -384,21 +429,10 @@ export function buildColumns(
                 />
               )}
             </svg>
+            </div>
           </Tooltip>
         );
       },
-    },
-    {
-      title: "Thread ID",
-      dataIndex: "thread_id",
-      key: "thread_id",
-      width: 260,
-      ellipsis: true,
-      render: (tid: string) => (
-        <Text type="secondary" style={styles.monoSmallText}>
-          {tid}
-        </Text>
-      ),
     },
     {
       title: "Streaming Output",

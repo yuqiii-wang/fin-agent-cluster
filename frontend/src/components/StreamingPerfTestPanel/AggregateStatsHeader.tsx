@@ -10,6 +10,12 @@ export interface AggregateStatsHeaderProps {
    * only re-renders once per second instead of on every 100ms token flush.
    */
   stats: AggregateStats;
+  /**
+   * True when at least one session is actively in the digest (streaming) phase.
+   * Set reactively (not on the 1s tick) so the header can appear with "—"
+   * placeholders immediately when streaming begins, before the first tick fires.
+   */
+  isDigesting?: boolean;
 }
 
 /**
@@ -26,14 +32,23 @@ export interface AggregateStatsHeaderProps {
  *
  * Hidden when no session has per-second history yet.
  */
-export function AggregateStatsHeader({ stats }: AggregateStatsHeaderProps) {
+export function AggregateStatsHeader({ stats, isDigesting }: AggregateStatsHeaderProps) {
   const { token } = theme.useToken();
   const infoIconStyle = { color: token.colorTextTertiary, cursor: "help" as const };
 
-  if (stats.sampleCount === 0) return null;
+  // Hide when no data and no streams are actively digesting.
+  if (stats.sampleCount === 0 && !isDigesting) return null;
 
-  const fmt = (v: number | null) => (v == null ? 0 : v);
-  const fmtMs = (v: number | null) => {
+  // Show "—" placeholders while digesting has started but the first 1s tick
+  // has not yet fired (sampleCount === 0 means no computed buckets yet).
+  const hasData = stats.sampleCount > 0;
+  // Show "—" when no data yet, or when the value is null (sub-second, unreliable).
+  const fmt = (v: number | null): string | number => (hasData && v != null ? v : "—");
+  // Only show "tps" suffix when the value is a real number; omit it for "—".
+  const fmtSuffix = (v: number | null): string | undefined =>
+    hasData && v != null ? "tps" : undefined;
+  const fmtMs = (v: number | null): string => {
+    if (!hasData) return "—";
     if (v == null) return "—";
     if (v < 1000) return `${Math.round(v)}ms`;
     return `${(v / 1000).toFixed(1)}s`;
@@ -48,16 +63,48 @@ export function AggregateStatsHeader({ stats }: AggregateStatsHeaderProps) {
           title={
             <span>
               Peak Sum Read Batch{" "}
-              <Tooltip title="Max total tokens/s summed across all read-batch streams in any single 1-second window. Each second, all stream tps_history values are summed; the peak of those sums is reported.">
+              <Tooltip title="Max total tokens/s summed across all read-batch streams in any single 1-second window. Each second, all stream tps_history values are summed; the peak of those sums is reported. Suspicious (out-of-sync) streams are excluded.">
                 <InfoCircleOutlined style={infoIconStyle} />
               </Tooltip>
             </span>
           }
           value={fmt(stats.peakSumConcurrent)}
-          suffix="tps"
+          suffix={fmtSuffix(stats.peakSumConcurrent)}
           valueStyle={valueStyle}
         />
       </Col>
+      {stats.maxStableCount !== null && (
+        <Col span={4}>
+          <Statistic
+            title={
+              <span>
+                Max Num Stable Streams{" "}
+                <Tooltip title="Maximum number of concurrency-mode streams that were simultaneously stable in any single 1-second window. A stream is stable when ≥10% of its prior TPS history (min 3 s) exceeded 90% of the target rate.">
+                  <InfoCircleOutlined style={infoIconStyle} />
+                </Tooltip>
+              </span>
+            }
+            value={hasData ? stats.maxStableCount : "—"}
+            valueStyle={valueStyle}
+          />
+        </Col>
+      )}
+      {stats.maxStableCount === null && (
+        <Col span={4}>
+          <Statistic
+            title={
+              <span>
+                Max Num Digesting Streams{" "}
+                <Tooltip title="Maximum number of streams simultaneously in the digest (streaming) phase in any single 1-second window.">
+                  <InfoCircleOutlined style={infoIconStyle} />
+                </Tooltip>
+              </span>
+            }
+            value={hasData ? stats.maxDigestingCount : "—"}
+            valueStyle={valueStyle}
+          />
+        </Col>
+      )}
       <Col span={4}>
         <Statistic
           title={
@@ -69,7 +116,7 @@ export function AggregateStatsHeader({ stats }: AggregateStatsHeaderProps) {
             </span>
           }
           value={fmt(stats.peakSingleStream)}
-          suffix="tps"
+          suffix={fmtSuffix(stats.peakSingleStream)}
           valueStyle={valueStyle}
         />
       </Col>
@@ -78,13 +125,13 @@ export function AggregateStatsHeader({ stats }: AggregateStatsHeaderProps) {
           title={
             <span>
               Ave Read Batch{" "}
-              <Tooltip title="Mean total tokens/s across all 1-second windows. Per-second sums (across all streams) are averaged over every bucket that had at least one stream active.">
+              <Tooltip title="Mean total tokens/s across all 1-second windows. Per-second sums (across all streams) are averaged over every bucket that had at least one stream active. Suspicious (out-of-sync) streams are excluded.">
                 <InfoCircleOutlined style={infoIconStyle} />
               </Tooltip>
             </span>
           }
           value={fmt(stats.aveConcurrent)}
-          suffix="tps"
+          suffix={fmtSuffix(stats.aveConcurrent)}
           valueStyle={valueStyle}
         />
       </Col>

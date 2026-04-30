@@ -1,8 +1,14 @@
-/** Per-thread performance session tracked in the grid. */
+/** Per-thread streaming session tracked in the grid. */
 export interface ThreadSession {
   thread_id: string;
-  /** Short display label, e.g. "Stream #1". */
-  label: string;
+  /** Sub-graph node execution UUID (set when stream_runner starts). */
+  node_id: string | null;
+  /** Leaf node execution UUID. */
+  leaf_node_id: string | null;
+  /** DB task row primary key. */
+  task_id: number | null;
+  /** Streaming session UUID. */
+  stream_id: string | null;
   /**
    * Backend-driven status progression:
    *   connecting  — SSE connection not yet established (client-side)
@@ -28,24 +34,14 @@ export interface ThreadSession {
   error?: string;
   /** Ingest task phase — tracks how many tokens have been written to the perf stream. */
   ingest_produced?: number;
-  /** Total tokens to ingest (matches PerfTestConfig.tokenCount). */
-  ingest_total?: number;
-  /** Approximate tokens-per-second during the ingest phase. */
-  ingest_tps?: number;
   /** Current state of the ingest phase. */
   ingest_status?: "running" | "completed" | "timeout";
+  /** Wall-clock milliseconds the ingest phase took (set when perf_ingest_complete arrives). */
+  ingest_ms?: number;
   /** Current state of the pub phase. */
   pub_status?: "running" | "completed" | "failed";
   /** Wall-clock ms when the pub (streaming) phase started — i.e. when ingest completed. */
   pub_start_ms?: number;
-  /** Current adaptive read batch size during concurrent Phase-2 (from perf_concurrent_status). */
-  concurrent_batch_size?: number;
-  /** Live digest TPS during concurrent Phase-2 (from perf_concurrent_status). */
-  concurrent_digest_tps?: number;
-  /** Live ingest TPS during concurrent Phase-2 (from perf_concurrent_status). */
-  concurrent_ingest_tps?: number;
-  /** Redis stream backlog during concurrent Phase-2 (from perf_concurrent_status). */
-  concurrent_stream_len?: number;
   /** Token count of the very first perf_token_batch event received. */
   batch_first?: number;
   /** Maximum token count seen across all perf_token_batch events. */
@@ -109,7 +105,12 @@ export interface PendingTokenPatch {
   tokensDelta: number;
   /** Timestamp of the most recent token batch. */
   last_token_ms: number;
-  /** Timestamp of the FIRST ever token batch — sets digest_start_ms on flush. */
+  /**
+   * Timestamp of the FIRST ever token batch.
+   * Applied to digest_start_ms on flush for all test modes.  For throughput,
+   * pub_start_ms (ingest-complete time) can arrive after last_token_ms due to
+   * the Centrifugo vs. SSE race, so first_token_ms is the reliable anchor.
+   */
   first_token_ms: number;
   /** Count of the first batch (written to s.batch_first if not yet set). */
   batch_first: number;
@@ -134,8 +135,8 @@ export interface PendingTokenPatch {
 export const DEFAULT_PERF_CONFIG: PerfTestConfig = {
   testMode: "throughput",
   tokenCount: 100_000,
-  tokenPerSec: 500,
-  timeoutSecs: 20,
+  tokenPerSec: 100,
+  timeoutSecs: 60,
   initialRequestCount: 5,
 };
 

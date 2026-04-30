@@ -23,22 +23,21 @@ export async function submitQuery(
 /**
  * Submit a perf-test query with cache disabled so each stream gets a fresh
  * backend execution (no browser or intermediate cache replay).
+ *
+ * Test parameters (test_mode, total_tokens, timeout_secs, token_per_sec) are
+ * encoded as JSON in the query string by :func:`buildPerfQuery` in
+ * useSessionManager so the backend stream_runner node can parse them without
+ * any API schema change.
  */
 export async function submitPerfQuery(
   query: string,
   token: string,
-  perfParams?: {
-    perf_total_tokens?: number;
-    perf_timeout_secs?: number;
-    perf_test_mode?: string;
-    perf_token_per_sec?: number;
-  },
 ): Promise<QueryResponse> {
   const res = await fetch(`${BASE}/users/query`, {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json", "X-User-Token": token },
-    body: JSON.stringify({ query, ...perfParams }),
+    body: JSON.stringify({ query }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -55,6 +54,20 @@ export async function fetchTasks(threadId: string): Promise<SessionStatus> {
 
 export async function fetchNodeExecutions(threadId: string): Promise<NodeExecutionInfo[]> {
   const res = await fetch(`${BASE}/users/query/${threadId}/nodes`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Fetch the current status of a submitted query.
+ *
+ * Routes to the assistant upstream (read-only, no LangGraph involvement).
+ * Used by the frontend to proactively check query state when the Centrifugo
+ * subscription becomes active but no lifecycle events have been received yet
+ * (e.g. query already completed before the WebSocket connected).
+ */
+export async function fetchQueryStatus(threadId: string): Promise<QueryResponse> {
+  const res = await fetch(`${BASE}/users/query/${threadId}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -95,10 +108,12 @@ export async function ackQuery(threadId: string, token: string): Promise<QueryRe
  * (instead of `perf_test_stopped`) so the session closes as "completed".
  * Fire-and-forget — resolves immediately once the HTTP response returns.
  */
-export async function stablePerfStream(threadId: string): Promise<void> {
-  const res = await fetch(`${BASE}/users/query/${threadId}/perf-stable`, {
+export async function stablePerfStream(threadId: string, streamId: string, userToken: string): Promise<void> {
+  const url = `${BASE}/users/query/${threadId}/perf-stable?stream_id=${encodeURIComponent(streamId)}`;
+  const res = await fetch(url, {
     method: "POST",
     cache: "no-store",
+    headers: { "X-User-Token": userToken },
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

@@ -81,14 +81,7 @@ async def submit_query(request: QueryRequest, user: GuestUser) -> QueryResponse:
                 user_id=user.id,
                 query=request.query,
                 status="received",
-                extra={
-                    "perf_params": {
-                        "perf_total_tokens": request.perf_total_tokens or 100_000,
-                        "perf_timeout_secs": request.perf_timeout_secs or 20,
-                        "perf_test_mode": request.perf_test_mode or "throughput",
-                        "perf_token_per_sec": request.perf_token_per_sec or 500,
-                    }
-                },
+                extra={},
             )
         )
         try:

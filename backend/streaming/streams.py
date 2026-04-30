@@ -1,30 +1,23 @@
-"""Redis Streams async client — persistent MQ/buffer for fin-trading events.
+"""Redis Streams async client — persistent MQ/buffer for LLM events.
 
-All stream I/O goes through a single connection-pool backed ``redis.asyncio.Redis``
-instance.  The module exposes thin coroutine helpers so callers never manipulate
-the raw ``aioredis`` API.
+Two active streams:
+  ``fin:llm:tokens``      — per-token events, shard-routed (redis-0 / redis-1),
+                            consumed by Centrifugo native consumer (no XDEL).
+  ``fin:llm:completions`` — one record per LLM call on redis-0 (shard 0),
+                            consumed by the ``pg-persist`` Celery beat worker
+                            which persists to ``fin_agents.llm_responses``
+                            and then calls XDEL.
 
-Stream / consumer-group naming convention
------------------------------------------
-Stream names use ``fin:<domain>:<topic>`` prefixes so Redis KEYS scanning and
-ACL rules can target them independently of other keyspaces.
-
-Consumer groups
----------------
-Each stream topic has dedicated consumer groups for SSE delivery (low latency)
-and Celery workers (durable processing).  Creating a group with ``ensure_group``
-is idempotent — it silently ignores ``BUSYGROUP`` errors.
-
-Configuration
--------------
-Stream names, consumer groups, and related mappings are derived from
-:mod:`backend.streaming.config` — the single source of truth for all topic
-wiring.  Do not hardcode stream names or group names in this module.
+The module exposes:
+  - ``xadd`` / ``xread`` / ``xread_group`` / ``xack`` / ``xdel`` — shard-0 ops
+  - ``xadd_sharded`` — routes XADD to the correct Redis shard for a thread_id
+    (used for ``fin:llm:tokens`` which is shard-routed to match Centrifugo)
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from datetime import date, datetime
@@ -33,29 +26,17 @@ from typing import Any
 import redis.asyncio as aioredis
 
 from backend.config import get_settings
-from backend.streaming.config import ALL_TOPICS
+from backend.streaming.config import ALL_TOPICS, LLM_COMPLETIONS, STREAM_LLM_TOKENS
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Stream name / consumer group constants — derived from config
 # ---------------------------------------------------------------------------
-# These aliases preserve the existing public API so external modules
-# (resource_api, llm, api) do not need to change their imports.
 
-STREAM_GRAPH_EVENTS: str = next(t.stream_key for t in ALL_TOPICS if t.human_key == "graph-events")
-STREAM_MARKET_TICKS: str = next(t.stream_key for t in ALL_TOPICS if t.human_key == "market-ticks")
-STREAM_TRADE_SIGNALS: str = next(t.stream_key for t in ALL_TOPICS if t.human_key == "trade-signals")
-STREAM_NEWS_ENRICHED: str = next(t.stream_key for t in ALL_TOPICS if t.human_key == "news-enriched")
-STREAM_LLM_COMPLETIONS: str = next(t.stream_key for t in ALL_TOPICS if t.human_key == "llm-completions")
-STREAM_QUANT_COMPUTE: str = next(t.stream_key for t in ALL_TOPICS if t.human_key == "quant-compute")
-
-GROUP_CELERY_GRAPH: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "graph-events")
-GROUP_CELERY_MARKET: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "market-ticks")
-GROUP_CELERY_SIGNALS: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "trade-signals")
-GROUP_CELERY_NEWS: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "news-enriched")
-GROUP_CELERY_LLM: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "llm-completions")
-GROUP_CELERY_QUANT_COMPUTE: str = next(t.consumer_group for t in ALL_TOPICS if t.human_key == "quant-compute")
+STREAM_LLM_COMPLETIONS: str = LLM_COMPLETIONS.stream_key
+STREAM_TOKEN: str = STREAM_LLM_TOKENS
+GROUP_CELERY_INGEST: str = LLM_COMPLETIONS.consumer_group
 
 #: stream → consumer groups to create at startup (built from config).
 STREAM_CONSUMER_GROUPS: dict[str, list[str]] = {
@@ -69,6 +50,9 @@ STREAM_KEY_MAP: dict[str, str] = {
 
 _client: aioredis.Redis | None = None
 _client_loop_id: int | None = None
+
+# Per-shard clients for xadd_sharded — keyed by (shard_index, loop_id).
+_shard_clients: dict[tuple[int, int], aioredis.Redis] = {}
 
 
 def _json_default(obj: Any) -> str:
@@ -155,6 +139,90 @@ async def xadd(
         Redis message ID string (e.g. ``'1713452341234-0'``).
     """
     client = await _get_client()
+    if maxlen is None:
+        maxlen = get_settings().STREAM_MAX_LEN
+    fields = _to_fields(payload)
+    msg_id: str = await client.xadd(stream, fields, maxlen=maxlen, approximate=True)
+    return msg_id
+
+
+def _shard_index(thread_id: str) -> int:
+    """Return the Redis shard index for *thread_id* using SHA-256 modulo routing.
+
+    Matches the formula in :func:`~backend.centrifugo.client.get_shard_index`
+    and :class:`~backend.db.redis.router.RedisRouter._shard_index` so tokens
+    always land on the same Redis node that backs the corresponding Centrifugo
+    node.
+
+    Args:
+        thread_id: LangGraph UUID string.
+
+    Returns:
+        Integer shard index (0 or 1, or 0 if only one node is configured).
+    """
+    settings = get_settings()
+    urls = settings.DATABASE_REDIS_NODES or [settings.DATABASE_REDIS_URL]
+    n = len(urls) or 1
+    digest = int(hashlib.sha256(thread_id.encode()).hexdigest(), 16)
+    return digest % n
+
+
+async def _get_shard_client(shard: int) -> aioredis.Redis:
+    """Return (or lazily create) a Redis client for *shard*.
+
+    Clients are keyed by ``(shard, loop_id)`` so each ``asyncio.run()``
+    call in a Celery worker gets a fresh pool bound to the current loop.
+
+    Args:
+        shard: Shard index (0 or 1).
+
+    Returns:
+        A ``redis.asyncio.Redis`` instance for the requested shard.
+    """
+    current_loop_id = id(asyncio.get_running_loop())
+    key = (shard, current_loop_id)
+
+    # Evict stale clients from previous event loops.
+    stale = [k for k in list(_shard_clients) if k[1] != current_loop_id]
+    for k in stale:
+        try:
+            await _shard_clients[k].aclose()
+        except Exception:
+            pass
+        _shard_clients.pop(k, None)
+
+    if key not in _shard_clients:
+        settings = get_settings()
+        urls = settings.DATABASE_REDIS_NODES or [settings.DATABASE_REDIS_URL]
+        url = urls[shard] if shard < len(urls) else urls[0]
+        _shard_clients[key] = aioredis.from_url(url, decode_responses=True)
+
+    return _shard_clients[key]
+
+
+async def xadd_sharded(
+    thread_id: str,
+    stream: str,
+    payload: dict[str, Any],
+    maxlen: int | None = None,
+) -> str:
+    """Append *payload* to *stream* on the shard Redis that owns *thread_id*.
+
+    Routes the XADD to the correct Redis node using the same SHA-256 modulo
+    formula as the Centrifugo and Redis router so that token events land on
+    the Redis instance backing the right Centrifugo node for this thread.
+
+    Args:
+        thread_id: LangGraph thread UUID used for shard routing.
+        stream:    Stream name (e.g. ``STREAM_TOKEN``).
+        payload:   Dict to publish.  Values are coerced to strings.
+        maxlen:    Soft cap on stream length (MAXLEN ~).
+
+    Returns:
+        Redis message ID string.
+    """
+    shard = _shard_index(thread_id)
+    client = await _get_shard_client(shard)
     if maxlen is None:
         maxlen = get_settings().STREAM_MAX_LEN
     fields = _to_fields(payload)
@@ -274,6 +342,25 @@ async def xack(stream: str, group: str, *msg_ids: str) -> int:
         return 0
     client = await _get_client()
     return await client.xack(stream, group, *msg_ids)
+
+
+async def xdel(stream: str, *msg_ids: str) -> int:
+    """Delete *msg_ids* entries from *stream*.
+
+    Called after a message has been persisted to PostgreSQL and acknowledged
+    in its consumer group — the Redis entry is no longer needed.
+
+    Args:
+        stream:  Stream name.
+        msg_ids: One or more message IDs to remove.
+
+    Returns:
+        Number of messages actually deleted.
+    """
+    if not msg_ids:
+        return 0
+    client = await _get_client()
+    return await client.xdel(stream, *msg_ids)
 
 
 async def xlen(stream: str) -> int:

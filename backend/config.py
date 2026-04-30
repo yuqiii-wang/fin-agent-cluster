@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     FMP_API_KEY: Optional[str] = None
     FMP_BASE_URL: str = "https://financialmodelingprep.com/stable"
     FASTAPI_PORT: int = 8432
+    # Base port for assistant FastAPI instances (non-LangGraph).
+    # Runner instances start at FASTAPI_PORT; assistants at FASTAPI_ASSISTANT_PORT.
+    FASTAPI_ASSISTANT_PORT: int = 8436
     # Outbound HTTP proxy for all external calls (LLM, market-data, news, embeddings).
     # Example: HTTP_PROXY=http://127.0.0.1:7890
     # Leave unset to connect directly.
@@ -84,8 +87,33 @@ class Settings(BaseSettings):
 
     # ── Redis Streams (MQ / buffer layer) ────────────────────────────────────
     # Soft cap on each stream's entry count (XADD MAXLEN ~).
-    # Increase for higher-throughput environments.
-    STREAM_MAX_LEN: int = 10000
+    # Sized for high-concurrency: 100 sessions × ~10 XADD/sec = 1,000/sec per
+    # shard; 100,000 entries gives ~100 s of buffer before eviction under load.
+    STREAM_MAX_LEN: int = 100000
+
+    # ── Centrifugo real-time messaging ────────────────────────────────────────
+    # Internal HTTP API URLs of the two Centrifugo nodes (WSL2 → Docker via mapped ports).
+    # Comma-separated when provided via environment variable.
+    # Ordering MUST match DATABASE_REDIS_NODES: index 0 = centrifugo-0 → redis-0.
+    CENTRIFUGO_NODES: list[str] = [
+        "http://127.0.0.1:8101",
+        "http://127.0.0.1:8102",
+    ]
+    # Shared HMAC secret used to sign Centrifugo connection / subscription JWTs.
+    CENTRIFUGO_SECRET: str = "centrifugo-dev-secret-key"
+    # API key for Centrifugo server-side HTTP API calls (publish, etc.).
+    CENTRIFUGO_API_KEY: str = "centrifugo-api-key"
+    # Public WebSocket base URL used by the frontend to connect.
+    # Dev: wss://localhost:8443 (Kong HTTPS/HTTP2 port). Prod: wss://your-domain.
+    CENTRIFUGO_PUBLIC_BASE: str = "wss://localhost:8443"
+
+    # ── Assistant status verifier ─────────────────────────────────────────────
+    # How often (seconds) the assistant background verifier checks for unACKed
+    # query-status phases and re-publishes them via Centrifugo.
+    STATUS_VERIFIER_INTERVAL_SECS: int = 30
+    # How far back (seconds) the verifier looks when querying for active queries.
+    # Should be >= the longest expected query duration to avoid missing stale phases.
+    STATUS_VERIFIER_LOOKBACK_SECS: int = 3600
 
     model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8", "extra": "ignore"}
 
@@ -94,6 +122,17 @@ class Settings(BaseSettings):
     @_fv("DATABASE_REDIS_NODES", mode="before")
     @classmethod
     def _coerce_redis_nodes(cls, v: object) -> object:
+        """Coerce a comma-separated string into a list before validation."""
+        if isinstance(v, str):
+            stripped = v.strip()
+            if not stripped:
+                return []
+            return [node.strip() for node in stripped.split(",") if node.strip()]
+        return v
+
+    @_fv("CENTRIFUGO_NODES", mode="before")
+    @classmethod
+    def _coerce_centrifugo_nodes(cls, v: object) -> object:
         """Coerce a comma-separated string into a list before validation."""
         if isinstance(v, str):
             stripped = v.strip()

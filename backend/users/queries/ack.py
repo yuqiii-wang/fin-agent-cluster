@@ -12,7 +12,6 @@ from backend.api.errors import API_QUERY_NOT_FOUND, API_QUERY_STATUS_CONFLICT
 from backend.api.registry import mark_task_active
 from backend.api.registry import running_tasks as _running_tasks
 from backend.db import get_session_factory as _get_session_factory
-from backend.db.redis.streams.publisher import ack_pending_notify
 from backend.graph.runner import run_graph_async
 from backend.sse_notifications.query_lifecycle import emit_query_ack_confirmed
 from backend.users.models import UserQuery
@@ -58,6 +57,21 @@ async def ack_query(thread_id: str) -> QueryResponse:
             await emit_query_ack_confirmed(thread_id)
             return QueryResponse(thread_id=thread_id, status="running")
 
+        if uq.status in ("completed", "cancelled", "failed"):
+            # Late ACK after graph already finished (e.g. Centrifugo history replay
+            # on reconnect).  Return the terminal status so the client can recover
+            # without treating this as an error.
+            logger.warning(
+                "[ack] late_ack_ignored thread_id=%s status=%s",
+                thread_id,
+                uq.status,
+            )
+            return QueryResponse(
+                thread_id=thread_id,
+                status=uq.status,
+                error=uq.error,
+            )
+
         if uq.status != "received":
             raise HTTPException(
                 status_code=409,
@@ -67,25 +81,16 @@ async def ack_query(thread_id: str) -> QueryResponse:
                 },
             )
 
-        perf_params: dict = uq.extra.get("perf_params", {})
         query_text: str = uq.query
 
         uq.status = "running"
         uq.is_ack = True
         await session.commit()
 
-    # Ack the pending query_received notify so the drain cycle stops retrying.
-    await ack_pending_notify(thread_id, "query_received", None)
-
-    # Schedule graph execution as a non-blocking asyncio.Task.
     task = asyncio.create_task(
         run_graph_async(
             thread_id,
-            query_text,
-            perf_total_tokens=perf_params.get("perf_total_tokens", 100_000),
-            perf_timeout_secs=perf_params.get("perf_timeout_secs", 20),
-            perf_test_mode=perf_params.get("perf_test_mode", "throughput"),
-            perf_token_per_sec=perf_params.get("perf_token_per_sec", 500),
+            query=query_text,
         ),
         name=f"graph:{thread_id}",
     )

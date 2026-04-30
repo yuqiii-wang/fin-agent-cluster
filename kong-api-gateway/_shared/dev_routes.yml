@@ -2,7 +2,7 @@
 # Remove or gate behind an IP-restriction plugin in production.
 routes:
   - name: route-docs
-    service: fastapi
+    service: fastapi-runner
     paths:
       - /docs
       - /redoc

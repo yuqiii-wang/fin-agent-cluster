@@ -12,6 +12,7 @@ from backend.db.redis.session.cancel_signal import publish_cancel
 from backend.db.redis.session.query_phase import delete_query_phase
 from backend.graph.models import AgentTask
 from backend.sse_notifications import emit_done
+from backend.graph.governance import publish_governance_end
 from backend.users.models import UserQuery
 from backend.users.schemas import QueryResponse
 
@@ -23,18 +24,22 @@ async def cancel_query(thread_id: str, reason: str = "user") -> QueryResponse:
 
     Atomically claims the cancel transition in the DB, then emits the ``done``
     SSE event and publishes a Redis cancel signal so the owning instance can
-    stop its asyncio.Task.  Idempotent — if the query is already in a terminal
+    stop its asyncio.Task.  Idempotent -- if the query is already in a terminal
     state the cancel is silently skipped.
+
+    After claiming the cancel transition, traverses the governance registry to
+    emit ``stream_stopped`` for every live stream under this thread so the
+    frontend receives a terminal event for each in-flight stream.
 
     Args:
         thread_id: The UUID returned when the query was submitted.
-        reason:    Cancellation reason — ``"user"`` for explicit user action,
+        reason:    Cancellation reason -- ``"user"`` for explicit user action,
                    ``"timeout"`` when the client-side safety timeout fired.
 
     Returns:
         ``QueryResponse`` with ``status`` matching *reason*.
     """
-    # Pop the local asyncio.Task — may be None if this instance does not own the query.
+    # Pop the local asyncio.Task -- may be None if this instance does not own the query.
     local_task = _running_tasks.pop(thread_id, None)
 
     # Guard: if the local task already finished naturally the runner claimed the
@@ -78,6 +83,9 @@ async def cancel_query(thread_id: str, reason: str = "user") -> QueryResponse:
     if claimed:
         await emit_done(thread_id, done_status, "Query cancelled by user")
         await delete_query_phase(thread_id)
+        # Propagate cancellation down the governance hierarchy so every live
+        # stream under this thread receives a stream_stopped event.
+        await publish_governance_end(thread_id, reason=done_status)
 
     # Publish Redis cancel signal so the owning instance cancels its asyncio.Task.
     await publish_cancel(thread_id, reason)

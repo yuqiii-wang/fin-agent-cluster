@@ -25,15 +25,13 @@ export function createAckHandlers(
     onQueryReceived: (_data: unknown) => {
       if (ackConfirmed || ackInFlight) return;
       ackInFlight = true;
-      console.debug("[%s] query_received → ACK thread_id=%s", label, threadId);
       ackQuery(threadId, userToken)
-        .then(() => console.debug("[%s] ACK succeeded thread_id=%s", label, threadId))
+        .then(() => {})
         .catch((err) => console.warn("[%s] ACK failed thread_id=%s", label, threadId, err))
         .finally(() => { ackInFlight = false; });
     },
     onQueryAckConfirmed: (_data: unknown) => {
       ackConfirmed = true;
-      console.debug("[%s] query_ack_confirmed thread_id=%s", label, threadId);
     },
   };
 }

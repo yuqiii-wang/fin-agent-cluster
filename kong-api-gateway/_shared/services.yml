@@ -1,34 +1,54 @@
-# Kong services — one entry per backend.
+# Kong services -- one entry per backend type.
 # Routes are declared in each domain's routes.yml; not embedded here.
+#
+# Request classification:
+#   fastapi-runner    — LangGraph-triggering endpoints (submit, ack); all 4 runner instances
+#   fastapi-assistant — Non-LangGraph endpoints (reads, auth, quant, reports, tasks, threads)
 services:
-  # FastAPI — short-lived REST endpoints (auth, queries, tasks, reports, quant).
-  # Regular requests complete in seconds; 30s timeouts are appropriate.
-  - name: fastapi
-    host: fastapi-upstream
+  # Runner FastAPI -- handles ALL request types including LangGraph graph execution.
+  # 4 instances; 30s timeouts match regular REST calls.
+  - name: fastapi-runner
+    host: runner-upstream
     port: 80
     protocol: http
     connect_timeout: 10000    # 10 s
-    write_timeout: 30000      # 30 s — regular REST calls complete quickly
+    write_timeout: 30000      # 30 s
     read_timeout: 30000       # 30 s
 
-  # FastAPI SSE — long-lived streaming connections (GET /api/v1/stream/*).
-  # Uses the dedicated fastapi-sse-upstream so SSE sockets are isolated from
-  # the regular request keepalive pool.  60-minute timeouts match SSE stream
-  # lifetimes in the perf-test panel.
-  - name: fastapi-sse
-    host: fastapi-sse-upstream
+  # Assistant FastAPI -- lightweight instances for non-LangGraph requests only.
+  # 2 instances; same timeouts since calls are quick reads.
+  - name: fastapi-assistant
+    host: assistant-upstream
     port: 80
     protocol: http
     connect_timeout: 10000    # 10 s
-    write_timeout: 3600000    # 60 min — SSE streams run for minutes
+    write_timeout: 30000      # 30 s
+    read_timeout: 30000       # 30 s
+
+  # Centrifugo shard 0 -- WebSocket event hub backed by redis-0.
+  - name: centrifugo-0
+    host: centrifugo-0-upstream
+    port: 80
+    protocol: ws
+    connect_timeout: 10000    # 10 s
+    write_timeout: 3600000    # 60 min -- WebSocket connections are long-lived
     read_timeout: 3600000     # 60 min
 
-  # Kong AI proxy — intercepts LLM calls before forwarding.
+  # Centrifugo shard 1 -- WebSocket event hub backed by redis-1.
+  - name: centrifugo-1
+    host: centrifugo-1-upstream
+    port: 80
+    protocol: ws
+    connect_timeout: 10000    # 10 s
+    write_timeout: 3600000    # 60 min
+    read_timeout: 3600000     # 60 min
+
+  # Kong AI proxy -- intercepts LLM calls before forwarding.
   # The ai-proxy plugin (defined in llm/plugins.yml) handles routing;
   # this placeholder URL is never actually contacted.
   # Generous timeouts match large-model inference latency.
   - name: llm-proxy
     url: http://placeholder.invalid
     connect_timeout: 10000    # 10 s
-    write_timeout: 3600000    # 60 min — LLM streaming can run for minutes
+    write_timeout: 3600000    # 60 min -- LLM streaming can run for minutes
     read_timeout: 3600000     # 60 min

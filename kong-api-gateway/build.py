@@ -26,7 +26,7 @@ Directory layout (mirrors FastAPI routing paths):
         v1/
           auth/routes.yml   # POST /api/v1/auth/*
           users/routes.yml  # POST|GET /api/v1/users/query/*
-          stream/routes.yml # GET /api/v1/stream/* (SSE)
+          stream/routes.yml # POST /api/v1/stream/* (done-ack)
           reports/routes.yml
           tasks/routes.yml
           quant/routes.yml
@@ -60,13 +60,21 @@ OUTPUT = GATEWAY_DIR / "kong.yml"
 # running this script, e.g.:  BACKEND_HOST=10.0.0.5 python build.py
 _DEFAULTS: dict[str, str] = {
     "BACKEND_HOST": "host.docker.internal",
-    "BACKEND_PORT": "8432",
-    "BACKEND_PORT_2": "8433",
+    # Runner instances (4 total) — full FastAPI with LangGraph + Celery.
+    "RUNNER_PORT_1": "8432",
+    "RUNNER_PORT_2": "8433",
+    "RUNNER_PORT_3": "8434",
+    "RUNNER_PORT_4": "8435",
+    # Assistant instances (2 total) — lightweight, non-LangGraph only.
+    "ASSISTANT_PORT_1": "8436",
+    "ASSISTANT_PORT_2": "8437",
     "OLLAMA_HOST": "host.docker.internal",
     "OLLAMA_PORT": "11434",
     "OLLAMA_MODEL": "qwen3.5-27b",
     "REDIS_HOST": "redis",
     "REDIS_PORT": "6379",
+    "CENTRIFUGO_0_HOST": "centrifugo-0",
+    "CENTRIFUGO_1_HOST": "centrifugo-1",
 }
 
 # List-valued Kong keys — fragments are concatenated across files.
@@ -180,12 +188,15 @@ def build() -> None:
         "#\n"
         "# Source fragments:\n"
         "#   _shared/          upstreams, services, global plugins\n"
-        "#   api/v1/auth/      POST /api/v1/auth/*\n"
-        "#   api/v1/users/     POST|GET /api/v1/users/query/*\n"
-        "#   api/v1/stream/    GET /api/v1/stream/* (SSE)\n"
-        "#   api/v1/reports/   GET /api/v1/reports/*\n"
-        "#   api/v1/tasks/     GET|POST /api/v1/tasks/*\n"
-        "#   api/v1/quant/     GET /api/v1/quant/*\n"
+        "#   api/v1/auth/      POST /api/v1/auth/*                  → fastapi-assistant\n"
+        "#   api/v1/centrifugo/ GET /api/v1/centrifugo/token        → fastapi-assistant\n"
+        "#   api/v1/users/     POST /users/query, /ack              → fastapi-runner\n"
+        "#                     GET|POST /users/query/* (reads)      → fastapi-assistant\n"
+        "#   api/v1/stream/    POST /api/v1/stream/*                → fastapi-assistant\n"
+        "#   api/v1/reports/   GET /api/v1/reports/*                → fastapi-assistant\n"
+        "#   api/v1/tasks/     GET|POST /api/v1/tasks/*             → fastapi-assistant\n"
+        "#   api/v1/quant/     GET /api/v1/quant/*                  → fastapi-assistant\n"
+        "#   api/v1/threads/   GET|POST /api/v1/threads/*           → fastapi-assistant\n"
         "#   llm/              POST /llm/* (Kong AI Gateway ai-proxy)\n"
         "\n"
     )

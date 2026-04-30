@@ -21,6 +21,8 @@
 export type FinStreamStatus =
   | "idle"          // no threadId provided
   | "connecting"    // SSE connection being established
+  | "received"      // backend confirmed query_received; waiting for ACK confirmation
+  | "preparing"     // graph building (query_status=preparing)
   | "streaming"     // at least one `started` event received
   | "draining"      // done signal received; awaiting drain conditions + ACK
   | "done"          // ACK sent; UI marked complete; SSE closed cleanly

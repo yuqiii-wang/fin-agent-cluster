@@ -3,23 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel
 
 
 class QueryRequest(BaseModel):
-    """Payload for submitting a new financial analysis query.
-
-    For performance-test requests set ``query`` to ``DO STREAMING PERFORMANCE
-    TEST NOW``; the perf-test node uses its own internal defaults.
-    """
+    """Payload for submitting a new user query."""
 
     query: str
-    perf_total_tokens: Optional[int] = None
-    perf_timeout_secs: Optional[int] = None
-    perf_test_mode: Optional[str] = None   # "throughput" | "concurrency"
-    perf_token_per_sec: Optional[int] = None  # concurrency mode: target ingest rate
 
 
 class QueryResponse(BaseModel):
@@ -129,3 +121,86 @@ class ThreadSummary(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
     answer: Optional[str] = None
+
+
+# ── Threads API — read/event endpoints ──────────────────────────────────────
+
+
+class ThreadListResponse(BaseModel):
+    """Paginated list of user query threads."""
+
+    items: list[ThreadSummary]
+    total: int
+    limit: int
+    offset: int
+
+
+class LlmResponseRecord(BaseModel):
+    """One persisted LLM completion record from ``fin_agents.llm_responses``."""
+
+    id: int
+    event_id: str
+    ts: datetime
+    provider: str
+    model: str
+    task_key: Optional[str] = None
+    node_name: Optional[str] = None
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    latency_ms: int
+    thinking: Optional[str] = None
+    answer: Optional[str] = None
+
+
+class LlmResponseList(BaseModel):
+    """All LLM completion records for a thread."""
+
+    thread_id: str
+    records: list[LlmResponseRecord]
+
+
+class ThreadStateResponse(BaseModel):
+    """Latest LangGraph checkpoint state for a thread (read-only)."""
+
+    thread_id: str
+    checkpoint_id: Optional[str] = None
+    state: dict[str, Any]
+
+
+class EmitEventRequest(BaseModel):
+    """Payload for manually publishing an SSE event to a thread channel."""
+
+    event: str
+    payload: dict[str, Any] = {}
+
+
+class EmitEventResponse(BaseModel):
+    """Result of a manual event publish."""
+
+    thread_id: str
+    event: str
+    published: bool
+
+
+class UpdateThreadStatusRequest(BaseModel):
+    """Request to update a thread's DB status without triggering a graph run."""
+
+    status: str
+    error: Optional[str] = None
+    emit_event: bool = True
+
+
+class UpdateThreadStatusResponse(BaseModel):
+    """Result of a thread status update."""
+
+    thread_id: str
+    status: str
+    event_emitted: bool
+
+
+class ResyncResponse(BaseModel):
+    """Result of re-emitting current task/query state as Centrifugo events."""
+
+    thread_id: str
+    events_emitted: int

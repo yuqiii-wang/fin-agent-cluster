@@ -105,3 +105,87 @@ at the exact closure-tracked total rather than a stale React-state value.
   React state before `closed: true` is set.
 - `freezeAll` and `handleRestart` call `pendingTokenPatchesRef.current.clear()`
   so stale patches from closed sessions are never applied after a reset.
+
+---
+
+## Virtual Table (antd `virtual` prop)
+
+### Problem
+
+With 50–500 rows the antd `<Table>` renders every row's DOM nodes at once.
+Each 100ms token flush triggers a full reconcile of all row subtrees even when
+only a handful changed.  On slow hardware this shows as jank during scrolling.
+
+### Solution
+
+antd Table ships with a `virtual` prop (backed by `rc-virtual-list`) that only
+mounts DOM nodes for rows currently visible in the scroll window — typically
+10–30 rows — regardless of how many sessions exist in `dataSource`.
+
+```tsx
+<Table
+  virtual
+  scroll={{ y: tableScrollY }}   // ← must be a NUMBER, not a CSS string
+  ...
+/>
+```
+
+### `scroll.y` must be a number
+
+`rc-virtual-list` does its own scroll-position arithmetic and expects a numeric
+`height` in pixels.  Passing a CSS string like `"calc(100vh - 200px)"` is parsed
+as `NaN`, which collapses the virtual container to zero height.  The collapsed
+container renders on top of the content as an invisible overlay and **intercepts
+all pointer events** — clicks, selections, and identity-cell toggles stop working.
+
+The fix is to compute the height as a number in JavaScript:
+
+```tsx
+// Track window height reactively
+const [windowHeight, setWindowHeight] = useState(() => window.innerHeight);
+useEffect(() => {
+  const handler = () => setWindowHeight(window.innerHeight);
+  window.addEventListener("resize", handler);
+  return () => window.removeEventListener("resize", handler);
+}, []);
+
+// Measure the sticky header height with a ResizeObserver
+const [stickyHeaderH, setStickyHeaderH] = useState(0);
+
+// tableSection padding = top 12px + bottom 16px = 28px
+const tableScrollY = Math.max(200, windowHeight - stickyHeaderH - 28);
+
+// Pass as a number — rc-virtual-list understands pixels, not CSS expressions
+<Table virtual scroll={{ y: tableScrollY }} ... />
+```
+
+### Interaction with row expansion (accordion cells)
+
+When an `IdentityStack` cell is toggled its row height changes.  With virtualization
+every expanded row must be controlled from the parent so the virtual list can
+measure row height consistently:
+
+```tsx
+// ❌ local state — virtual list cannot observe height changes driven from outside
+function IdentityStack({ record }) {
+  const [expanded, setExpanded] = useState(false);
+  ...
+}
+
+// ✅ controlled — parent drives state; height change is a React render, measurable
+function IdentityStack({ record, expanded, onToggle }) { ... }
+```
+
+The parent holds `expandedIdentityId: string | null` (accordion: only one row
+open at a time) and passes `expanded={expandedIdentityId === record.thread_id}`
+to each cell, ensuring `rc-virtual-list` re-renders the affected row when its
+height changes.
+
+### Summary
+
+| Requirement | Reason |
+|---|---|
+| `scroll.y` must be a JS number | `rc-virtual-list` arithmetic — CSS strings parse as `NaN` |
+| `scroll.y` tracked via `resize` listener | Container height changes with window resize |
+| Sticky header height measured with `ResizeObserver` | Header height changes with config form visibility |
+| Expanded cells must be controlled from parent | Virtual list must observe all row height changes |

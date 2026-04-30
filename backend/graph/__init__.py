@@ -1,39 +1,19 @@
-"""app.graph — financial analysis LangGraph workflow package.
+"""app.graph — streaming LangGraph workflow package.
 
 Sub-packages
 ------------
-agents/   LangGraph node functions (one per node)
-prompts/  LLM prompt templates (one module per node)
-skills/   Domain-specific reusable capabilities (e.g. OHLCV processing)
-tools/    Basic utility functions (ticker extraction, execution logging)
+agents/   LangGraph node functions (streamer leaf node)
 
 Public API
 ----------
-``build_unified_graph``         Constructs the unified parent graph (routes fin-analysis OR perf-test).
-``PERF_TEST_TRIGGER``           Trigger query string for the perf-test branch.
-``UnifiedGraphState``           TypedDict that flows through the unified graph.
-``build_graph``                 Constructs the fin-analysis-only graph (legacy; kept for tests).
-``FinAnalysisState``            TypedDict for the fin-analysis pipeline.
-``PerfTestState``               TypedDict for the perf-test node.
-
-Note: ``backend.graph.runner`` (Celery task) is intentionally NOT imported here to
-avoid a circular import.  Import it directly: ``from backend.graph.runner import ...``
+``build_graph``     Constructs the two-level streaming graph.
+``StreamRunState``  TypedDict that flows through the graph.
 """
 
-from backend.graph.builder import (
-    PERF_TEST_TRIGGER,
-    build_graph,
-    build_streaming_perf_test_graph,
-    build_unified_graph,
-)
-from backend.graph.state import FinAnalysisState, PerfTestState, UnifiedGraphState
+from backend.graph.builder import build_graph
+from backend.graph.state import StreamRunState
 
 __all__ = [
-    "PERF_TEST_TRIGGER",
     "build_graph",
-    "build_streaming_perf_test_graph",
-    "build_unified_graph",
-    "FinAnalysisState",
-    "PerfTestState",
-    "UnifiedGraphState",
+    "StreamRunState",
 ]

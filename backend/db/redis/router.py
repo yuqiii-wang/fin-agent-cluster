@@ -162,6 +162,23 @@ class RedisRouter:
         self._reset_on_loop_change()
         return self._ensure_client(self._shard_index(thread_id))
 
+    def get_client_for_stream(self, stream_id: str) -> aioredis.Redis:
+        """Return the persistent Redis client responsible for *stream_id*.
+
+        Used for per-stream done-key routing (``fin:stream:ingest:done:{stream_id}``).
+        Shards by ``stream_id`` so the key name and its routing key are
+        semantically consistent, and so the shard can be derived from
+        ``stream_id`` alone even when full stream state is unavailable.
+
+        Args:
+            stream_id: Per-stream UUID used as the hash routing key.
+
+        Returns:
+            ``redis.asyncio.Redis`` bound to the correct shard.
+        """
+        self._reset_on_loop_change()
+        return self._ensure_client(self._shard_index(stream_id))
+
     def get_url_for_thread(self, thread_id: str) -> str:
         """Return the Redis URL for the shard responsible for *thread_id*.
 

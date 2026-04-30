@@ -1,84 +1,77 @@
-"""Query lifecycle SSE notification emitters.
+"""Query lifecycle notification emitters.
 
 Both functions use :func:`backend.sse_notifications.channel.publish_lifecycle`
-for live delivery via Redis Pub/Sub.  ``emit_query_received`` additionally
-calls :func:`backend.db.redis.publisher.push_pending_notify` so the SSE
-generator's drain cycle retries delivery if the client was not yet subscribed
-when the notification fired.
+for live delivery via Centrifugo.
 
 ``emit_query_status`` emits phase-transition events used by both regular and
 perf-test queries.  It lives here (not in the perf_test sub-package) because
 phase transitions are universal to every query type.
+
+After each ``query_status`` event is published, the phase is recorded in the
+Redis query-status ACK store (``query_status_ack:{thread_id}``) as unACKed.
+The assistant status-verifier background task re-publishes unACKed phases for
+clients that miss them during connection setup.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 
-from backend.db.redis.streams.publisher import push_pending_notify
 from backend.sse_notifications.channel import publish_lifecycle
+from backend.db.redis.session.query_status_ack_store import record_query_status_event
 
 logger = logging.getLogger(__name__)
 
 
 async def emit_query_received(thread_id: str) -> None:
-    """Emit ``query_received`` via Redis Pub/Sub and push to the pending-notify store.
-
-    The pending-notify store ensures the event is retried by the SSE generator's
-    drain cycle (every ~1–300 s with exponential back-off) until the client
-    confirms receipt via the ACK endpoint.
+    """Emit ``query_received`` via Centrifugo.
 
     Args:
         thread_id: LangGraph thread UUID.
     """
     payload = {"event": "query_received", "thread_id": thread_id}
-    raw = json.dumps(payload)
-    await push_pending_notify(thread_id, "query_received", None, raw)
     await publish_lifecycle(thread_id, payload)
     logger.info("[query_lifecycle] query_received emitted thread_id=%s", thread_id)
 
 
 async def emit_query_ack_confirmed(thread_id: str) -> None:
-    """Emit ``query_ack_confirmed`` via Redis Pub/Sub.
-
-    No pending-notify store entry is created because this event is the
-    terminal confirmation — the client stops retrying ACKs on receipt, and
-    subsequent ``started`` task events signal graph progress.
+    """Emit ``query_ack_confirmed`` via Centrifugo.
 
     Args:
         thread_id: LangGraph thread UUID.
     """
-    await publish_lifecycle(
-        thread_id,
-        {"event": "query_ack_confirmed", "thread_id": thread_id},
-    )
+    await publish_lifecycle(thread_id, {"event": "query_ack_confirmed", "thread_id": thread_id})
     logger.info("[query_lifecycle] query_ack_confirmed emitted thread_id=%s", thread_id)
 
 
-async def emit_query_status(thread_id: str, phase: str) -> None:
-    """Emit a ``query_status`` SSE event signalling a backend phase transition.
+async def emit_query_status(
+    thread_id: str,
+    phase: str,
+    *,
+    stream_id: str | None = None,
+) -> None:
+    """Emit a ``query_status`` phase-transition event via Centrifugo.
 
-    Fires via Redis Pub/Sub so the frontend can update status in real time.  The
-    phase is stored in Redis by the caller so late-connecting SSE clients
-    recover the current phase via :func:`~backend.api.stream._replay_existing`.
+    Also records the phase in the Redis query-status ACK store so the
+    assistant verifier can re-deliver it if the client does not ACK within
+    the verification interval.
 
-    This function is the single canonical emitter for ``query_status`` events
-    across all query types (regular and perf-test).
-
-    Phase progression for regular queries:
-        ``received`` → ``preparing``
-
-    Phase progression for perf-test queries:
-        ``received`` → ``preparing`` → ``ingesting`` → ``sending``
+    If *stream_id* is provided (concurrency / throughput modes) it is stored
+    in the ACK hash so the status-verifier can log it instead of *thread_id*,
+    making per-stream debugging easier.
 
     Args:
         thread_id: LangGraph thread UUID.
-        phase:     One of ``"received"``, ``"preparing"``, ``"ingesting"``,
-                   ``"sending"``.
+        phase:     Phase label, e.g. ``"received"``, ``"preparing"``, ``"ingesting"``,
+                   ``"digesting"``.
+        stream_id: Optional streaming session UUID.
     """
-    await publish_lifecycle(thread_id, {"event": "query_status", "phase": phase})
-    logger.info("[query_lifecycle] query_status emitted phase=%s thread_id=%s", phase, thread_id)
+    from backend.db.redis.session.query_status_ack_store import (  # noqa: PLC0415
+        store_stream_id_for_thread,
+    )
 
-
-__all__ = ["emit_query_received", "emit_query_ack_confirmed", "emit_query_status"]
+    await publish_lifecycle(thread_id, {"event": "query_status", "phase": phase, "thread_id": thread_id})
+    await record_query_status_event(thread_id, phase)
+    if stream_id is not None:
+        await store_stream_id_for_thread(thread_id, stream_id)
+    logger.debug("[query_lifecycle] query_status phase=%s thread_id=%s", phase, thread_id)

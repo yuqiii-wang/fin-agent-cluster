@@ -6,11 +6,9 @@ import { FLEX_ROW_CENTER } from "../../styles/shared";
 export function useStyles(): Record<string, CSSProperties> {
   const { token } = theme.useToken();
   return {
-    outerContainer: { width: "100%" },
+    outerContainer: { display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" },
     stickyHeader: {
-      position: "sticky",
-      top: 0,
-      zIndex: 20,
+      flexShrink: 0,
       background: token.colorBgContainer,
       borderBottom: `1px solid ${token.colorBorderSecondary}`,
       padding: "12px 16px 10px",
@@ -31,6 +29,6 @@ export function useStyles(): Record<string, CSSProperties> {
     tpsInputNumber: { width: 120 },
     timeoutInputNumber: { width: 100 },
     errorText: { fontSize: 12 },
-    tableSection: { padding: "12px 16px 16px" },
+    tableSection: { flex: 1, overflow: "auto", padding: "12px 16px 16px" },
   };
 }

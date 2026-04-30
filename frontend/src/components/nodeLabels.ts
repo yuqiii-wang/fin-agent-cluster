@@ -1,8 +1,6 @@
 export const NODE_LABELS: Record<string, string> = {
-  query_optimizer: "Query Optimizer",
-  market_data_collector: "Market Data",
-  decision_maker: "Decision Maker",
-  perf_test_streamer: "Perf Test",
+  stream_runner: "Stream Runner",
+  stream_subgraph: "Stream",
 };
 
 /**

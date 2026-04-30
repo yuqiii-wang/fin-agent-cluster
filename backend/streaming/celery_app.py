@@ -82,6 +82,15 @@ def create_celery_app() -> Celery:
         if t.task_path
     })
 
+    # Always include on-demand workers that are not tied to a stream topic.
+    _ONDEMAND_MODULES = [
+        "backend.streaming.workers.throughput",
+        "backend.streaming.workers.fanout",
+    ]
+    for mod in _ONDEMAND_MODULES:
+        if mod not in _include:
+            _include.append(mod)
+
     app = Celery(
         "fin_streaming",
         broker=_broker_url(base, db=CELERY_BROKER_DB),
@@ -89,8 +98,8 @@ def create_celery_app() -> Celery:
         include=_include,
     )
 
-    # Build beat schedule from active topics; each entry carries its queue so
-    # beat dispatches directly to the dedicated worker pool.
+    # Build beat schedule from active topics — only include topics with a
+    # beat_interval set (on-demand tasks like invoke_llm are excluded).
     _beat_schedule = {
         f"poll-{topic.human_key}": {
             "task": topic.task_path,
@@ -98,7 +107,7 @@ def create_celery_app() -> Celery:
             "options": {"queue": topic.queue},
         }
         for topic in ACTIVE_TOPICS
-        if topic.task_path
+        if topic.task_path and topic.beat_interval is not None
     }
 
     app.conf.update(**CELERY_WORKER_CONFIG, beat_schedule=_beat_schedule)

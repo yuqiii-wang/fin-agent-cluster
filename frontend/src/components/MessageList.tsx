@@ -2,7 +2,6 @@ import { memo, useEffect, useRef } from "react";
 import { Flex, Typography } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import { NodeList } from "./NodeList";
-import { ReportView } from "./ReportView";
 import type { ChatMessage, NodeGroup } from "../types";
 import { useStyles } from "./MessageList.styles";
 
@@ -46,12 +45,7 @@ export const MessageList = memo(function MessageList({ messages, onNodeClick }: 
                   <NodeList nodes={msg.nodes} threadId={msg.thread_id ?? ""} onNodeClick={onNodeClick} />
                 )}
 
-                {/* 2. Report viewer — replaces raw text once DB insert completes */}
-                {msg.report ? (
-                  <div style={styles.reportWrapper}>
-                    <ReportView report={msg.report} />
-                  </div>
-                ) : msg.text ? (
+                {msg.text ? (
                   <div
                     style={{
                       ...styles.messageText,

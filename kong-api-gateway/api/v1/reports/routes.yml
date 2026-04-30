@@ -6,7 +6,7 @@
 #   GET /api/v1/reports/symbol/{symbol}/list      paginated list for a symbol
 routes:
   - name: route-reports
-    service: fastapi
+    service: fastapi-assistant
     paths:
       - /api/v1/reports
     strip_path: false

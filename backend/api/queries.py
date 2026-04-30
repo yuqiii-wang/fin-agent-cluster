@@ -5,6 +5,7 @@ Mounted at ``/users`` under the parent API router, so full paths are:
     POST /api/v1/users/query
     POST /api/v1/users/query/{thread_id}/ack
     POST /api/v1/users/query/{thread_id}/cancel
+    POST /api/v1/users/query/{thread_id}/perf-stable?stream_id={stream_id}
     GET  /api/v1/users/query/{thread_id}
     GET  /api/v1/users/query/{thread_id}/tasks
     GET  /api/v1/users/query/{thread_id}/nodes
@@ -16,7 +17,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Query
 
 from backend.users.auth import ensure_guest
 from backend.users.queries import (
@@ -25,10 +26,10 @@ from backend.users.queries import (
     get_node_executions,
     get_query_status,
     get_query_tasks,
-    perf_stable_signal,
     submit_query,
 )
 from backend.users.schemas import NodeExecutionInfo, QueryRequest, QueryResponse, SessionStatus
+from backend.db.redis.session.perf_stable_signal import set_perf_stable
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -62,10 +63,30 @@ async def cancel_query_route(
     return await cancel_query(thread_id, reason)
 
 
-@router.post("/query/{thread_id}/perf-stable", status_code=200)
-async def perf_stable_route(thread_id: str) -> dict[str, str]:
-    """Signal that the concurrency perf stream has reached stable TPS."""
-    return await perf_stable_signal(thread_id)
+@router.post("/query/{thread_id}/perf-stable", status_code=204)
+async def perf_stable_route(
+    thread_id: str,
+    stream_id: Annotated[str, Query(description="Celery ingest run UUID (leaf-level governance ID)")],
+    x_user_token: Annotated[str, Header(alias="X-User-Token")],
+) -> None:
+    """Signal that the concurrency stream identified by *stream_id* has reached stable TPS.
+
+    Called by the frontend when per-stream TPS history satisfies the
+    group-stability condition.  Sets a Redis flag that causes the running
+    stream_ingest Celery worker to stop gracefully and emit ``stream_complete``
+    (not ``stream_stopped``), marking the session as completed rather than
+    timed out.
+
+    The ``stream_id`` query parameter scopes the signal to the specific Celery
+    ingest run so concurrent streams on the same ``thread_id`` never
+    cross-pollinate stable signals.
+
+    Args:
+        thread_id: LangGraph thread UUID (top-level scope; used for routing).
+        stream_id: Celery ingest run UUID (leaf-level scope; the signal key).
+    """
+    await ensure_guest(x_user_token)
+    await set_perf_stable(stream_id, thread_id)
 
 
 @router.get("/query/{thread_id}", response_model=QueryResponse)

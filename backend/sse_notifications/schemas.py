@@ -44,8 +44,7 @@ SseEventType = Literal[
     "connected",
     "started",
     "token",
-    "perf_token",
-    "perf_ingest_progress",
+    "token_batch",
     "completed",
     "failed",
     "cancelled",
@@ -53,10 +52,9 @@ SseEventType = Literal[
     "ping",
     "node_input",
     "node_output",
-    "perf_test_metrics",
-    "perf_test_stopped",
-    "perf_test_complete",
-    "perf_ingest_complete",
+    "ingest_complete",
+    "stream_stopped",
+    "stream_complete",
     "query_status",
     "query_received",
     "query_ack_confirmed",
@@ -75,10 +73,9 @@ LIFECYCLE_EVENTS: frozenset[str] = frozenset(
         "done",
         "node_input",
         "node_output",
-        "perf_test_metrics",
-        "perf_test_stopped",
-        "perf_test_complete",
-        "perf_ingest_complete",
+        "ingest_complete",
+        "stream_stopped",
+        "stream_complete",
         "query_status",
         "query_received",
         "query_ack_confirmed",
@@ -290,6 +287,27 @@ class PerfTestCompletePayload(BaseModel):
     tps: float
 
 
+class PerfIngestCompletePayload(BaseModel):
+    """Payload for the ``perf_ingest_complete`` event — ingest phase finished.
+
+    Emitted by the perf-test node immediately after the ingest phase writes
+    all tokens to the Redis perf stream, before the publish phase begins.
+    Allows the frontend to freeze the ingest progress display and show the
+    final elapsed ingest time.
+
+    Attributes:
+        event: Always ``"perf_ingest_complete"``.
+        produced: Tokens written to the Redis perf stream.
+        stop_reason: ``"completed"`` or ``"timeout"``.
+        ingest_ms: Wall-clock milliseconds spent in the ingest phase.
+    """
+
+    event: Literal["perf_ingest_complete"] = "perf_ingest_complete"
+    produced: int
+    stop_reason: str
+    ingest_ms: int
+
+
 # ---------------------------------------------------------------------------
 # Query lifecycle payload models
 # ---------------------------------------------------------------------------
@@ -343,6 +361,7 @@ __all__ = [
     "PingPayload",
     "NodeInputPayload",
     "NodeOutputPayload",
+    "PerfIngestCompletePayload",
     "PerfTestCompletePayload",
     "QueryReceivedPayload",
     "QueryAckConfirmedPayload",
