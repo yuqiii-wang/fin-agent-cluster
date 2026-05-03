@@ -1,12 +1,14 @@
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { Button, Col, Divider, Dropdown, Form, InputNumber, Row, Segmented, Space, Statistic, Table, Tag, Typography, theme } from "antd";
-import { CheckCircleOutlined, DownOutlined, PauseCircleOutlined, ReloadOutlined, SyncOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, DownOutlined, PauseCircleOutlined, ReloadOutlined, SendOutlined, SyncOutlined } from "@ant-design/icons";
 import { useSessionManager } from "./useSessionManager";
 import { buildColumns } from "./columns";
 import { AggregateStatsHeader } from "./AggregateStatsHeader";
 import { useStyles } from "./StreamingPerfTestPanel.styles";
 import type { PerfTestConfig, ThreadSession } from "./types";
 import { DEFAULT_PERF_CONFIG } from "./types";
+import { GraphVisualizationPanel } from "../GraphVisualizationPanel";
+import { useSingleTestSession } from "../../services/singleTest";
 
 const { Title } = Typography;
 
@@ -107,11 +109,15 @@ export function StreamingPerfTestPanel({
     handleCancelOne,
   } = useSessionManager(userToken, config);
 
+  // Single mode — graph viz test
+  const isSingleMode = config.testMode === "single";
+  const singleTest = useSingleTestSession(userToken);
+
   // Single global toggle: controls are locked while any stream is running.
-  const isActive = activeCount > 0;
+  const isActive = isSingleMode ? (singleTest.isActive || singleTest.isPendingControl) : activeCount > 0;
 
   const columns = useMemo(
-    () => buildColumns(handleCancelOne, config.tokenCount, frozen, undefined, config.testMode, config.timeoutSecs, token, config.tokenPerSec, expandedTokenLogId, handleToggleTokenLog, expandedIdentityId, handleToggleIdentity),
+    () => buildColumns(handleCancelOne, config.tokenCount, frozen, undefined, config.testMode as "throughput" | "concurrency", config.timeoutSecs, token, config.tokenPerSec, expandedTokenLogId, handleToggleTokenLog, expandedIdentityId, handleToggleIdentity),
     [handleCancelOne, config.tokenCount, config.testMode, config.timeoutSecs, config.tokenPerSec, frozen, token, expandedTokenLogId, handleToggleTokenLog, expandedIdentityId, handleToggleIdentity],
   );
 
@@ -127,48 +133,67 @@ export function StreamingPerfTestPanel({
             {isActive && <Tag color="blue">{activeCount} active</Tag>}
           </div>
           <div style={styles.titleRight}>
-            <Dropdown.Button
-              type="primary"
-              disabled={isActive}
-              open={dropdownOpen}
-              onOpenChange={(open) => { setDropdownOpen(open); if (!open) setCustomAddError(""); }}
-              onClick={() => handleAddRequest(addCount)}
-              icon={<DownOutlined />}
-              menu={{
-                items: ADD_PRESETS.map((n) => ({ key: String(n), label: String(n) })),
-                selectedKeys: [String(addCount)],
-                onClick: handlePresetSelect,
-              }}
-              dropdownRender={(menu) => (
-                <div style={styles.dropdownContent}>
-                  {menu}
-                  <Divider style={styles.dropdownDivider} />
-                  <Space direction="vertical" size={4} style={styles.dropdownCustomArea}>
-                    <Space>
-                      <InputNumber
-                        size="small"
-                        min={1}
-                        placeholder="Custom…"
-                        value={customAddVal}
-                        status={customAddError ? "error" : ""}
-                        onChange={(v) => { setCustomAddVal(v); setCustomAddError(""); }}
-                        onPressEnter={handleCustomSet}
-                        style={styles.customInputNumber}
-                      />
-                      <Button size="small" type="primary" onClick={handleCustomSet}>Set</Button>
+            <Space.Compact>
+              {isSingleMode ? (
+                <Button
+                  type="primary"
+                  icon={<SendOutlined />}
+                  loading={singleTest.session?.status === "submitting"}
+                  disabled={isActive}
+                  onClick={singleTest.sendRequest}
+                >
+                  Send request
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    type="primary"
+                    disabled={isActive}
+                    onClick={() => handleAddRequest(addCount)}
+                  >
+                    Add {addCount} request{addCount !== 1 ? "s" : ""}
+                  </Button>
+                  <Dropdown
+                    open={dropdownOpen}
+                    onOpenChange={(open) => { setDropdownOpen(open); if (!open) setCustomAddError(""); }}
+                    menu={{
+                      items: ADD_PRESETS.map((n) => ({ key: String(n), label: String(n) })),
+                      selectedKeys: [String(addCount)],
+                      onClick: handlePresetSelect,
+                    }}
+                    popupRender={(menu) => (
+                      <div style={styles.dropdownContent}>
+                        {menu}
+                        <Divider style={styles.dropdownDivider} />
+                        <Space direction="vertical" size={4} style={styles.dropdownCustomArea}>
+                      <Space>
+                        <InputNumber
+                          size="small"
+                          min={1}
+                          placeholder="Custom…"
+                          value={customAddVal}
+                          status={customAddError ? "error" : ""}
+                          onChange={(v) => { setCustomAddVal(v); setCustomAddError(""); }}
+                          onPressEnter={handleCustomSet}
+                          style={styles.customInputNumber}
+                        />
+                        <Button size="small" type="primary" onClick={handleCustomSet}>Set</Button>
+                      </Space>
+                      {customAddError && (
+                        <Typography.Text type="danger" style={styles.errorText}>{customAddError}</Typography.Text>
+                      )}
                     </Space>
-                    {customAddError && (
-                      <Typography.Text type="danger" style={styles.errorText}>{customAddError}</Typography.Text>
-                    )}
-                  </Space>
-                </div>
+                  </div>
+                )}
+              >
+                <Button type="primary" disabled={isActive} icon={<DownOutlined />} />
+              </Dropdown>
+                </>
               )}
-            >
-              Add {addCount} request{addCount !== 1 ? "s" : ""}
-            </Dropdown.Button>
+            </Space.Compact>
             <Button
               icon={<ReloadOutlined />}
-              onClick={handleRestart}
+              onClick={isSingleMode ? singleTest.reset : handleRestart}
               disabled={isActive}
             >
               Restart
@@ -176,7 +201,7 @@ export function StreamingPerfTestPanel({
             <Button
               icon={<CheckCircleOutlined />}
               onClick={() => { handleComplete(); onComplete?.(); }}
-              disabled={sessions.length === 0 || isActive}
+              disabled={isSingleMode || sessions.length === 0 || isActive}
             >
               Complete
             </Button>
@@ -184,7 +209,7 @@ export function StreamingPerfTestPanel({
               danger
               icon={<PauseCircleOutlined />}
               onClick={handleCancelAll}
-              disabled={!isActive}
+              disabled={isSingleMode || !isActive}
             >
               Cancel All
             </Button>
@@ -196,15 +221,15 @@ export function StreamingPerfTestPanel({
           <Form.Item label="Test Mode">
             <Segmented
               options={[
+                { label: "Single", value: "single" },
                 { label: "Throughput", value: "throughput" },
                 { label: "Concurrency", value: "concurrency" },
               ]}
               value={config.testMode}
               disabled={isActive}
               onChange={(v) => {
-                setConfig((c) => ({ ...c, testMode: v as "throughput" | "concurrency" }));
-                // Reset addCount to mode-appropriate default.
-                setAddCount(v === "concurrency" ? 10 : 2);
+                setConfig((c) => ({ ...c, testMode: v as "single" | "throughput" | "concurrency" }));
+                setAddCount(v === "concurrency" ? 10 : 1);
               }}
             />
           </Form.Item>
@@ -222,7 +247,7 @@ export function StreamingPerfTestPanel({
                 style={styles.tokenInputNumber}
               />
             </Form.Item>
-          ) : (
+          ) : config.testMode === "concurrency" ? (
             <Form.Item label="Tokens / sec">
               <InputNumber
                 min={100}
@@ -236,44 +261,66 @@ export function StreamingPerfTestPanel({
                 style={styles.tpsInputNumber}
               />
             </Form.Item>
+          ) : null}
+          {!isSingleMode && (
+            <Form.Item label="Timeout (s)">
+              <Space.Compact>
+                <InputNumber
+                  min={10}
+                  max={3600}
+                  step={10}
+                  value={config.timeoutSecs}
+                  disabled={isActive}
+                  onChange={(v) => v !== null && setConfig((c) => ({ ...c, timeoutSecs: v }))}
+                  style={styles.timeoutInputNumber}
+                />
+                <Button disabled style={{ cursor: "default", color: token.colorText }}>s</Button>
+              </Space.Compact>
+            </Form.Item>
           )}
-          <Form.Item label="Timeout (s)">
-            <InputNumber
-              min={10}
-              max={3600}
-              step={10}
-              value={config.timeoutSecs}
-              disabled={isActive}
-              addonAfter="s"
-              onChange={(v) => v !== null && setConfig((c) => ({ ...c, timeoutSecs: v }))}
-              style={styles.timeoutInputNumber}
-            />
-          </Form.Item>
         </Form>
 
-        {/* Live stats */}
-        <Row gutter={12}>
-          <Col span={8}><Statistic title="Total Tokens" value={totalTokens} /></Col>
-          <Col span={8}><Statistic title="Active Streams" value={activeCount} /></Col>
-          <Col span={8}><Statistic title="Completed" value={completedCount} /></Col>
-        </Row>
-        <AggregateStatsHeader stats={aggregateStats} isDigesting={activeDigestingCount > 0} />
+        {/* Live stats — hidden in single mode */}
+        {!isSingleMode && (
+          <>
+            <Row gutter={12}>
+              <Col span={8}><Statistic title="Total Tokens" value={totalTokens} /></Col>
+              <Col span={8}><Statistic title="Active Streams" value={activeCount} /></Col>
+              <Col span={8}><Statistic title="Completed" value={completedCount} /></Col>
+            </Row>
+            <AggregateStatsHeader stats={aggregateStats} isDigesting={activeDigestingCount > 0} />
+          </>
+        )}
       </div>
 
-      {/* ── Scrollable grid ── */}
-      <div style={styles.tableSection}>
-        <Table<ThreadSession>
-          rowKey="thread_id"
-          columns={columns}
-          dataSource={sessions}
-          pagination={false}
-          size="small"
-          bordered
-          virtual
-          scroll={{ y: tableScrollY }}
-          sticky={{ offsetHeader: 0 }}
-        />
-      </div>
+      {/* ── Scrollable grid ─ hidden in single mode ── */}
+      {!isSingleMode && (
+        <div style={styles.tableSection}>
+          <Table<ThreadSession>
+            rowKey="thread_id"
+            columns={columns}
+            dataSource={sessions}
+            pagination={false}
+            size="small"
+            bordered
+            virtual
+            scroll={{ y: tableScrollY }}
+            sticky={{ offsetHeader: 0 }}
+          />
+        </div>
+      )}
+
+      {/* ── Single mode: graph visualization ── */}
+      {isSingleMode && (
+        <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px" }}>
+          {singleTest.session?.thread_id && (
+            <Typography.Text type="secondary" style={{ fontSize: 12, fontFamily: "monospace", display: "block", marginBottom: 12 }}>
+              {singleTest.session.thread_id}
+            </Typography.Text>
+          )}
+          <GraphVisualizationPanel graphState={singleTest.graphState} threadId={singleTest.session?.thread_id} onResume={singleTest.resumeRequest} onReplay={singleTest.replayRequest} onFork={singleTest.forkRequest} isPendingControl={singleTest.isPendingControl} />
+        </div>
+      )}
 
     </div>
   );

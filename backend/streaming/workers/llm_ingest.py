@@ -44,8 +44,8 @@ def invoke_llm(
     messages_json: str,
     temperature: float = 0.3,
     thread_id: Optional[str] = None,
-    task_id: Optional[int] = None,
-    task_key: Optional[str] = None,
+    task_id: Optional[str] = None,
+    task_name: Optional[str] = None,
     node_name: Optional[str] = None,
     json_mode: bool = False,
 ) -> str:
@@ -60,8 +60,8 @@ def invoke_llm(
         messages_json: LangChain-serialised messages (via ``langchain_core.load.dumps``).
         temperature:   Sampling temperature.
         thread_id:     Originating LangGraph thread UUID.
-        task_id:       Pre-created ``fin_agents.tasks`` row ID for token attribution.
-        task_key:      Agent sub-task key for usage tracking.
+        task_id:     UUID of the pre-created task row for token attribution.
+        task_name:      Agent sub-task key for usage tracking.
         node_name:     Agent node name for usage tracking.
         json_mode:     Bind JSON response format when the provider supports it.
 
@@ -73,7 +73,7 @@ def invoke_llm(
     """
     try:
         return asyncio.run(
-            _stream_invoke(messages_json, temperature, thread_id, task_id, task_key, node_name, json_mode)
+            _stream_invoke(messages_json, temperature, thread_id, task_id, task_name, node_name, json_mode)
         )
     except Exception as exc:
         logger.warning(
@@ -89,8 +89,8 @@ async def _stream_invoke(
     messages_json: str,
     temperature: float,
     thread_id: Optional[str],
-    task_id: Optional[int],
-    task_key: Optional[str],
+    task_id: Optional[str],
+    task_name: Optional[str],
     node_name: Optional[str],
     json_mode: bool,
 ) -> str:
@@ -100,8 +100,8 @@ async def _stream_invoke(
         messages_json: LangChain-serialised messages.
         temperature:   Sampling temperature.
         thread_id:     LangGraph thread UUID.
-        task_id:       DB task row ID for token attribution.
-        task_key:      Agent sub-task key.
+        task_id:     UUID of the task row for token attribution.
+        task_name:      Agent sub-task key.
         node_name:     Agent node name.
         json_mode:     Bind JSON response format when supported.
 
@@ -135,12 +135,12 @@ async def _stream_invoke(
         if t_token:
             thinking_parts.append(t_token)
             if thread_id:
-                await _xadd_token(thread_id, task_id, task_key, node_name, "thinking", t_token)
+                await _xadd_token(thread_id, task_id, task_name, node_name, "thinking", t_token)
 
         if a_token:
             answer_parts.append(a_token)
             if thread_id:
-                await _xadd_token(thread_id, task_id, task_key, node_name, "answer", a_token)
+                await _xadd_token(thread_id, task_id, task_name, node_name, "answer", a_token)
 
         # Usage metadata is typically only on the final chunk.
         pt, ct = _extract_chunk_usage(chunk)
@@ -159,7 +159,8 @@ async def _stream_invoke(
         completion_tokens=completion_tokens,
         latency_ms=latency_ms,
         thread_id=thread_id,
-        task_key=task_key,
+        task_id=task_id,
+        task_name=task_name,
         node_name=node_name,
         prompts=prompts_text,
         thinking=thinking_text,
@@ -171,8 +172,8 @@ async def _stream_invoke(
 
 async def _xadd_token(
     thread_id: str,
-    task_id: Optional[int],
-    task_key: Optional[str],
+    task_id: Optional[str],
+    task_name: Optional[str],
     node_name: Optional[str],
     token_type: str,
     data: str,
@@ -184,8 +185,8 @@ async def _xadd_token(
 
     Args:
         thread_id:  LangGraph thread UUID (determines shard and channel).
-        task_id:    DB task row ID; ``None`` when not tracked.
-        task_key:   Agent sub-task key.
+        task_id:  UUID of the task row; ``None`` when not tracked.
+        task_name:   Agent sub-task key.
         node_name:  Agent node name.
         token_type: ``"thinking"`` or ``"answer"``.
         data:       Raw token text.
@@ -197,8 +198,8 @@ async def _xadd_token(
     }
     if task_id is not None:
         event["task_id"] = task_id
-    if task_key:
-        event["task_key"] = task_key
+    if task_name:
+        event["task_name"] = task_name
     if node_name:
         event["node_name"] = node_name
 
@@ -216,7 +217,8 @@ async def _publish_completion(
     completion_tokens: int,
     latency_ms: int,
     thread_id: Optional[str],
-    task_key: Optional[str],
+    task_id: Optional[str],
+    task_name: Optional[str],
     node_name: Optional[str],
     prompts: Optional[str] = None,
     thinking: Optional[str] = None,
@@ -234,7 +236,9 @@ async def _publish_completion(
         completion_tokens: Output token count.
         latency_ms:        Wall-clock latency in milliseconds.
         thread_id:         LangGraph thread UUID.
-        task_key:          Agent sub-task key.
+        task_id:         UUID of the ``fin_agents.tasks`` row for
+                           the optional 1:1 link in ``llm_responses``.
+        task_name:          Agent sub-task key.
         node_name:         Agent node name.
         prompts:           Serialised input messages.
         thinking:          Accumulated chain-of-thought text (raw tokens joined).
@@ -248,7 +252,8 @@ async def _publish_completion(
         total_tokens=prompt_tokens + completion_tokens,
         latency_ms=latency_ms,
         thread_id=thread_id,
-        task_key=task_key,
+        task_id=task_id,
+        task_name=task_name,
         node_name=node_name,
         prompts=prompts,
         thinking=thinking,

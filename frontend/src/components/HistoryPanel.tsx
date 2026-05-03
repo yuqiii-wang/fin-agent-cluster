@@ -38,10 +38,9 @@ export function HistoryPanel({ open, items, onClose, onRecover }: HistoryPanelPr
         </span>
       }
       placement="left"
-      width={360}
       open={open}
       onClose={onClose}
-      styles={{ body: { padding: "8px 0" } }}
+      styles={{ wrapper: { width: 360 }, body: { padding: "8px 0" } }}
     >
       {items.length === 0 ? (
         <div style={styles.emptyState}>

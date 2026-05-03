@@ -42,7 +42,13 @@ export const MessageList = memo(function MessageList({ messages, onNodeClick }: 
               <>
                 {/* 1. Node pipeline — appears as soon as any node starts */}
                 {msg.nodes && msg.nodes.length > 0 && (
-                  <NodeList nodes={msg.nodes} threadId={msg.thread_id ?? ""} onNodeClick={onNodeClick} />
+                  <NodeList
+                    nodes={msg.nodes}
+                    threadId={msg.thread_id ?? ""}
+                    onNodeClick={onNodeClick}
+                    queryRunning={msg.status === "running"}
+                    queryResumable={msg.status === "cancelled" || msg.status === "failed" || msg.status === "paused"}
+                  />
                 )}
 
                 {msg.text ? (

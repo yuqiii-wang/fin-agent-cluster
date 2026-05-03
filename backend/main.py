@@ -115,8 +115,9 @@ app.include_router(api_router)
 
 
 @app.get("/health")
+@app.get("/api/v1/health")
 async def health() -> dict:
-    """Health check endpoint."""
+    """Health check endpoint (also reachable via /api/v1/health for Kong routing)."""
     return {
         "status": "ok",
         "llm_provider": get_active_provider(),

@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     ALPHAVANTAGE_API_KEY: Optional[str] = None
     FMP_API_KEY: Optional[str] = None
     FMP_BASE_URL: str = "https://financialmodelingprep.com/stable"
+    # Stats data provider: mock | yfinance | fmp
+    # mock    — in-process mock data, no external calls (default)
+    # yfinance — free Yahoo Finance via the yfinance library
+    # fmp      — Financial Modeling Prep REST API (requires FMP_API_KEY)
+    STATS_PROVIDER: str = "mock"
     FASTAPI_PORT: int = 8432
     # Base port for assistant FastAPI instances (non-LangGraph).
     # Runner instances start at FASTAPI_PORT; assistants at FASTAPI_ASSISTANT_PORT.

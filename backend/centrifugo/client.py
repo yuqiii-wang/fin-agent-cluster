@@ -10,10 +10,18 @@ has the full channel history on the correct shard.
 The publish call is **fire-and-forget**: errors are logged at WARNING level and
 never raised, so a transient Centrifugo outage does not crash the graph.
 
-Public API
-----------
-:func:`get_shard_index`    — deterministic shard index (0 or 1) for a thread_id.
-:func:`publish_to_channel` — publish a dict payload to ``thread:{thread_id}``.
+Scope-based Public API
+-----------------------
+All four functions publish to the same ``thread:{thread_id}`` Centrifugo channel
+(the channel is always scoped to a thread).  The scope distinction is semantic —
+it makes call-sites explicit about which lifecycle level the event belongs to and
+allows future differentiation (e.g. different retry budgets per scope).
+
+:func:`get_shard_index`      — deterministic shard index (0 or 1) for a thread_id.
+:func:`publish_thread_event` — thread-level events: done, query_status, query_received.
+:func:`publish_node_event`   — node-level events: node_input, node_output, node_status.
+:func:`publish_task_event`   — task-level events: started, completed, failed, cancelled.
+:func:`publish_stream_event` — stream-level events: ingest_complete, stream_stopped, stream_complete.
 """
 
 from __future__ import annotations
@@ -85,10 +93,10 @@ def _node_url(thread_id: str) -> str:
     return settings.CENTRIFUGO_NODES[get_shard_index(thread_id)]
 
 
-async def publish_to_channel(thread_id: str, payload: dict[str, Any]) -> None:
-    """Publish *payload* to the ``thread:{thread_id}`` Centrifugo channel.
+async def _publish_to_channel(thread_id: str, payload: dict[str, Any]) -> None:
+    """HTTP transport — publish *payload* to the ``thread:{thread_id}`` Centrifugo channel.
 
-    Uses the Centrifugo HTTP API (``POST /api``, ``method=publish``).
+    Internal function shared by all scope-specific publishers.
     Errors are logged at WARNING level and never raised — a transient
     Centrifugo outage must not interrupt the LangGraph execution path.
 
@@ -165,4 +173,70 @@ async def publish_to_channel(thread_id: str, payload: dict[str, Any]) -> None:
             return
 
 
-__all__ = ["get_shard_index", "publish_to_channel"]
+# ---------------------------------------------------------------------------
+# Scope-specific public API
+# All four functions publish to the same ``thread:{thread_id}`` channel.
+# The scope is semantic — it makes call-sites explicit about the lifecycle
+# level of the event.
+# ---------------------------------------------------------------------------
+
+
+async def publish_thread_event(thread_id: str, payload: dict[str, Any]) -> None:
+    """Publish a thread-level lifecycle event (done, query_status, query_received, etc.).
+
+    Thread-scoped events represent the overall query session lifecycle.
+    The authoritative timestamps come from ``fin_agents.user_queries``.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        payload:   Event dict; must include an ``"event"`` key.
+    """
+    await _publish_to_channel(thread_id, payload)
+
+
+async def publish_node_event(thread_id: str, payload: dict[str, Any]) -> None:
+    """Publish a node-level lifecycle event (node_input, node_output, node_status).
+
+    Node-scoped events carry timestamps derived from ``fin_agents.node_executions``
+    (``started_at`` + ``elapsed_ms``) — not from wall-clock time at emit.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        payload:   Event dict; must include an ``"event"`` key.
+    """
+    await _publish_to_channel(thread_id, payload)
+
+
+async def publish_task_event(thread_id: str, payload: dict[str, Any]) -> None:
+    """Publish a task-level lifecycle event (started, completed, failed, cancelled).
+
+    Task-scoped events carry timestamps derived from ``fin_agents.tasks``
+    (``created_at`` / ``updated_at``) — not from wall-clock time at emit.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        payload:   Event dict; must include an ``"event"`` key.
+    """
+    await _publish_to_channel(thread_id, payload)
+
+
+async def publish_stream_event(thread_id: str, payload: dict[str, Any]) -> None:
+    """Publish a stream-level event (ingest_complete, stream_stopped, stream_complete).
+
+    Stream-scoped events are ephemeral — they are not persisted in PG DB.
+    Timestamps in these payloads are wall-clock values from the streaming worker.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        payload:   Event dict; must include an ``"event"`` key.
+    """
+    await _publish_to_channel(thread_id, payload)
+
+
+__all__ = [
+    "get_shard_index",
+    "publish_thread_event",
+    "publish_node_event",
+    "publish_task_event",
+    "publish_stream_event",
+]

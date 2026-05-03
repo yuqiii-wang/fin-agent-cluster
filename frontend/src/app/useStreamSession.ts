@@ -4,14 +4,14 @@ import type { ChatMessage, ThreadSummary } from "../types";
 import { cancelQuery, createAckHandlers, fetchHistory, openStream, submitQuery } from "../api";
 import { fetchQueryStatus } from "../api/queries";
 import { buildSseHandlers } from "./sseHandlers";
-import { sendDoneAck } from "../services/streaming/lifecycle";
+import { sendDoneAck } from "../services/streaming";
 
 const PERF_TEST_TRIGGER = "DO STREAMING PERFORMANCE TEST NOW";
 
 export interface UseStreamSessionReturn {
   messages: ChatMessage[];
   loading: boolean;
-  tokenStreams: Record<number, string>;
+  tokenStreams: Record<string, string>;
   taskProviders: Record<number, string>;
   /**
    * Counter used as the `key` prop for `StreamingPerfTestPanel`.
@@ -39,7 +39,7 @@ export function useStreamSession(
 ): UseStreamSessionReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
-  const [tokenStreams, setTokenStreams] = useState<Record<number, string>>({});
+  const [tokenStreams, setTokenStreams] = useState<Record<string, string>>({});
   const [taskProviders, setTaskProviders] = useState<Record<number, string>>({});
   const [perfTestKey, setPerfTestKey] = useState(0);
 
@@ -59,10 +59,10 @@ export function useStreamSession(
   /** msgId → text delta accumulated since last 100 ms flush. */
   const msgTextBufferRef = useRef<Record<string, string>>({});
   /** taskId → token delta accumulated since last 100 ms flush. */
-  const taskTokenBufferRef = useRef<Record<number, string>>({});
+  const taskTokenBufferRef = useRef<Record<string, string>>({}); 
 
   /** Push a token delta for a task into the buffer — zero React overhead. */
-  const pushTokenStream = useCallback((taskId: number, token: string) => {
+  const pushTokenStream = useCallback((taskId: string, token: string) => {
     taskTokenBufferRef.current[taskId] = (taskTokenBufferRef.current[taskId] ?? "") + token;
   }, []);
 
@@ -88,8 +88,7 @@ export function useStreamSession(
         setTokenStreams((prev) => {
           const next = { ...prev };
           for (const [key, text] of Object.entries(taskFlush)) {
-            const taskId = Number(key);
-            next[taskId] = (next[taskId] ?? "") + text;
+            next[key] = (next[key] ?? "") + text;
           }
           return next;
         });
@@ -165,6 +164,11 @@ export function useStreamSession(
           updateMessage(asstMsgId, { text: message, status: "failed" as ChatMessage["status"], streamingCursor: false });
           activeThreadId.current = null;
           setLoading(false);
+        },
+        onResumed: () => {
+          activeThreadId.current = thread.thread_id;
+          setLoading(true);
+          lastTokenAtRef.current = Date.now();
         },
       });
       ackConfirmedRef.current = false;
@@ -344,6 +348,11 @@ export function useStreamSession(
           updateMessage(asstMsgId, { text: message, status: "failed" as ChatMessage["status"], streamingCursor: false });
           activeThreadId.current = null;
           setLoading(false);
+        },
+        onResumed: () => {
+          activeThreadId.current = threadId;
+          setLoading(true);
+          lastTokenAtRef.current = Date.now();
         },
       });
       ackConfirmedRef.current = false;

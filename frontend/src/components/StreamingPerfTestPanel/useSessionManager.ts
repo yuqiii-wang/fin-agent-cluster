@@ -6,7 +6,7 @@ const PERF_TRIGGER = "DO STREAMING PERFORMANCE TEST NOW";
 import type { PendingTokenPatch, PerfTestConfig, ThreadSession } from "./types";
 
 /** Build a perf trigger query string with params encoded as |{json} so the
- * backend stream_runner node can parse test_mode, total_tokens, etc. */
+ * backend mock_runner node can parse test_mode, total_tokens, etc. */
 function buildPerfQuery(label: string, runId: string, cfg: PerfTestConfig): string {
   const params = JSON.stringify({
     test_mode: cfg.testMode,
@@ -312,7 +312,6 @@ export function useSessionManager(
     (thread_id: string, _label: string, test_mode: "throughput" | "concurrency", start_ms: number): ThreadSession => ({
       thread_id,
       node_id: null,
-      leaf_node_id: null,
       task_id: null,
       stream_id: null,
       status: "connecting",
@@ -365,7 +364,7 @@ export function useSessionManager(
           const label = `Stream #${labelNum}`;
           const spawnedAt = Date.now();
           const tempId = `pending-${labelNum}`;
-          setSessions((prev) => [...prev, makeSession(tempId, label, config.testMode, spawnedAt)]);
+          setSessions((prev) => [...prev, makeSession(tempId, label, config.testMode as "throughput" | "concurrency", spawnedAt)]);
           try {
             const res = await submitPerfQuery(
               buildPerfQuery(label, runIdRef.current, config),
@@ -437,7 +436,7 @@ export function useSessionManager(
         const label = `Stream #${labelNum}`;
         const spawnedAt = Date.now();
         const tempId = `pending-${labelNum}`;
-        setSessions((prev) => [...prev, makeSession(tempId, label, config.testMode, spawnedAt)]);
+        setSessions((prev) => [...prev, makeSession(tempId, label, config.testMode as "throughput" | "concurrency", spawnedAt)]);
         try {
           const res = await submitPerfQuery(
             buildPerfQuery(`Stream #${labelNum}`, runIdRef.current, config),
@@ -475,12 +474,10 @@ export function useSessionManager(
         const label = `Stream #${labelNum}`;
         const spawnedAt = Date.now();
         const tempId = `pending-${labelNum}`;
-        setSessions((prev) => [...prev, makeSession(tempId, label, config.testMode, spawnedAt)]);
+        setSessions((prev) => [...prev, makeSession(tempId, label, config.testMode as "throughput" | "concurrency", spawnedAt)]);
         try {
-          const res = await submitPerfQuery(
-            buildPerfQuery(`Stream #${labelNum}`, runIdRef.current, config),
-            userToken,
-          );
+          const query = buildPerfQuery(`Stream #${labelNum}`, runIdRef.current, config);
+          const res = await submitPerfQuery(query, userToken);
           const thread_id = res.thread_id;
           // Set status='received' immediately — don't wait for Centrifugo event.
           setSessions((prev) => prev.map((s) => s.thread_id === tempId ? { ...s, thread_id, status: "received" as const } : s));

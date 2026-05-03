@@ -1,12 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Flex, Spin, Steps, Tooltip, Typography } from "antd";
-import { LoadingOutlined, SyncOutlined, StopOutlined } from "@ant-design/icons";
-import type { NodeExecutionInfo, NodeGroup, TaskInfo } from "../types";
-import { fetchNodeExecutions } from "../api";
+import { Button, Flex, Spin, Steps, Tooltip, Typography } from "antd";
+import { LoadingOutlined, PlayCircleOutlined, StopOutlined, SyncOutlined } from "@ant-design/icons";
+import type { NodeExecutionInfo, NodeGroup, TaskInfo, TaskTypeMeta } from "../types";
+import { cancelNode, fetchNodeExecutions, fetchTaskMeta, resumeQuery } from "../api";
 import { JsonViewer } from "./JsonViewer";
-import { NODE_LABELS } from "./nodeLabels";
+import { OutputViewer } from "./OutputViewer";
+
 import { useStyles } from "./NodeList.styles";
-import { getErrorDescription } from "../services/streaming/errors";
+import { getErrorDescription } from "../services/streaming";
 
 const { Text } = Typography;
 
@@ -16,13 +17,18 @@ const STEP_STATUS: Record<NodeGroup["status"], "wait" | "process" | "finish" | "
   completed: "finish",
   failed: "error",
   cancelled: "error",
+  paused: "wait",
 };
 
 interface Props {
   nodes: NodeGroup[];
   threadId: string;
   onNodeClick: (node: NodeGroup) => void;
-  tokenStreams?: Record<number, string>;
+  tokenStreams?: Record<string, string>;
+  /** Whether the parent query is still running (enables per-node cancel). */
+  queryRunning?: boolean;
+  /** Whether the parent query is cancelled/failed (enables resume). */
+  queryResumable?: boolean;
 }
 
 /** Field with label + JsonViewer (copy button is built into JsonViewer). */
@@ -37,77 +43,62 @@ function LabelledField({ label, data }: { label: string; data: unknown }) {
 }
 
 interface NodeInlinePanelProps {
+  node: NodeGroup;
   execution: NodeExecutionInfo | null | "loading";
-  /** Status of the selected node — used to show a waiting spinner for non-completed nodes. */
+  taskMeta: TaskTypeMeta | null;
+  tokenStreams: Record<string, string>;
   nodeStatus?: NodeGroup["status"];
-  /** Accumulated streaming token text for the running task in this node, if any. */
   streamingText?: string;
 }
 
-/** Inline input/output panel for a node, showing the actual state data. */
-function NodeInlinePanel({ execution, nodeStatus, streamingText }: NodeInlinePanelProps) {
+/** Inline task list panel for a node, mapping each task to an OutputViewer component. */
+function NodeInlinePanel({ node, taskMeta, tokenStreams, execution, nodeStatus, streamingText }: NodeInlinePanelProps) {
   const styles = useStyles();
-  if (execution === "loading") {
-    return <Flex justify="center" style={styles.loadingCenter}><Spin size="small" /></Flex>;
-  }
-
-  if (!execution && (nodeStatus === "pending" || nodeStatus === "running")) {
-    if (streamingText) {
-      return (
-        <Flex vertical gap={4} style={styles.streamingContainer}>
-          <Flex align="center" gap={6}>
-            <SyncOutlined spin style={styles.streamingIcon} />
-            <Text type="secondary" style={styles.streamingLabel}>Streaming…</Text>
-          </Flex>
-          <div style={styles.streamingText}>
-            {streamingText}
-            <span style={styles.cursorOpacity}>▋</span>
-          </div>
-        </Flex>
-      );
-    }
-    return (
-      <Flex align="center" gap={6} style={styles.waitingContainer}>
-        <Spin size="small" />
-        <Text type="secondary" style={styles.waitingText}>
-          Waiting for node to complete…
-        </Text>
-      </Flex>
-    );
-  }
 
   return (
     <Flex vertical gap={6} style={styles.ioContainer}>
-      <div>
-        {execution ? (
-          <LabelledField label="Input" data={execution.input} />
-        ) : (
-          <>\n            <Text type="secondary" style={styles.labelText}>Input</Text>
-            <div>—</div>
-          </>
-        )}
-      </div>
-      <div>
-        {execution ? (
-          <LabelledField label="Output" data={execution.output} />
-        ) : (
-          <>
-            <Text type="secondary" style={styles.labelText}>Output</Text>
-            <div>—</div>
-          </>
-        )}
-      </div>
+      {node.tasks.length === 0 ? (
+        <Text type="secondary" style={styles.waitingText}>
+          No tasks found for this node.
+        </Text>
+      ) : (
+        node.tasks.map((task) => (
+          <div key={task.task_id} style={{ marginBottom: 12 }}>
+            <Text type="secondary" style={styles.labelText}>
+              {task.task_name} <span style={{ fontSize: 10, opacity: 0.5 }}>({task.task_id})</span>
+            </Text>
+            <div style={{ marginTop: 6 }}>
+              <OutputViewer
+                task={task}
+                stream={tokenStreams[task.task_id]}
+                taskMeta={taskMeta}
+              />
+            </div>
+          </div>
+        ))
+      )}
     </Flex>
   );
 }
 
 /** Visual pipeline using antd Steps — click a node to show its input/output below. */
-export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, tokenStreams = {} }: Props) {
+export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, tokenStreams = {}, queryRunning = false, queryResumable = false }: Props) {
   const styles = useStyles();
   const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
   const [executions, setExecutions] = useState<Record<string, NodeExecutionInfo | null>>({});
   const [loading, setLoading] = useState(false);
+  // cancellingNodes: node_ids currently waiting for the backend to confirm cancellation.
+  const [cancellingNodes, setCancellingNodes] = useState<Set<string>>(new Set());
+  // resuming: true while the resume API call is in-flight, waiting for query_status: running.
+  const [resuming, setResuming] = useState(false);
   const prevStatusRef = useRef<Record<string, string>>({});
+
+  const [taskMeta, setTaskMeta] = useState<TaskTypeMeta | null>(null);
+  useEffect(() => {
+    fetchTaskMeta().then(setTaskMeta).catch((err) => {
+      console.error("[NodeList] fetchTaskMeta failed", err);
+    });
+  }, []);
 
   /** Re-fetch execution data for the selected node when it transitions to completed. */
   useEffect(() => {
@@ -170,6 +161,49 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
     }
   }, [selectedNodeName, onNodeClick, executions, threadId]);
 
+  const handleCancelNode = useCallback((e: React.MouseEvent, node: NodeGroup) => {
+    e.stopPropagation();
+    if (!node.node_id) return;
+    setCancellingNodes((prev) => new Set(prev).add(node.node_id!));
+    cancelNode(threadId, node.node_id).catch((err) => {
+      console.error("[NodeList] cancelNode failed", err);
+      setCancellingNodes((prev) => {
+        const next = new Set(prev);
+        next.delete(node.node_id!);
+        return next;
+      });
+    });
+    // Note: spinner stays until SSE delivers node_status: cancelled (see effect below).
+  }, [threadId]);
+
+  /**
+   * Clear the cancelling-node spinner once the QUERY transitions to cancelled/failed
+   * (i.e. the done event confirmed the full stop).  We intentionally wait for
+   * queryResumable rather than node.status === "cancelled" so the spinner stays
+   * visible through the brief window between node_status and done events.
+   */
+  useEffect(() => {
+    if (cancellingNodes.size === 0) return;
+    if (queryResumable) {
+      setCancellingNodes(new Set());
+    }
+  }, [queryResumable, cancellingNodes.size]);
+
+  const handleResume = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setResuming(true);
+    resumeQuery(threadId).catch((err) => {
+      console.error("[NodeList] resumeQuery failed", err);
+      setResuming(false);
+    });
+    // Spinner clears when SSE delivers query_status: running (queryRunning becomes true).
+  }, [threadId]);
+
+  /** Clear the resume spinner once the backend transitions the query back to running. */
+  useEffect(() => {
+    if (queryRunning) setResuming(false);
+  }, [queryRunning]);
+
   const items = useMemo(() => nodes.map((node) => {
     // Build status-count audit: only include statuses that have at least one task.
     const counts: Partial<Record<TaskInfo["status"], number>> = {};
@@ -177,7 +211,7 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
     const hasRunning = (counts.running ?? 0) > 0;
     // Check if any running task is actively receiving tokens (streaming).
     const isStreaming = node.tasks.some(
-      (t) => t.status === "running" && (tokenStreams[t.id] ?? "").length > 0
+      (t) => t.status === "running" && (tokenStreams[t.task_id] ?? "").length > 0
     );
     const auditParts: string[] = [];
     if (counts.running)   auditParts.push(`${counts.running} running`);
@@ -188,12 +222,20 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
     const descriptionText = auditParts.length > 0 ? auditParts.join(" · ") : `${node.tasks.length} task${node.tasks.length !== 1 ? "s" : ""}`;
 
     // Collect error messages from failed tasks for hover tooltip.
-    // Prefer structured description (from error registry) over raw exception string.
     const failedErrors = node.tasks
       .filter((t) => t.status === "failed")
       .map((t) => getErrorDescription(t.error_code, t.error_description) ?? t.error)
       .filter((msg): msg is string => !!msg);
     const errorTooltip = failedErrors.length > 0 ? failedErrors.join("\n") : null;
+
+    const canCancelNode = queryRunning && node.status === "running" && !!node.node_id;
+    const isCancellingNode = !!node.node_id && cancellingNodes.has(node.node_id);
+    // Show Resume button when query is resumable and this node is the one that was cancelled or paused.
+    // "Resuming" a cancelled/paused node = resuming the whole thread from the last checkpoint.
+    const isCancelledNode = node.status === "cancelled" || node.status === "paused";
+    const showResume = queryResumable && isCancelledNode;
+    // Show spinner while cancel is in-flight (stays until queryResumable=true, not just node_status).
+    const showCancelSpinner = isCancellingNode && !showResume;
 
     return {
       onClick: () => handleClick(node),
@@ -204,7 +246,35 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
           color={errorTooltip ? "red" : undefined}
           overlayStyle={errorTooltip ? { maxWidth: 400, whiteSpace: "pre-wrap" } : undefined}
         >
-          <span style={styles.stepTitle}>{NODE_LABELS[node.node_name] ?? node.node_name}</span>
+          <Flex align="center" gap={4}>
+            <span style={styles.stepTitle}>{node.node_name}</span>
+            {showCancelSpinner ? (
+              <Spin size="small" indicator={<LoadingOutlined style={{ fontSize: 12 }} spin />} />
+            ) : canCancelNode ? (
+              <Tooltip title="Cancel this node">
+                <Button
+                  type="text"
+                  size="small"
+                  danger
+                  icon={<StopOutlined />}
+                  onClick={(e) => handleCancelNode(e, node)}
+                  style={{ minWidth: 0, padding: "0 2px", height: 18, lineHeight: "18px" }}
+                />
+              </Tooltip>
+            ) : null}
+            {showResume && (
+              <Tooltip title="Resume from last checkpoint">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<PlayCircleOutlined />}
+                  loading={resuming}
+                  onClick={handleResume}
+                  style={{ minWidth: 0, padding: "0 2px", height: 18, lineHeight: "18px", color: "inherit" }}
+                />
+              </Tooltip>
+            )}
+          </Flex>
         </Tooltip>
       ),
       description: (
@@ -219,7 +289,7 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
       status: STEP_STATUS[node.status],
       ...(node.status === "cancelled" ? { icon: <StopOutlined style={styles.cancelledIcon} /> } : {}),
     };
-  }), [nodes, tokenStreams, handleClick]);
+  }), [nodes, tokenStreams, handleClick, queryRunning, queryResumable, cancellingNodes, resuming, handleCancelNode, handleResume]);
 
   const panelData: NodeExecutionInfo | null | "loading" =
     selectedNodeName === null
@@ -239,7 +309,7 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
       selectedNode
         ? selectedNode.tasks
             .filter((t) => t.status === "running")
-            .map((t) => tokenStreams[t.id] ?? "")
+            .map((t) => tokenStreams[t.task_id] ?? "")
             .join("")
         : "",
     [selectedNode, tokenStreams],
@@ -256,9 +326,12 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
       />
       {selectedNodeName !== null && (
         <NodeInlinePanel
+          node={selectedNode!}
           execution={panelData}
           nodeStatus={selectedNodeStatus}
           streamingText={selectedStreamingText || undefined}
+          taskMeta={taskMeta}
+          tokenStreams={tokenStreams}
         />
       )}
     </>

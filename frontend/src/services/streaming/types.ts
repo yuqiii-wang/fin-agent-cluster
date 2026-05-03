@@ -30,9 +30,9 @@ export type FinStreamStatus =
 
 /** A live snapshot of a single agent task accumulated from SSE events. */
 export interface FinTaskSnapshot {
-  task_id: number;
+  task_id: string;
   node_name: string;
-  task_key: string;
-  status: "running" | "completed" | "failed" | "cancelled";
+  task_name: string;
+  status: "running" | "completed" | "failed" | "cancelled" | "paused";
   output: Record<string, unknown>;
 }

@@ -8,6 +8,8 @@
   "client": {
     "channel_limit": 1024,
     "allowed_origins": [
+      "http://localhost:3001",
+      "https://localhost:3001",
       "http://localhost:3000",
       "https://localhost:3000",
       "http://localhost:22332",
@@ -16,6 +18,8 @@
       "https://localhost:8886",
       "http://localhost:8888",
       "https://localhost:8443",
+      "http://127.0.0.1:3001",
+      "https://127.0.0.1:3001",
       "http://127.0.0.1:3000",
       "https://127.0.0.1:3000",
       "http://127.0.0.1:22332",

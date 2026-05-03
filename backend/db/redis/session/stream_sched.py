@@ -10,8 +10,8 @@ Key schema
 ----------
 ``fin:stream:sched:state:{run_id}:{stream_id}``
     Hash — per-stream config registered before the fanout task starts.
-    Fields: thread_id, node_id, pub_task_id, task_key, token_per_sec,
-            timeout_secs, shard_index, done_key, registered_at.
+    Fields: thread_id, node_id, task_id, pub_task_id, task_name,
+            token_per_sec, timeout_secs, shard_index, done_key, registered_at.
 
 ``fin:stream:sched:coord:{run_id}``
     String with TTL — coordinator ownership lock; first registrant wins via
@@ -81,8 +81,9 @@ async def register_stream(
     stream_id: str,
     thread_id: str,
     node_id: str,
-    pub_task_id: int,
-    task_key: str,
+    task_id: str,
+    pub_task_id: str,
+    task_name: str,
     token_per_sec: int,
     timeout_secs: float,
     shard_index: int,
@@ -90,28 +91,26 @@ async def register_stream(
 ) -> None:
     """Register a stream in the run's scheduler registry.
 
-    Called by ``dispatch_scheduled_ingest`` for each independent stream that
-    belongs to the same test run.  After the rendezvous window the coordinator
-    reads all registered configs and dispatches a single fanout Celery task.
-
     Args:
-        run_id:        Shared run UUID (extracted from frontend query string).
-        stream_id:     Per-stream UUID.
-        thread_id:     LangGraph thread UUID.
-        node_id:       Node execution UUID.
-        pub_task_id:   Pre-created ``fin_agents.tasks`` row ID.
-        task_key:      Full dot-separated Celery task key.
-        token_per_sec: Target publish rate.
-        timeout_secs:  Hard stream deadline.
-        shard_index:   Redis shard for this stream's thread.
-        done_key:      Redis list key the dispatcher BLPOPs for the final result.
+        run_id:         Shared run UUID.
+        stream_id:      Per-stream UUID.
+        thread_id:      LangGraph thread UUID.
+        node_id:        Node execution UUID.
+        task_id:      Task invocation UUID.
+        pub_task_id:  Pre-created ``fin_agents.tasks`` row UUID (PK).
+        task_name:       Full dot-separated Celery task key.
+        token_per_sec:  Target publish rate.
+        timeout_secs:   Hard stream deadline.
+        shard_index:    Redis shard for this stream's thread.
+        done_key:       Redis list key the dispatcher BLPOPs for the final result.
     """
     client = _sched_client()
     state: dict[str, str] = {
         "thread_id": thread_id,
         "node_id": node_id,
-        "pub_task_id": str(pub_task_id),
-        "task_key": task_key,
+        "task_id": task_id,
+        "pub_task_id": pub_task_id,
+        "task_name": task_name,
         "token_per_sec": str(token_per_sec),
         "timeout_secs": str(timeout_secs),
         "shard_index": str(shard_index),
@@ -177,8 +176,9 @@ async def get_all_stream_states(
         out[sid] = {
             "thread_id": raw.get("thread_id", ""),
             "node_id": raw.get("node_id", ""),
-            "pub_task_id": int(raw.get("pub_task_id", 0)),
-            "task_key": raw.get("task_key", ""),
+            "task_id": raw.get("task_id", ""),
+            "pub_task_id": raw.get("pub_task_id", ""),
+            "task_name": raw.get("task_name", ""),
             "token_per_sec": int(raw.get("token_per_sec", 500)),
             "timeout_secs": float(raw.get("timeout_secs", 60)),
             "shard_index": int(raw.get("shard_index", 0)),
@@ -213,9 +213,32 @@ async def try_become_coordinator(run_id: str) -> bool:
     return result is not None
 
 
+async def delete_stream(run_id: str, stream_id: str) -> None:
+    """Delete all scheduler keys for *stream_id* in *run_id*.
+
+    Called on cancel so stale scheduler state does not accumulate.
+    The done_key lives on a shard-routed client and must be deleted there;
+    the state/set keys live on shard 0.
+
+    Args:
+        run_id:    Shared run UUID.
+        stream_id: Per-stream UUID to remove.
+    """
+    sched = _sched_client()
+    pipe = sched.pipeline()
+    pipe.delete(_state_key(run_id, stream_id))
+    pipe.srem(_streams_key(run_id), stream_id)
+    await pipe.execute()
+    logger.debug(
+        "[stream_sched] deleted stream_id=%s run_id=%s",
+        stream_id, run_id,
+    )
+
+
 __all__ = [
     "register_stream",
     "get_run_stream_ids",
     "get_all_stream_states",
     "try_become_coordinator",
+    "delete_stream",
 ]

@@ -111,6 +111,8 @@ async def _upsert_response(record: LLMCompletionMessage) -> None:
     """INSERT one LLM completion record to ``fin_agents.llm_responses``.
 
     Uses ``ON CONFLICT (event_id) DO NOTHING`` for idempotent re-delivery.
+    ``task_id`` is persisted when present, establishing the optional 1:1 link
+    between ``llm_responses`` and ``tasks``.
 
     Args:
         record: Validated :class:`~backend.streaming.schemas.LLMCompletionMessage`.
@@ -121,10 +123,10 @@ async def _upsert_response(record: LLMCompletionMessage) -> None:
         cur = await conn.execute(
             """
             INSERT INTO fin_agents.llm_responses
-                (event_id, ts, thread_id, provider, model, task_key, node_name,
+                (event_id, ts, thread_id, task_id, provider, model, task_name, node_name,
                  prompt_tokens, prompts, thinking, answer,
                  completion_tokens, total_tokens, latency_ms)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (event_id) DO NOTHING
             RETURNING id
             """,
@@ -132,9 +134,10 @@ async def _upsert_response(record: LLMCompletionMessage) -> None:
                 record.event_id,
                 record.ts,
                 record.thread_id,
+                record.task_id,
                 record.provider,
                 record.model,
-                record.task_key,
+                record.task_name,
                 record.node_name,
                 record.prompt_tokens,
                 record.prompts,

@@ -7,6 +7,7 @@
 #
 #   POST /api/v1/users/query                               submit a new query      → runner
 #   POST /api/v1/users/query/{thread_id}/ack               start LangGraph run     → runner
+#   POST /api/v1/users/query/{thread_id}/replay            replay from node        → runner
 #   POST /api/v1/users/query/{thread_id}/cancel            cancel a running query  → assistant
 #   POST /api/v1/users/query/{thread_id}/perf-stable       signal stable TPS       → assistant
 #   GET  /api/v1/users/query/{thread_id}                   poll query status       → assistant
@@ -38,6 +39,26 @@ routes:
     service: fastapi-runner
     paths:
       - ~/api/v1/users/query/[^/]+/ack$
+    methods: [POST, OPTIONS]
+    strip_path: false
+    protocols: [http, https]
+
+  # Resume route — resumes a cancelled LangGraph run; must go to a runner instance
+  # that has init_compiled_graph() initialised (assistant instances do not).
+  - name: route-query-resume
+    service: fastapi-runner
+    paths:
+      - ~/api/v1/users/query/[^/]+/resume$
+    methods: [POST, OPTIONS]
+    strip_path: false
+    protocols: [http, https]
+
+  # Replay route — time-travel replay from a node checkpoint; requires LangGraph
+  # (compiled graph) so must go to a runner instance.
+  - name: route-query-replay
+    service: fastapi-runner
+    paths:
+      - ~/api/v1/users/query/[^/]+/replay$
     methods: [POST, OPTIONS]
     strip_path: false
     protocols: [http, https]

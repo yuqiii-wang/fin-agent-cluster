@@ -30,7 +30,7 @@ class TaskInfo(BaseModel):
     thread_id: str
     node_execution_id: Optional[int] = None
     node_name: str
-    task_key: str
+    task_name: str
     status: str
     input: dict = {}
     output: dict = {}
@@ -52,6 +52,8 @@ class NodeExecutionInfo(BaseModel):
 
     id: int
     node_name: str
+    node_uuid: Optional[str] = None
+    status: str = "running"
     input: dict
     output: dict
     started_at: datetime
@@ -143,7 +145,7 @@ class LlmResponseRecord(BaseModel):
     ts: datetime
     provider: str
     model: str
-    task_key: Optional[str] = None
+    task_name: Optional[str] = None
     node_name: Optional[str] = None
     prompt_tokens: int
     completion_tokens: int
@@ -204,3 +206,28 @@ class ResyncResponse(BaseModel):
 
     thread_id: str
     events_emitted: int
+
+
+class ReplayFromNodeRequest(BaseModel):
+    """Request to replay a query from a specific node's last checkpoint."""
+
+    node_name: str
+
+
+class ForkFromNodeRequest(BaseModel):
+    """Request to fork a query thread from a specific node's checkpoint.
+
+    Creates a completely new thread that starts at the fork point, leaving
+    the source thread untouched.  The caller receives the new thread_id.
+    """
+
+    node_name: str
+
+
+class ForkFromNodeResponse(BaseModel):
+    """Response from a successful fork operation."""
+
+    source_thread_id: str
+    new_thread_id: str
+    node_name: str
+    status: str

@@ -1,63 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Flex, Typography, theme } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import { providerLabel, taskRunningLabel } from "./helpers";
 
 const { Text, Paragraph } = Typography;
-
-/** LLM streaming output with a "thinking" indicator while tokens are arriving. */
-export function ThinkingStream({
-  stream,
-  isRunning,
-}: {
-  stream: string;
-  isRunning: boolean;
-}) {
-  const { token } = theme.useToken();
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (isRunning) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-  }, [stream, isRunning]);
-
-  return (
-    <div
-      style={{
-        background: token.colorFillQuaternary,
-        border: `1px solid ${token.colorBorderSecondary}`,
-        borderRadius: token.borderRadius,
-        padding: "8px 12px",
-      }}
-    >
-      {isRunning && (
-        <Flex align="center" gap={6} style={{ marginBottom: 8 }}>
-          <LoadingOutlined style={{ color: token.colorPrimary, fontSize: 11 }} />
-          <Text type="secondary" style={{ fontSize: 11, fontStyle: "italic" }}>
-            Thinking…
-          </Text>
-        </Flex>
-      )}
-      <Paragraph
-        style={{
-          fontSize: 12,
-          fontFamily: "'Courier New', monospace",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-          maxHeight: 340,
-          overflowY: "auto",
-          margin: 0,
-          lineHeight: 1.6,
-        }}
-      >
-        {stream}
-        {isRunning && <span className="blink-cursor" />}
-      </Paragraph>
-      <div ref={bottomRef} />
-    </div>
-  );
-}
 
 /** Staged status display while LLM has not sent any tokens yet. */
 export function LlmWaitingStatus({ provider }: { provider?: string }) {
@@ -90,12 +36,12 @@ export function LlmWaitingStatus({ provider }: { provider?: string }) {
 }
 
 /** Generic running description for non-LLM tasks. */
-export function RunningDescription({ taskKey }: { taskKey: string }) {
+export function RunningDescription({ taskName }: { taskName: string }) {
   return (
     <Flex align="center" gap={6}>
       <LoadingOutlined style={{ fontSize: 11 }} />
       <Text type="secondary" style={{ fontSize: 12, fontStyle: "italic" }}>
-        {taskRunningLabel(taskKey)}
+        {taskRunningLabel(taskName)}
       </Text>
     </Flex>
   );

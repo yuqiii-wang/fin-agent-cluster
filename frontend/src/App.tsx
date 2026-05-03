@@ -13,18 +13,18 @@ const { Title } = Typography;
 
 export default function App() {
   const styles = useStyles();
-  const { token: userToken, username } = useGuestAuth();
+  const { token: userToken, username, loading: authLoading } = useGuestAuth();
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyItems, setHistoryItems] = useState<ThreadSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
-    if (!userToken) return;
+    if (authLoading || !userToken) return;
     fetchHistory(userToken).then(setHistoryItems).catch(console.error);
     fetchActiveThread(userToken).catch(console.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userToken]);
+  }, [authLoading, userToken]);
 
   return (
     <>
@@ -53,9 +53,9 @@ export default function App() {
         </Header>
 
         <Content style={styles.content}>
-          <StreamingPerfTestPanel
-            userToken={userToken!}
-          />
+          {!authLoading && userToken && (
+            <StreamingPerfTestPanel userToken={userToken} />
+          )}
         </Content>
       </Layout>
 

@@ -21,7 +21,7 @@ Usage
         temperature=0.2,
         thread_id=thread_id,
         task_id=task_id,
-        task_key="dm.llm_infer",
+        task_name="dm.llm_infer",
         node_name="decision_maker",
         json_mode=True,
     )
@@ -42,8 +42,8 @@ async def dispatch_llm(
     messages: list[BaseMessage],
     temperature: float = 0.3,
     thread_id: Optional[str] = None,
-    task_id: Optional[int] = None,
-    task_key: Optional[str] = None,
+    task_id: Optional[str] = None,
+    task_name: Optional[str] = None,
     node_name: Optional[str] = None,
     json_mode: bool = False,
     timeout: int = 300,
@@ -58,8 +58,8 @@ async def dispatch_llm(
         messages:    Formatted LangChain messages ready for LLM invocation.
         temperature: Sampling temperature (default 0.3).
         thread_id:   LangGraph thread UUID for token routing and usage tracking.
-        task_id:     Pre-created DB task row ID for token attribution.
-        task_key:    Agent sub-task key for usage tracking.
+        task_id:   UUID of the pre-created DB task row for token attribution.
+        task_name:    Agent sub-task key for usage tracking.
         node_name:   Agent node name for usage tracking.
         json_mode:   Bind ``response_format={"type": "json_object"}`` when
                      the provider supports it (e.g. OpenAI-compatible endpoints).
@@ -81,7 +81,7 @@ async def dispatch_llm(
         temperature=temperature,
         thread_id=thread_id,
         task_id=task_id,
-        task_key=task_key,
+        task_name=task_name,
         node_name=node_name,
         json_mode=json_mode,
     )

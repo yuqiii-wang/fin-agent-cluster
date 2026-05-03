@@ -85,7 +85,7 @@ async def get_query_tasks(thread_id: str) -> SessionStatus:
                 thread_id=t.thread_id,
                 node_execution_id=t.node_execution_id,
                 node_name=t.node_name,
-                task_key=t.task_key,
+                task_name=t.task_name,
                 status=t.status,
                 input=t.input,
                 output=t.output,
@@ -123,6 +123,8 @@ async def get_node_executions(thread_id: str) -> list[NodeExecutionInfo]:
         NodeExecutionInfo(
             id=r.id,
             node_name=r.node_name,
+            node_uuid=r.node_uuid,
+            status=r.status,
             input=r.input,
             output=r.output,
             started_at=r.started_at,

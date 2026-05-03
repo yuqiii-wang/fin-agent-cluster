@@ -25,11 +25,13 @@ export interface ThreadSummary {
 /** Task key type classification metadata from GET /api/v1/tasks/meta. */
 export interface TaskTypeMeta {
   /** Task keys that emit token-stream SSE events (LLM streaming). */
-  llm_task_keys: string[];
+  llm_task_names: string[];
   /** All other static literal task keys found in agent tasks modules. */
-  all_task_keys: string[];
+  all_task_names: string[];
   /** Task keys that emit perf_token SSE events (silent metric aggregation, not shown as task output). */
-  perf_token_task_keys: string[];
+  perf_token_task_names: string[];
+  /** Task keys that use the Celery streaming path — show "Streaming Output" in the task panel. */
+  stream_task_names: string[];
 }
 
 /** Metadata for one selectable technical indicator (from GET /api/v1/quant/indicators). */
@@ -74,12 +76,12 @@ export interface CurrencyInfo {
 }
 
 export interface TaskInfo {
-  id: number;
+  task_id: string;
   thread_id: string;
   node_execution_id: number | null;
   node_name: string;
-  task_key: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  task_name: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "paused";
   input: Record<string, unknown>;
   output: Record<string, unknown>;
   created_at: string;
@@ -109,41 +111,52 @@ export interface QueryResponse {
 /** A node group derived from tasks, keyed by node_name. */
 export interface NodeGroup {
   node_name: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  /** Governance node UUID — present once the node has started executing. */
+  node_id?: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "paused";
   tasks: TaskInfo[];
+}
+
+/** SSE payload for a node_status lifecycle event. */
+export interface SseNodeStatus {
+  event: "node_status";
+  node_id: string;
+  node_name: string;
+  status: "running" | "completed" | "failed" | "cancelled" | "paused";
+  thread_id: string;
 }
 
 /** SSE event payloads */
 export interface SseStarted {
-  task_id: number;
+  task_id: string;
   node_name: string;
-  task_key: string;
+  task_name: string;
   provider?: string;
 }
 
 export interface SseCompleted {
-  task_id: number;
+  task_id: string;
   node_name: string;
-  task_key: string;
+  task_name: string;
   output: Record<string, unknown>;
 }
 
 export interface SseFailed {
-  task_id: number;
+  task_id: string;
   node_name: string;
-  task_key: string;
+  task_name: string;
   output: Record<string, unknown>;
 }
 
 export interface SseCancelled {
-  task_id: number;
+  task_id: string;
   node_name: string;
-  task_key: string;
+  task_name: string;
   output: Record<string, unknown>;
 }
 
 export interface SseToken {
-  task_id: number;
+  task_id: string;
   token: string;
 }
 
@@ -153,7 +166,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   thread_id?: string;
-  status?: "running" | "completed" | "failed" | "cancelled";
+  status?: "running" | "completed" | "failed" | "cancelled" | "paused";
   streamingCursor?: boolean;
   /** True when this message was produced by the streaming perf test. */
   isPerfTest?: boolean;
@@ -164,6 +177,8 @@ export interface ChatMessage {
 export interface NodeExecutionInfo {
   id: number;
   node_name: string;
+  node_uuid: string | null;
+  status: "running" | "completed" | "failed" | "cancelled" | "paused";
   input: Record<string, unknown>;
   output: Record<string, unknown>;
   started_at: string;
@@ -187,7 +202,7 @@ export interface LlmResponseRecord {
   ts: string;
   provider: string;
   model: string;
-  task_key: string | null;
+  task_name: string | null;
   node_name: string | null;
   prompt_tokens: number;
   completion_tokens: number;
@@ -213,7 +228,7 @@ export interface ThreadStateResponse {
 
 /** Request body for POST /api/v1/threads/{thread_id}/status. */
 export interface UpdateThreadStatusRequest {
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "paused";
   error?: string | null;
   emit_event?: boolean;
 }

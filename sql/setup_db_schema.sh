@@ -4,6 +4,16 @@
 # Usage: bash sql/setup.sh
 set -e
 
+DROP_FIRST=false
+CONFIRM=false
+
+for arg in "$@"; do
+    case "$arg" in
+        --drop)  DROP_FIRST=true ;;
+        --yes|-y) CONFIRM=true ;;
+    esac
+done
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/../.env"
 
@@ -19,6 +29,26 @@ DATABASE_PG_URL=$(grep -E '^(export )?DATABASE_PG_URL=' "$ENV_FILE" \
 [ -z "$DATABASE_PG_URL" ] && echo "Error: DATABASE_PG_URL not set in .env" && exit 1
 
 echo "Using database: $DATABASE_PG_URL"
+
+if $DROP_FIRST; then
+    if ! $CONFIRM; then
+        echo "WARNING: This will DROP all application schemas (fin_agents, fin_markets, fin_strategies, fin_users) with CASCADE."
+        read -r -p "Type 'yes' to confirm: " answer
+        [ "$answer" != "yes" ] && echo "Aborted." && exit 1
+    fi
+    echo "Dropping all application schemas (tables, indexes, types, sequences, views)..."
+    MSYS_NO_PATHCONV=1 docker run --rm \
+        --network host \
+        postgres:18.3-trixie \
+        psql "$DATABASE_PG_URL" -v ON_ERROR_STOP=1 -c "
+            SET client_min_messages = WARNING;
+            DROP SCHEMA IF EXISTS fin_agents     CASCADE;
+            DROP SCHEMA IF EXISTS fin_markets    CASCADE;
+            DROP SCHEMA IF EXISTS fin_strategies CASCADE;
+            DROP SCHEMA IF EXISTS fin_users      CASCADE;
+        "
+    echo "  Schemas dropped."
+fi
 
 # Run SQL files in dependency order:
 #   kong       (no deps)
@@ -43,11 +73,13 @@ for sql_file in "${SQL_FILES[@]}"; do
         continue
     fi
     echo "Running $sql_file ..."
+    PSQL_OPTS="-v ON_ERROR_STOP=1"
+    $DROP_FIRST && PSQL_OPTS="$PSQL_OPTS -v client_min_messages=WARNING"
     MSYS_NO_PATHCONV=1 docker run --rm \
         -v "$SCRIPT_DIR:/sql:ro" \
         --network host \
         postgres:18.3-trixie \
-        psql "$DATABASE_PG_URL" -f "/sql/$sql_file"
+        psql "$DATABASE_PG_URL" $PSQL_OPTS -f "/sql/$sql_file"
     echo "  Done: $sql_file"
 done
 

@@ -35,7 +35,7 @@ async def publish_completion(
     completion_tokens: int = 0,
     latency_ms: int = 0,
     thread_id: Optional[str] = None,
-    task_key: Optional[str] = None,
+    task_name: Optional[str] = None,
     node_name: Optional[str] = None,
     prompts: Optional[str] = None,
     thinking: Optional[str] = None,
@@ -53,7 +53,7 @@ async def publish_completion(
         completion_tokens: Output token count.
         latency_ms:        Wall-clock latency from request to response.
         thread_id:         Originating LangGraph thread UUID.
-        task_key:          Agent sub-task key.
+        task_name:          Agent sub-task key.
         node_name:         Agent node name.
         prompts:           Serialised input messages sent to the LLM.
         thinking:          Chain-of-thought / reasoning text.
@@ -67,7 +67,7 @@ async def publish_completion(
         total_tokens=prompt_tokens + completion_tokens,
         latency_ms=latency_ms,
         thread_id=thread_id,
-        task_key=task_key,
+        task_name=task_name,
         node_name=node_name,
         prompts=prompts,
         thinking=thinking,
@@ -102,7 +102,7 @@ class LLMStreamCallbackHandler(AsyncCallbackHandler):
         model:      Model identifier.
         thread_id:  Originating LangGraph thread.
         node_name:  Agent node attaching this handler.
-        task_key:   Agent sub-task key (optional).
+        task_name:   Agent sub-task key (optional).
     """
 
     def __init__(
@@ -111,7 +111,7 @@ class LLMStreamCallbackHandler(AsyncCallbackHandler):
         model: str,
         thread_id: Optional[str] = None,
         node_name: Optional[str] = None,
-        task_key: Optional[str] = None,
+        task_name: Optional[str] = None,
     ) -> None:
         """Initialise the handler with context metadata.
 
@@ -120,14 +120,14 @@ class LLMStreamCallbackHandler(AsyncCallbackHandler):
             model:      Model identifier.
             thread_id:  Originating LangGraph thread UUID string.
             node_name:  Agent node name.
-            task_key:   Agent sub-task key.
+            task_name:   Agent sub-task key.
         """
         super().__init__()
         self._provider = provider
         self._model = model
         self._thread_id = thread_id
         self._node_name = node_name
-        self._task_key = task_key
+        self._task_name = task_name
         self._start_ns: int = 0
 
     async def on_llm_start(
@@ -179,6 +179,6 @@ class LLMStreamCallbackHandler(AsyncCallbackHandler):
             completion_tokens=completion_tokens,
             latency_ms=latency_ms,
             thread_id=self._thread_id,
-            task_key=self._task_key,
+            task_name=self._task_name,
             node_name=self._node_name,
         )

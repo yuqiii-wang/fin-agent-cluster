@@ -13,7 +13,7 @@ from backend.api.registry import mark_task_active
 from backend.api.registry import running_tasks as _running_tasks
 from backend.db import get_session_factory as _get_session_factory
 from backend.graph.runner import run_graph_async
-from backend.sse_notifications.query_lifecycle import emit_query_ack_confirmed
+from backend.sse_notifications.thread import emit_query_ack_confirmed
 from backend.users.models import UserQuery
 from backend.users.schemas import QueryResponse
 

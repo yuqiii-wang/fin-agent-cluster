@@ -9,7 +9,8 @@
     "test:ws-load": "node tests/ws_load_test.mjs"
   },
   "dependencies": {
-    "antd": "^5.20.0",
+    "@ant-design/icons": "^6.2.2",
+    "antd": "^6.3.7",
     "centrifuge": "^5.5.3",
     "lightweight-charts": "^5.1.0",
     "react": "^18.3.0",
@@ -18,6 +19,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/node": "^25.6.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",

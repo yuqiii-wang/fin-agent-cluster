@@ -30,6 +30,7 @@ class QueryStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    PAUSED = "paused"
 
 
 # SQLAlchemy column type that maps to the *existing* Postgres enum.
@@ -41,3 +42,4 @@ query_status_sa_type = SAEnum(
     schema="fin_agents",
     create_type=False,
 )
+

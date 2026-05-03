@@ -10,7 +10,7 @@ Database / PostgreSQL  backend.db.postgres                  logs/db.log
 Database / Redis       backend.db.redis                     logs/db.log
 LangGraph + agents     backend.graph                        logs/graph.log
 LLM providers          backend.llm                          logs/llm.log
-Market / news data     backend.resource_api                 logs/resource_api.log
+Market / news data     backend.resources                    logs/resources.log
 Redis Streams / MQ     backend.streaming                    logs/streaming.log
 Celery workers         celery                               logs/streaming.log
 User auth              backend.users                        logs/users.log
@@ -65,7 +65,8 @@ _COMPONENT_LABELS: list[tuple[str, str]] = [
     ("backend.graph.agents.decision_maker",         "Agent/Decision"),
     ("backend.graph.agents.market_data",             "Agent/Market"),
     ("backend.graph.agents.query_optimizer",         "Agent/QueryOpt"),
-    ("backend.graph.agents.streamer",               "Streamer"),
+    ("backend.graph.agents.mock_perf",               "Mock/Perf"),
+    ("backend.graph.agents.mock_single",             "Mock/Single"),
     ("backend.graph.agents",                         "Graph/Agents"),
     ("backend.graph.utils",                          "Graph/Utils"),
     ("backend.graph",                                "Graph"),
@@ -75,11 +76,12 @@ _COMPONENT_LABELS: list[tuple[str, str]] = [
     ("backend.db",                                   "DB"),
     ("backend.llm.providers",                        "LLM/Providers"),
     ("backend.llm",                                  "LLM"),
-    ("backend.resource_api.quant_api",               "ResAPI/Quant"),
-    ("backend.resource_api.news_api",                "ResAPI/News"),
-    ("backend.resource_api",                         "ResAPI"),
+    ("backend.resources.news",                         "Resources/News"),
+    ("backend.resources.stats",                        "Resources/Stats"),
+    ("backend.resources",                              "Resources"),
     ("backend.sse_notifications.agent_tasks",        "SSE/Tasks"),
-    ("backend.sse_notifications.streamer",          "SSE/Streamer"),
+    ("backend.sse_notifications.mock_perf",         "SSE/MockPerf"),
+    ("backend.sse_notifications.mock_single",       "SSE/MockSingle"),
     ("backend.sse_notifications.node_io",            "SSE/NodeIO"),
     ("backend.sse_notifications",                    "SSE/Notify"),
     ("backend.streaming.workers",                    "Stream/Workers"),
@@ -305,7 +307,7 @@ def get_logging_config() -> dict[str, Any]:
             "graph_file":              {**_file("graph.log"),              "level": "DEBUG"},
             "perf_test_file":          {**_file("perf_test.log"),          "level": "DEBUG"},
             "llm_file":                {**_file("llm.log"),                "level": "DEBUG"},
-            "resource_api_file":       {**_file("resource_api.log"),       "level": "DEBUG"},
+            "resources_file":          {**_file("resources.log"),          "level": "DEBUG"},
             "sse_notifications_file":  {**_file("sse_notifications.log"),  "level": "DEBUG"},
             "streaming_file":          {**_file("streaming.log"),          "level": "DEBUG"},
             "users_file":              {**_file("users.log"),              "level": "DEBUG"},
@@ -379,8 +381,8 @@ def get_logging_config() -> dict[str, Any]:
                 "level": "INFO",
                 "propagate": False,
             },
-            "backend.resource_api": {
-                "handlers": ["console", "resource_api_file", "app_file"],
+            "backend.resources": {
+                "handlers": ["console", "resources_file", "app_file"],
                 "level": "INFO",
                 "propagate": False,
             },

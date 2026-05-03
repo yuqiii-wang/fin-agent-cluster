@@ -120,18 +120,10 @@ services:
   write_timeout: 3600000
   read_timeout: 3600000
 routes:
-- name: route-auth
+- name: route-auth-centrifugo-token
   service: fastapi-assistant
   paths:
-  - /api/v1/auth
-  strip_path: false
-  protocols:
-  - http
-  - https
-- name: route-centrifugo-token
-  service: fastapi-assistant
-  paths:
-  - /api/v1/centrifugo
+  - /api/v1/auth/centrifugo
   strip_path: false
   protocols:
   - http
@@ -144,6 +136,14 @@ routes:
       policy: local
       limit_by: ip
       hide_client_headers: false
+- name: route-auth
+  service: fastapi-assistant
+  paths:
+  - /api/v1/auth
+  strip_path: false
+  protocols:
+  - http
+  - https
 - name: route-centrifugo-0
   service: centrifugo-0
   paths:
@@ -160,6 +160,19 @@ routes:
   protocols:
   - ws
   - wss
+- name: route-backend-health
+  service: fastapi-runner
+  paths:
+  - /api/v1/health
+  methods:
+  - GET
+  - OPTIONS
+  strip_path: false
+  request_buffering: false
+  response_buffering: false
+  protocols:
+  - http
+  - https
 - name: route-quant
   service: fastapi-assistant
   paths:
@@ -250,6 +263,28 @@ routes:
   service: fastapi-runner
   paths:
   - ~/api/v1/users/query/[^/]+/ack$
+  methods:
+  - POST
+  - OPTIONS
+  strip_path: false
+  protocols:
+  - http
+  - https
+- name: route-query-resume
+  service: fastapi-runner
+  paths:
+  - ~/api/v1/users/query/[^/]+/resume$
+  methods:
+  - POST
+  - OPTIONS
+  strip_path: false
+  protocols:
+  - http
+  - https
+- name: route-query-replay
+  service: fastapi-runner
+  paths:
+  - ~/api/v1/users/query/[^/]+/replay$
   methods:
   - POST
   - OPTIONS

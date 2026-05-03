@@ -70,7 +70,7 @@ export function AggregateStatsHeader({ stats, isDigesting }: AggregateStatsHeade
           }
           value={fmt(stats.peakSumConcurrent)}
           suffix={fmtSuffix(stats.peakSumConcurrent)}
-          valueStyle={valueStyle}
+          styles={{ content: valueStyle }}
         />
       </Col>
       {stats.maxStableCount !== null && (
@@ -85,7 +85,7 @@ export function AggregateStatsHeader({ stats, isDigesting }: AggregateStatsHeade
               </span>
             }
             value={hasData ? stats.maxStableCount : "—"}
-            valueStyle={valueStyle}
+            styles={{ content: valueStyle }}
           />
         </Col>
       )}
@@ -101,7 +101,7 @@ export function AggregateStatsHeader({ stats, isDigesting }: AggregateStatsHeade
               </span>
             }
             value={hasData ? stats.maxDigestingCount : "—"}
-            valueStyle={valueStyle}
+            styles={{ content: valueStyle }}
           />
         </Col>
       )}
@@ -117,7 +117,7 @@ export function AggregateStatsHeader({ stats, isDigesting }: AggregateStatsHeade
           }
           value={fmt(stats.peakSingleStream)}
           suffix={fmtSuffix(stats.peakSingleStream)}
-          valueStyle={valueStyle}
+          styles={{ content: valueStyle }}
         />
       </Col>
       <Col span={4}>
@@ -132,7 +132,7 @@ export function AggregateStatsHeader({ stats, isDigesting }: AggregateStatsHeade
           }
           value={fmt(stats.aveConcurrent)}
           suffix={fmtSuffix(stats.aveConcurrent)}
-          valueStyle={valueStyle}
+          styles={{ content: valueStyle }}
         />
       </Col>
       <Col span={4}>
@@ -146,7 +146,7 @@ export function AggregateStatsHeader({ stats, isDigesting }: AggregateStatsHeade
             </span>
           }
           value={fmtMs(stats.maxFirstTokenLatencyMs)}
-          valueStyle={valueStyle}
+          styles={{ content: valueStyle }}
         />
       </Col>
     </Row>

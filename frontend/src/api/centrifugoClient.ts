@@ -37,8 +37,16 @@ export function getOrCreateShardClient(wsUrl: string, connectionToken: string): 
         ctx.reason,
         wsUrl,
       );
+      // centrifuge-js auto-reconnects on unexpected disconnects (code != 0).
+      // Keep the map entry so existing subscriptions survive on this same
+      // instance — removing it here would cause the next getOrCreateShardClient
+      // call to spawn a duplicate client with no subscriptions.
+      return;
     }
-    // Remove stale entry so the next getOrCreateShardClient call builds a fresh connection.
+    // Explicit disconnect (code 0) — remove stale entry so the pool stays clean.
+    // resetShardClients() already calls _shardClients.clear() synchronously
+    // before disconnect() is called, so by the time this event fires the entry
+    // is usually already gone and this is a no-op.
     if (_shardClients.get(wsUrl) === client) {
       _shardClients.delete(wsUrl);
     }

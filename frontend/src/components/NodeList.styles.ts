@@ -33,5 +33,6 @@ export function useStyles(): Record<string, CSSProperties> {
     streamingRunningIcon: { fontSize: 10, marginRight: 4, color: token.colorPrimary },
     streamingColorText: { color: token.colorPrimary },
     cancelledIcon: { color: token.colorWarning },
+    resumeIcon: { color: token.colorSuccess, fontSize: 14 },
   };
 }

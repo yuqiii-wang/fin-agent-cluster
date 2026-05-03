@@ -42,34 +42,31 @@ def run_stream_ingest_throughput(
     thread_id: str,
     stream_id: str,
     node_id: str,
-    pub_task_id: int,
-    task_key: str,
+    task_id: str,
+    pub_task_id: str,
+    task_name: str,
     total_tokens: int,
     timeout_secs: float,
 ) -> dict[str, Any]:
     """Throughput ingest: bulk-write all tokens as fast as possible.
 
-    Completion trigger: all ``total_tokens`` written (token-bounded).  The
-    FastAPI dispatcher awaits the Celery result via ``async_result.get()`` since
-    ingest completes quickly and the result is needed to emit the ``digesting``
-    phase transition.
-
     Args:
-        thread_id:     LangGraph thread UUID (top-level governance).
-        stream_id:     Celery ingest run UUID (leaf-level governance).
-        node_id:       Node execution UUID (mid-level governance).
-        pub_task_id:   Pre-created ``fin_agents.tasks`` row ID.
-        task_key:      Full dot-separated task key.
-        total_tokens:  Target token budget.
-        timeout_secs:  Hard deadline in seconds.
+        thread_id:      LangGraph thread UUID.
+        stream_id:      Celery ingest run UUID.
+        node_id:        Node execution UUID.
+        task_id:      Task invocation UUID.
+        pub_task_id:  Pre-created ``fin_agents.tasks`` row UUID (PK).
+        task_name:       Full dot-separated task key.
+        total_tokens:   Target token budget.
+        timeout_secs:   Hard deadline in seconds.
 
     Returns:
         Dict with keys ``produced``, ``stop_reason``, ``ingest_ms``.
     """
     return asyncio.run(
         _ingest_throughput(
-            thread_id, stream_id, node_id,
-            pub_task_id, task_key, total_tokens, timeout_secs,
+            thread_id, stream_id, node_id, task_id,
+            pub_task_id, task_name, total_tokens, timeout_secs,
         )
     )
 
@@ -78,28 +75,23 @@ async def _ingest_throughput(
     thread_id: str,
     stream_id: str,
     node_id: str,
-    pub_task_id: int,
-    task_key: str,
+    task_id: str,
+    pub_task_id: str,
+    task_name: str,
     total_tokens: int,
     timeout_secs: float,
 ) -> dict[str, Any]:
     """Write all tokens to ``fin:llm:tokens`` as fast as possible.
 
-    Uses exponential flush thresholds (1 -> 2 -> ... -> 1024) so the first
-    ``token_batch`` arrives at the browser immediately and later batches
-    are large for throughput efficiency.
-
-    Registers the stream in the governance registry at start and deregisters
-    on completion so cancel handlers can traverse the live hierarchy.
-
     Args:
-        thread_id:    LangGraph thread UUID.
-        stream_id:    Celery ingest run UUID (leaf-level).
-        node_id:      Node execution UUID (mid-level).
-        pub_task_id:  Task row ID.
-        task_key:     Full task key string.
-        total_tokens: Token budget.
-        timeout_secs: Hard deadline.
+        thread_id:      LangGraph thread UUID.
+        stream_id:      Celery ingest run UUID.
+        node_id:        Node execution UUID.
+        task_id:      Task invocation UUID.
+        pub_task_id:  Task row UUID (PK).
+        task_name:       Full task key string.
+        total_tokens:   Token budget.
+        timeout_secs:   Hard deadline.
 
     Returns:
         Dict with ``produced``, ``stop_reason``, ``ingest_ms``.
@@ -107,7 +99,7 @@ async def _ingest_throughput(
     from backend.llm.providers.mock import get_mock_llm  # noqa: PLC0415
     from backend.graph.governance import register_stream, deregister_stream  # noqa: PLC0415
 
-    await register_stream(thread_id, node_id, stream_id)
+    await register_stream(thread_id, node_id, task_id, stream_id)
 
     mock_llm = get_mock_llm(
         thread_id=thread_id,
@@ -119,7 +111,7 @@ async def _ingest_throughput(
     produced = 0
     stop_reason = "completed"
     t_start = time.monotonic()
-    node_name = task_key.split(".")[0]
+    node_name = task_name.split(".")[0]
     token_window: deque[str] = deque(maxlen=10)
     flush_threshold = 1
     pending_batch: list[str] = []
@@ -141,7 +133,7 @@ async def _ingest_throughput(
                 produced += 1
             if len(pending_batch) >= flush_threshold:
                 await _flush_batch(
-                    thread_id, pub_task_id, task_key, node_name,
+                    thread_id, pub_task_id, task_name, node_name,
                     len(pending_batch), list(token_window),
                     stream_id=stream_id,
                 )
@@ -151,13 +143,13 @@ async def _ingest_throughput(
         ingest_ms = int((time.monotonic() - t_start) * 1000)
         if pending_batch:
             await _flush_batch(
-                thread_id, pub_task_id, task_key, node_name,
+                thread_id, pub_task_id, task_name, node_name,
                 len(pending_batch), list(token_window),
                 ingest_ms=ingest_ms,
                 stream_id=stream_id,
             )
     finally:
-        await deregister_stream(thread_id, node_id, stream_id)
+        await deregister_stream(thread_id, node_id, task_id, stream_id)
 
     logger.info(
         "[stream_ingest] throughput done produced=%d stop_reason=%s ingest_ms=%d stream_id=%s thread_id=%s",
@@ -168,31 +160,31 @@ async def _ingest_throughput(
 
 async def _flush_batch(
     thread_id: str,
-    pub_task_id: int,
-    task_key: str,
+    pub_task_id: str,
+    task_name: str,
     node_name: str,
     count: int,
     recent_tokens: list[str],
     ingest_ms: int | None = None,
     stream_id: str = "",
 ) -> None:
-    """XADD one ``token_batch`` entry to ``fin:llm:tokens`` in Centrifugo format.
+    """XADD one ``token_batch`` entry to ``fin:llm:tokens``.
 
     Args:
-        thread_id:     LangGraph thread UUID (channel + shard routing).
-        pub_task_id:   Task row ID.
-        task_key:      Full task key string.
-        node_name:     Agent node name prefix.
-        count:         Number of tokens in this batch.
-        recent_tokens: Rolling window of last 10 token strings.
-        ingest_ms:     When set, embedded in the last batch for inline delivery.
-        stream_id:     Celery ingest run UUID (for log correlation).
+        thread_id:      LangGraph thread UUID.
+        pub_task_id:  Task row UUID (PK).
+        task_name:       Full task key string.
+        node_name:      Agent node name prefix.
+        count:          Number of tokens in this batch.
+        recent_tokens:  Rolling window of last 10 token strings.
+        ingest_ms:      When set, embedded in the last batch.
+        stream_id:      Celery ingest run UUID (for log correlation).
     """
     event: dict[str, Any] = {
         "event": "token_batch",
         "task_id": pub_task_id,
         "node_name": node_name,
-        "task_key": task_key,
+        "task_name": task_name,
         "count": count,
         "recent_tokens": recent_tokens,
     }

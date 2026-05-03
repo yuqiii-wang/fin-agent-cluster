@@ -2,11 +2,13 @@ import { useCallback } from "react";
 import type React from "react";
 import { cancelQuery, createAckHandlers, openStream } from "../../api";
 import type { PendingTokenPatch, PerfTestConfig, ThreadSession } from "../../components/StreamingPerfTestPanel/types";
-import { createSessionClosureState } from "./perfSessionState";
-import { createSessionHelpers } from "./perfSessionHelpers";
-import { createPhaseHandlers } from "./perfSessionPhaseHandlers";
-import { createTokenHandler } from "./perfSessionTokenHandler";
-import { createTerminalHandlers } from "./perfSessionTerminalHandlers";
+import {
+  createSessionClosureState,
+  createSessionHelpers,
+  createPhaseHandlers,
+  createTokenHandler,
+  createTerminalHandlers,
+} from "./core";
 
 export interface PerfSessionDeps {
   cleanups: React.MutableRefObject<Map<string, () => void>>;
@@ -109,8 +111,6 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
         if (!state.sessionClosed) {
           state.sessionClosed = true;
           helpers.dequeue();
-          // Log safety-timeout with full session state for all modes.
-          // Zero-token concurrency sessions are the primary suspects for the stuck-at-received bug.
           const logLevel = state.tokensReceived === 0 ? "error" : "warn";
           console[logLevel](
             "[perf] safety-timeout fired: mode=%s status=%s tokens=%d stream_id=%s",

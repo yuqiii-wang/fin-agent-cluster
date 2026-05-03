@@ -26,7 +26,7 @@ export async function submitQuery(
  *
  * Test parameters (test_mode, total_tokens, timeout_secs, token_per_sec) are
  * encoded as JSON in the query string by :func:`buildPerfQuery` in
- * useSessionManager so the backend stream_runner node can parse them without
+ * useSessionManager so the backend mock_runner node can parse them without
  * any API schema change.
  */
 export async function submitPerfQuery(
@@ -83,6 +83,49 @@ export async function cancelQuery(threadId: string, reason: "user" | "timeout" =
   }
 }
 
+export async function cancelNode(threadId: string, nodeId: string): Promise<void> {
+  const res = await fetch(`${BASE}/users/query/${threadId}/nodes/${nodeId}/cancel`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function resumeQuery(threadId: string): Promise<QueryResponse> {
+  const res = await fetch(`${BASE}/users/query/${threadId}/resume`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function pauseQuery(threadId: string): Promise<QueryResponse> {
+  const res = await fetch(`${BASE}/users/query/${threadId}/pause`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function cancelTaskByUuid(
+  threadId: string,
+  taskId: string,
+  nodeId?: string,
+): Promise<void> {
+  const url = nodeId
+    ? `${BASE}/users/query/${threadId}/tasks/${taskId}/cancel?node_id=${encodeURIComponent(nodeId)}`
+    : `${BASE}/users/query/${threadId}/tasks/${taskId}/cancel`;
+  const res = await fetch(url, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `HTTP ${res.status}`);
+  }
+}
+
 /**
  * Acknowledge a received query, triggering backend LangGraph execution.
  *
@@ -119,4 +162,53 @@ export async function stablePerfStream(threadId: string, streamId: string, userT
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `HTTP ${res.status}`);
   }
+}
+
+/**
+ * Replay a completed/paused/cancelled query from a specific node's last
+ * LangGraph checkpoint (time-travel replay).
+ *
+ * The backend finds the checkpoint where *nodeName* is in `snapshot.next`
+ * and re-invokes the graph from that point.  Nodes before *nodeName* are
+ * replayed from cache; the target node and its descendants execute fresh.
+ */
+export async function replayFromNode(threadId: string, nodeName: string): Promise<QueryResponse> {
+  const res = await fetch(`${BASE}/users/query/${threadId}/replay`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ node_name: nodeName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.message ?? err.detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface ForkFromNodeResponse {
+  source_thread_id: string;
+  new_thread_id: string;
+  node_name: string;
+  status: string;
+}
+
+/**
+ * Fork a completed/paused/cancelled query from a specific node's checkpoint
+ * into a completely new independent thread (LangGraph time-travel fork).
+ *
+ * Unlike replay (same thread), fork creates a new thread_id.  The original
+ * thread is not modified.  The caller should subscribe to the new thread's
+ * Centrifugo channel.
+ */
+export async function forkFromNode(threadId: string, nodeName: string): Promise<ForkFromNodeResponse> {
+  const res = await fetch(`${BASE}/users/query/${threadId}/fork`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ node_name: nodeName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.message ?? err.detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
 }

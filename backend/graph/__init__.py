@@ -2,7 +2,7 @@
 
 Sub-packages
 ------------
-agents/   LangGraph node functions (streamer leaf node)
+agents/   LangGraph node functions (mock leaf node)
 
 Public API
 ----------

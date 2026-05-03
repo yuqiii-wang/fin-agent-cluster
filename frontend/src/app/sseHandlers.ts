@@ -1,12 +1,12 @@
 import type React from "react";
-import type { ChatMessage, NodeGroup, TaskInfo } from "../types";
+import type { ChatMessage, NodeGroup, SseNodeStatus, TaskInfo } from "../types";
 
 interface SseHandlerParams {
   asstMsgId: string;
   threadId: string;
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   /** Buffer a token delta for a task; caller flushes to state on a schedule. */
-  pushTokenStream: (taskId: number, token: string) => void;
+  pushTokenStream: (taskId: string, token: string) => void;
   setTaskProviders: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   appendMessageText: (msgId: string, token: string) => void;
   updateMessage: (msgId: string, patch: Partial<ChatMessage>) => void;
@@ -18,13 +18,10 @@ interface SseHandlerParams {
    * When omitted, falls back to calling `onClose`.
    */
   onConnectionFailed?: (message: string) => void;
-
+  /** Called when the query resumes from cancelled/failed state and the graph begins re-executing. */
+  onResumed?: () => void;
 }
 
-/**
- * Factory that builds the full set of SSE event handlers for a given assistant message.
- * Handles onStarted, onToken, onCompleted, onFailed, onCancelled, onDone, and onClose.
- */
 export function buildSseHandlers({
   asstMsgId,
   threadId,
@@ -36,19 +33,29 @@ export function buildSseHandlers({
   onDone,
   onClose,
   onConnectionFailed,
+  onResumed,
 }: SseHandlerParams) {
   return {
+    /** When the graph resumes after cancellation, flip message status back to running. */
+    onQueryStatus: (data: unknown) => {
+      const { phase } = data as { phase?: string };
+      if (phase === "preparing" || phase === "running") {
+        updateMessage(asstMsgId, { status: "running" as ChatMessage["status"], streamingCursor: false });
+        onResumed?.();
+      }
+    },
+
     onStarted: (data: unknown) => {
-      const { task_id, node_name, task_key, provider } = data as {
-        task_id: number; node_name: string; task_key: string; provider?: string;
+      const { task_id, node_name, task_name, provider, node_id } = data as {
+        task_id: string; node_name: string; task_name: string; provider?: string; node_id?: string;
       };
       if (provider) setTaskProviders((prev) => ({ ...prev, [task_id]: provider }));
       const newTask: TaskInfo = {
-        id: task_id,
+        task_id,
         thread_id: threadId,
         node_execution_id: null,
         node_name,
-        task_key,
+        task_name,
         status: "running",
         input: {},
         output: {},
@@ -65,27 +72,35 @@ export function buildSseHandlers({
               ...m,
               nodes: nodes.map((n) =>
                 n.node_name === node_name
-                  ? { ...n, status: "running" as const, tasks: [...n.tasks, newTask] }
+                  ? {
+                      ...n,
+                      status: "running" as const,
+                      node_id: node_id ?? n.node_id,
+                      tasks: [...n.tasks, newTask],
+                    }
                   : n
               ),
             };
           }
-          return { ...m, nodes: [...nodes, { node_name, status: "running" as const, tasks: [newTask] }] };
+          return {
+            ...m,
+            nodes: [...nodes, { node_name, node_id, status: "running" as const, tasks: [newTask] }],
+          };
         })
       );
     },
 
     onToken: (data: unknown) => {
-      const { task_id, task_key, data: token } = data as {
-        task_id: number; task_key: string; data: string;
+      const { task_id, task_name, data: token } = data as {
+        task_id: string; task_name: string; data: string;
       };
-      if (task_key === "llm_analysis") appendMessageText(asstMsgId, token);
+      if (task_name === "llm_analysis") appendMessageText(asstMsgId, token);
       pushTokenStream(task_id, token);
     },
 
     onCompleted: (data: unknown) => {
-      const { task_id, node_name, task_key, output } = data as {
-        task_id: number; node_name: string; task_key: string; output: Record<string, unknown>;
+      const { task_id, node_name, task_name, output } = data as {
+        task_id: string; node_name: string; task_name: string; output: Record<string, unknown>;
       };
       const safeOutput = output?._truncated ? undefined : output;
       setMessages((prev) =>
@@ -96,7 +111,7 @@ export function buildSseHandlers({
             nodes: m.nodes.map((ng) => {
               if (ng.node_name !== node_name) return ng;
               const tasks = ng.tasks.map((t) =>
-                t.id === task_id
+                t.task_id === task_id
                   ? { ...t, status: "completed" as const, output: safeOutput ?? t.output }
                   : t
               );
@@ -112,7 +127,7 @@ export function buildSseHandlers({
 
     onFailed: (data: unknown) => {
       const { task_id, node_name, output, message } = data as {
-        task_id?: number; node_name?: string; output?: Record<string, unknown>; message?: string;
+        task_id?: string; node_name?: string; output?: Record<string, unknown>; message?: string;
       };
       // Connection-level failure (e.g. TLS cert not accepted) — no task_id present.
       if (task_id == null) {
@@ -136,7 +151,7 @@ export function buildSseHandlers({
             nodes: m.nodes.map((ng) => {
               if (ng.node_name !== node_name) return ng;
               const tasks = ng.tasks.map((t) =>
-                t.id === task_id
+                t.task_id === task_id
                   ? {
                       ...t,
                       status: "failed" as const,
@@ -155,7 +170,7 @@ export function buildSseHandlers({
     },
 
     onCancelled: (data: unknown) => {
-      const { task_id, node_name } = data as { task_id: number; node_name: string };
+      const { task_id, node_name } = data as { task_id: string; node_name: string };
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== asstMsgId || !m.nodes) return m;
@@ -164,12 +179,35 @@ export function buildSseHandlers({
             nodes: m.nodes.map((ng) => {
               if (ng.node_name !== node_name) return ng;
               const tasks = ng.tasks.map((t) =>
-                t.id === task_id ? { ...t, status: "cancelled" as const } : t
+                t.task_id === task_id ? { ...t, status: "cancelled" as const } : t
               );
               const allDone = tasks.every((t) =>
                 ["completed", "failed", "cancelled"].includes(t.status)
               );
               return { ...ng, tasks, status: (allDone ? "completed" : ng.status) as NodeGroup["status"] };
+            }),
+          };
+        })
+      );
+    },
+
+    onNodeStatus: (data: unknown) => {
+      const { node_id, node_name, status } = data as SseNodeStatus;
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== asstMsgId || !m.nodes) return m;
+          return {
+            ...m,
+            nodes: m.nodes.map((ng) => {
+              // Match by node_id (if present) or node_name fallback.
+              const matches = (ng.node_id && ng.node_id === node_id) ||
+                (!ng.node_id && ng.node_name === node_name);
+              if (!matches) return ng;
+              return {
+                ...ng,
+                node_id: node_id || ng.node_id,
+                status: status as NodeGroup["status"],
+              };
             }),
           };
         })

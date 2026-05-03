@@ -1,12 +1,10 @@
 /** Per-thread streaming session tracked in the grid. */
 export interface ThreadSession {
   thread_id: string;
-  /** Sub-graph node execution UUID (set when stream_runner starts). */
+  /** Sub-graph node execution UUID (set when mock_runner starts). */
   node_id: string | null;
-  /** Leaf node execution UUID. */
-  leaf_node_id: string | null;
-  /** DB task row primary key. */
-  task_id: number | null;
+  /** Task invocation UUID (task-level identity, set by mock_runner). */
+  task_id: string | null;
   /** Streaming session UUID. */
   stream_id: string | null;
   /**
@@ -29,7 +27,7 @@ export interface ThreadSession {
   /** True after the user clicked Cancel or a done event arrived. */
   closed: boolean;
   /** Test mode this session was spawned under — frozen at creation time. */
-  test_mode: "throughput" | "concurrency";
+  test_mode: "single" | "throughput" | "concurrency";
   /** Error message captured when the stream transitions to `failed` status. */
   error?: string;
   /** Ingest task phase — tracks how many tokens have been written to the perf stream. */
@@ -79,8 +77,8 @@ export const TERMINAL_STATUSES: ReadonlySet<ThreadSession["status"]> = new Set([
 
 /** User-configurable parameters for a perf-test run. */
 export interface PerfTestConfig {
-  /** Test mode: "throughput" measures max tokens/s; "concurrency" measures steady-rate SSE throughput. */
-  testMode: "throughput" | "concurrency";
+  /** Test mode: "single" runs one graph viz request; "throughput" measures max tokens/s; "concurrency" measures steady-rate SSE throughput. */
+  testMode: "single" | "throughput" | "concurrency";
   /** Tokens to generate per stream — used in throughput mode (default 100,000). */
   tokenCount: number;
   /** Target ingest rate per stream in tokens/sec — used in concurrency mode (default 500). */

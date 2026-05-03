@@ -6,9 +6,15 @@
 #
 # Delegates to sql/setup_db_schema.sh which reads DATABASE_PG_URL from .env.
 
+# Options for sql/setup_db_schema.sh:
+#   --drop              Drop all application schemas (fin_agents, fin_markets, fin_strategies, fin_users) with CASCADE before re-creating them.
+#   --yes, -y         Skip confirmation prompt when using --drop.
+#  bash setup/db_schema.sh --drop --yes
+
+
 setup_db_schema() {
     echo "[db_schema] Running database schema setup..."
-    ./sql/setup_db_schema.sh
+    ./sql/setup_db_schema.sh "$@"
     echo "[db_schema] Done."
 }
 

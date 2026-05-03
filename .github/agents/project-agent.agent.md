@@ -58,6 +58,8 @@ About DB and SQL:
 * Use `antd` CLI for all antd related queries and operations, do not search antd APIs from memory or the web.
 * Do NOT hardcode any UI element in the frontend, all UI elements should be generated from backend APIs, including but not limited to: form fields, buttons, dropdown options, etc.
 * `cd frontend && npm run dev` to start frontend to launch browser to debug UI.
+* Run playwright test in git bash for debugging.
+* Show spinner between UI action and backend SSE ack response.
 
 ### Skill Checkup
 

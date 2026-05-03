@@ -2,7 +2,7 @@
 
 Provides DB-only queries and event-emit helpers that do **not** trigger
 a LangGraph graph run.  All writes are direct SQL updates; events reach
-the browser via :func:`~backend.sse_notifications.channel.publish_lifecycle`.
+the browser via :func:`~backend.sse_notifications.channel.publish_thread_lifecycle`.
 
 Functions
 ---------
@@ -30,8 +30,8 @@ from backend.api.errors import (
 )
 from backend.db import get_session_factory as _get_session_factory, raw_conn
 from backend.graph.models import AgentTask
-from backend.sse_notifications.channel import publish_lifecycle
-from backend.sse_notifications.query_lifecycle import emit_query_status
+from backend.sse_notifications.channel import publish_task_lifecycle, publish_thread_lifecycle
+from backend.sse_notifications.thread import emit_query_status
 from backend.users.models import UserQuery
 from backend.users.schemas import (
     EmitEventResponse,
@@ -147,7 +147,7 @@ async def get_thread_llm_responses(
     async with raw_conn(readonly=True) as conn:
         cur = await conn.execute(
             """
-            SELECT id, event_id, ts, provider, model, task_key, node_name,
+            SELECT id, event_id, ts, provider, model, task_name, node_name,
                    prompt_tokens, completion_tokens, total_tokens, latency_ms,
                    thinking, answer
             FROM fin_agents.llm_responses
@@ -166,7 +166,7 @@ async def get_thread_llm_responses(
             ts=r["ts"],
             provider=r["provider"],
             model=r["model"],
-            task_key=r["task_key"],
+            task_name=r["task_name"],
             node_name=r["node_name"],
             prompt_tokens=r["prompt_tokens"],
             completion_tokens=r["completion_tokens"],
@@ -320,7 +320,7 @@ async def emit_thread_event(
     await _require_thread(thread_id)
 
     full_payload: dict[str, Any] = {**payload, "event": event, "thread_id": thread_id}
-    await publish_lifecycle(thread_id, full_payload)
+    await publish_thread_lifecycle(thread_id, full_payload)
 
     logger.info(
         "[threads] manual_event_emitted event=%s thread_id=%s", event, thread_id
@@ -373,13 +373,13 @@ async def resync_thread(thread_id: str) -> ResyncResponse:
     # Re-emit each task's terminal (or running) state.
     for task in task_rows:
         event = _task_status_to_event(task.status)
-        await publish_lifecycle(
+        await publish_task_lifecycle(
             thread_id,
             {
                 "event": event,
                 "thread_id": thread_id,
-                "task_id": task.id,
-                "task_key": task.task_key,
+                "task_id": task.task_id,
+                "task_name": task.task_name,
                 "node_name": task.node_name,
                 "status": task.status,
                 "output": task.output,

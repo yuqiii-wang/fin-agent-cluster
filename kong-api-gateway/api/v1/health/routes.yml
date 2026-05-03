@@ -1,0 +1,18 @@
+# Backend health probe route — used by nginx to gate the UI on startup.
+#
+#   GET  /api/v1/health   → fastapi-runner upstream (/health)
+#
+# Kong returns 200 when at least one runner target is healthy, or 503 when
+# all runner targets fail their active health check.  nginx's auth_request
+# subrequest hits this endpoint; a non-2xx response causes nginx to serve
+# the static restarting.html page instead of the React SPA.
+routes:
+  - name: route-backend-health
+    service: fastapi-runner
+    paths:
+      - /api/v1/health
+    methods: [GET, OPTIONS]
+    strip_path: false         # forwards /api/v1/health to FastAPI as-is
+    request_buffering: false
+    response_buffering: false
+    protocols: [http, https]

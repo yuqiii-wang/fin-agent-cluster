@@ -52,6 +52,7 @@ SseEventType = Literal[
     "ping",
     "node_input",
     "node_output",
+    "node_status",
     "ingest_complete",
     "stream_stopped",
     "stream_complete",
@@ -73,6 +74,7 @@ LIFECYCLE_EVENTS: frozenset[str] = frozenset(
         "done",
         "node_input",
         "node_output",
+        "node_status",
         "ingest_complete",
         "stream_stopped",
         "stream_complete",
@@ -108,16 +110,16 @@ class StartedPayload(BaseModel):
 
     Attributes:
         event: Always ``"started"``.
-        task_id: DB primary key of the new task row.
-        node_name: Agent node that owns this task (first segment of task_key).
-        task_key: Full dot-separated task key, e.g. ``"market_data.ohlcv.1d"``.
+        task_id: Primary key (UUID) of the new task row.
+        node_name: Agent node that owns this task (first segment of task_name).
+        task_name: Full dot-separated task key, e.g. ``"market_data.ohlcv.1d"``.
         provider: Optional LLM provider name (e.g. ``"ollama"``).
     """
 
     event: Literal["started"] = "started"
-    task_id: int
+    task_id: str
     node_name: str
-    task_key: str
+    task_name: str
     provider: Optional[str] = None
 
 
@@ -126,16 +128,16 @@ class TokenPayload(BaseModel):
 
     Attributes:
         event: Always ``"token"``.
-        task_id: DB primary key of the producing task.
+        task_id: Primary key (UUID) of the producing task.
         node_name: Agent node that owns this task.
-        task_key: Full dot-separated task key.
+        task_name: Full dot-separated task key.
         data: The raw token string.
     """
 
     event: Literal["token"] = "token"
-    task_id: int
+    task_id: str
     node_name: str
-    task_key: str
+    task_name: str
     data: str
 
 
@@ -144,16 +146,16 @@ class TaskLifecyclePayload(BaseModel):
 
     Attributes:
         event: The specific lifecycle terminal event type.
-        task_id: DB primary key of the task.
+        task_id: Primary key (UUID) of the task.
         node_name: Agent node that owns this task.
-        task_key: Full dot-separated task key.
+        task_name: Full dot-separated task key.
         output: Task output dict persisted to DB, or ``{}`` on failure.
     """
 
     event: Literal["completed", "failed", "cancelled"]
-    task_id: int
+    task_id: str
     node_name: str
-    task_key: str
+    task_name: str
     output: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -251,7 +253,30 @@ class NodeOutputPayload(BaseModel):
     elapsed_ms: int = 0
 
 
-class PerfTestStoppedPayload(BaseModel):
+class NodeStatusPayload(BaseModel):
+    """Payload for the ``node_status`` event — a node's lifecycle status changed.
+
+    Emitted whenever a node transitions between lifecycle stages so the
+    frontend can update per-node status indicators in real time.  Also carries
+    ``node_id`` (governance UUID) so the UI can request a scoped cancel.
+
+    Attributes:
+        event: Always ``"node_status"``.
+        node_id: Governance UUID of the node execution.
+        node_name: Human-readable node name.
+        status: New status — ``'running'``, ``'completed'``, ``'failed'``, or
+                ``'cancelled'``.
+        thread_id: Parent thread UUID.
+    """
+
+    event: Literal["node_status"] = "node_status"
+    node_id: str
+    node_name: str
+    status: str
+    thread_id: str
+
+
+
     """Payload for the ``perf_test_stopped`` event — emitted when the timeout fires.
 
     Signals the frontend to freeze the metrics panel and display final stats.
@@ -361,6 +386,7 @@ __all__ = [
     "PingPayload",
     "NodeInputPayload",
     "NodeOutputPayload",
+    "NodeStatusPayload",
     "PerfIngestCompletePayload",
     "PerfTestCompletePayload",
     "QueryReceivedPayload",

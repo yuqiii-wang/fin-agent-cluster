@@ -30,7 +30,7 @@ export async function fetchCentrifugoToken(
   threadId: string,
   userToken: string
 ): Promise<CentrifugoTokenResponse> {
-  const url = `${BASE}/centrifugo/token?thread_id=${encodeURIComponent(threadId)}`;
+  const url = `${BASE}/auth/centrifugo/token?thread_id=${encodeURIComponent(threadId)}`;
   const res = await fetch(url, {
     headers: { "X-User-Token": userToken },
   });
@@ -54,6 +54,12 @@ export interface StreamHandlers {
   onQueryStatus?: (data: unknown) => void;
   onQueryReceived?: (data: unknown) => void;
   onQueryAckConfirmed?: (data: unknown) => void;
+  /** Fired when a node starts — carries topology (parent_node_execution_id). */
+  onNodeInput?: (data: unknown) => void;
+  /** Fired when a node finishes — carries output + elapsed_ms. */
+  onNodeOutput?: (data: unknown) => void;
+  /** Fired when a node's lifecycle status changes (node_status SSE event). */
+  onNodeStatus?: (data: unknown) => void;
   /**
    * Fired when the Centrifugo subscription becomes active and all channel history
    * has been delivered as `publication` events.  Use this as the signal to
@@ -84,6 +90,9 @@ function dispatch(data: unknown, handlers: StreamHandlers): void {
     case "query_status":          handlers.onQueryStatus?.(data); break;
     case "query_received":        handlers.onQueryReceived?.(data); break;
     case "query_ack_confirmed":   handlers.onQueryAckConfirmed?.(data); break;
+    case "node_input":            handlers.onNodeInput?.(data); break;
+    case "node_output":           handlers.onNodeOutput?.(data); break;
+    case "node_status":           handlers.onNodeStatus?.(data); break;
     default:
       break;
   }
@@ -100,12 +109,17 @@ function dispatch(data: unknown, handlers: StreamHandlers): void {
  * @param threadId  LangGraph thread UUID.
  * @param userToken X-User-Token from localStorage.
  * @param handlers  Event callbacks.
+ * @param options   `recoverHistory` (default true) — when false the subscription
+ *                  omits the `since` field so Centrifugo does NOT replay channel
+ *                  history. Use `false` for resume streams to avoid re-processing
+ *                  stale `done` / `cancelled` events from the previous run.
  * @returns Cleanup function that disconnects the WebSocket.
  */
 export function openStream(
   threadId: string,
   userToken: string,
-  handlers: StreamHandlers
+  handlers: StreamHandlers,
+  options: { recoverHistory?: boolean } = {},
 ): () => void {
   let sub: Subscription | null = null;
   let closed = false;
@@ -157,10 +171,23 @@ export function openStream(
       // many concurrent streams are open.
       const centrifuge = getOrCreateShardClient(localWsUrl, connection_token);
 
+      const recoverHistory = options.recoverHistory !== false;
+
+      // If a previous subscription for this channel still exists in the shared
+      // client registry (e.g. after unsubscribe on cancel/done), remove it before
+      // creating a new one.  centrifuge.newSubscription() throws DuplicateSubscriptionError
+      // if the same channel is registered twice on the same client.
+      const existingSub = centrifuge.getSubscription(channel);
+      if (existingSub) {
+        existingSub.unsubscribe();
+        existingSub.removeAllListeners();
+        centrifuge.removeSubscription(existingSub);
+      }
+
       sub = centrifuge.newSubscription(channel, {
         token: subscription_token,
-        recoverable: true,
-        since: { epoch: '', offset: 0 }, // recover all history on first subscription
+        recoverable: recoverHistory,
+        ...(recoverHistory ? { since: { epoch: '', offset: 0 } } : {}),
       });
 
       sub.on("publication", (ctx) => {
@@ -168,8 +195,25 @@ export function openStream(
       });
 
       sub.on("error", (ctx) => {
-        console.warn("[stream] subscription error channel=%s threadId=%s code=%s msg=%s",
-          channel, threadId, ctx.error?.code, ctx.error?.message);
+        const code = ctx.error?.code;
+        const temporary = ctx.error?.temporary ?? true;
+        console.warn("[stream] subscription error channel=%s threadId=%s code=%s temporary=%s msg=%s",
+          channel, threadId, code, temporary, ctx.error?.message);
+        // Non-temporary (fatal) subscription errors indicate permanent failure — the
+        // subscription will NOT be retried by centrifuge-js.  Surface this as onFailed
+        // so the session UI can show an error state rather than hanging indefinitely.
+        if (!temporary && !closed) {
+          closed = true;
+          console.error(
+            "[stream] fatal subscription error — reporting centrifugo_token_error channel=%s threadId=%s code=%s",
+            channel, threadId, code,
+          );
+          handlers.onFailed?.({
+            event: "failed",
+            message: `Centrifugo subscription failed (code ${code}): ${ctx.error?.message ?? "unknown"}`,
+            error: "centrifugo_token_error",
+          });
+        }
       });
 
       sub.on("subscribed", () => {
@@ -179,7 +223,7 @@ export function openStream(
       });
 
       sub.on("unsubscribed", (ctx) => {
-        // Only propagate onClose for unexpected server-side unsubscriptions.
+        // Only propagate for unexpected server-side unsubscriptions.
         // manualClose is set by cleanup() before calling sub.unsubscribe(), so
         // that path is suppressed.
         if (!manualClose && !closed) {
@@ -187,8 +231,20 @@ export function openStream(
             "[stream] subscription unsubscribed unexpectedly channel=%s threadId=%s code=%d",
             channel, threadId, ctx.code,
           );
-          handlers.onClose?.();
+          // Server-side auth rejection (Centrifugo codes 100–111 are centrifugo
+          // protocol errors; codes >= 100 are server-initiated with a specific reason).
+          // Treat as centrifugo_token_error so the UI surfaces an actionable error.
+          const isServerAuthError = ctx.code > 0;
           closed = true;
+          if (isServerAuthError) {
+            handlers.onFailed?.({
+              event: "failed",
+              message: `Centrifugo subscription closed by server (code ${ctx.code})`,
+              error: "centrifugo_token_error",
+            });
+          } else {
+            handlers.onClose?.();
+          }
         }
       });
 

@@ -46,7 +46,7 @@ def _key(thread_id: str) -> str:
 async def record_query_status_event(thread_id: str, phase: str) -> None:
     """Record a published query-status phase as pending ACK.
 
-    Called immediately after :func:`~backend.sse_notifications.channel.publish_lifecycle`
+    Called immediately after :func:`~backend.sse_notifications.channel.publish_thread_lifecycle`
     emits the ``query_status`` event.  Creates (or resets) the hash field for
     *phase* with ``is_ack=False`` and refreshes the TTL.
 

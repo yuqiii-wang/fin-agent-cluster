@@ -49,9 +49,12 @@ class LLMCompletionMessage(BaseStreamMessage):
 
     Attributes:
         thread_id:         Originating LangGraph thread.
+        task_id:         UUID of the ``fin_agents.tasks`` row that
+                           triggered this LLM call.  Enables the optional 1:1
+                           link between ``llm_responses`` and ``tasks``.
         provider:          LLM provider name (``'ollama'``, ``'ark'``, etc.).
         model:             Model identifier string.
-        task_key:          Agent sub-task that triggered the completion.
+        task_name:          Agent sub-task that triggered the completion.
         node_name:         Agent node name.
         prompt_tokens:     Input token count.
         completion_tokens: Output token count.
@@ -63,9 +66,10 @@ class LLMCompletionMessage(BaseStreamMessage):
     """
 
     thread_id: Optional[str] = None
+    task_id: Optional[str] = None
     provider: str = ""
     model: str = ""
-    task_key: Optional[str] = None
+    task_name: Optional[str] = None
     node_name: Optional[str] = None
     prompt_tokens: int = 0
     completion_tokens: int = 0

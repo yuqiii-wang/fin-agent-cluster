@@ -89,7 +89,7 @@ def run_fanout_batch(
         run_id:         Shared run UUID.
         stream_configs: List of per-stream config dicts, each containing:
                         ``stream_id``, ``thread_id``, ``node_id``,
-                        ``pub_task_id``, ``task_key``, ``token_per_sec``,
+                        ``pub_task_id``, ``task_name``, ``token_per_sec``,
                         ``timeout_secs``, ``done_key``.
         timeout_secs:   Hard deadline for all streams in this batch.
 
@@ -198,11 +198,12 @@ async def _ingest_one(
     stream_id: str = cfg["stream_id"]
     thread_id: str = cfg["thread_id"]
     node_id: str = cfg["node_id"]
-    pub_task_id: int = int(cfg["pub_task_id"])
-    task_key: str = cfg["task_key"]
+    task_id: str = cfg["task_id"]
+    pub_task_id: str = cfg["pub_task_id"]
+    task_name: str = cfg["task_name"]
     token_per_sec: int = int(cfg["token_per_sec"])
     done_key: str = cfg["done_key"]
-    node_name: str = task_key.split(".")[0]
+    node_name: str = task_name.split(".")[0]
 
     effective_tps = max(token_per_sec, 1)
     batch_delay = _FLUSH_SIZE / effective_tps
@@ -223,7 +224,7 @@ async def _ingest_one(
     )
 
     try:
-        await register_stream(thread_id, node_id, stream_id)
+        await register_stream(thread_id, node_id, task_id, stream_id)
     except Exception:  # noqa: BLE001
         logger.warning("[fanout_stream] register_stream failed stream_id=%s", stream_id)
 
@@ -238,7 +239,7 @@ async def _ingest_one(
                 produced += 1
             if len(pending_batch) >= _FLUSH_SIZE:
                 await _flush_batch(
-                    thread_id, stream_id, pub_task_id, task_key, node_name,
+                    thread_id, stream_id, pub_task_id, task_name, node_name,
                     len(pending_batch), list(token_window),
                     xadd_semaphore=xadd_semaphore,
                 )
@@ -259,7 +260,7 @@ async def _ingest_one(
 
         if pending_batch:
             await _flush_batch(
-                thread_id, stream_id, pub_task_id, task_key, node_name,
+                thread_id, stream_id, pub_task_id, task_name, node_name,
                 len(pending_batch), list(token_window),
                 xadd_semaphore=xadd_semaphore,
             )
@@ -271,7 +272,7 @@ async def _ingest_one(
     finally:
         ingest_ms = int((time.monotonic() - t_start) * 1000)
         try:
-            await deregister_stream(thread_id, node_id, stream_id)
+            await deregister_stream(thread_id, node_id, task_id, stream_id)
         except Exception:  # noqa: BLE001
             logger.warning("[fanout_stream] deregister_stream failed stream_id=%s", stream_id)
 
@@ -308,8 +309,8 @@ async def _ingest_one(
 async def _flush_batch(
     thread_id: str,
     stream_id: str,
-    pub_task_id: int,
-    task_key: str,
+    pub_task_id: str,
+    task_name: str,
     node_name: str,
     count: int,
     recent_tokens: list[str],
@@ -319,10 +320,10 @@ async def _flush_batch(
     """XADD one ``token_batch`` publication to ``fin:llm:tokens``.
 
     Args:
-        thread_id:      LangGraph thread UUID (channel + shard routing).
-        stream_id:      Per-stream UUID (used in error logs).
-        pub_task_id:    Task row ID embedded in the event.
-        task_key:       Full task key string.
+        thread_id:      LangGraph thread UUID.
+        stream_id:      Per-stream UUID (for log correlation).
+        pub_task_id:  Task row UUID embedded in the event.
+        task_name:       Full task key string.
         node_name:      Agent node name prefix.
         count:          Number of tokens in this batch.
         recent_tokens:  Rolling window of last 10 token strings.
@@ -332,7 +333,7 @@ async def _flush_batch(
         "event": "token_batch",
         "task_id": pub_task_id,
         "node_name": node_name,
-        "task_key": task_key,
+        "task_name": task_name,
         "count": count,
         "recent_tokens": recent_tokens,
     }

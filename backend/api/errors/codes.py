@@ -24,7 +24,7 @@ API_QUERY_STATUS_CONFLICT = "API_QUERY_STATUS_CONFLICT"
 
 # ── Task control ─────────────────────────────────────────────────────────────
 
-#: task_id path parameter is not a positive integer.
+#: task_id path parameter is empty or not a valid UUID string.
 API_TASK_ID_INVALID = "API_TASK_ID_INVALID"
 
 # ── Quant stats ───────────────────────────────────────────────────────────────
@@ -63,6 +63,14 @@ API_THREAD_EMIT_INVALID_EVENT = "API_THREAD_EMIT_INVALID_EVENT"
 #: Requested status value is not in the allowed set.
 API_THREAD_STATUS_INVALID = "API_THREAD_STATUS_INVALID"
 
+# ── Replay ────────────────────────────────────────────────────────────────────
+
+#: No checkpoint found in the thread's history where the target node is scheduled.
+API_REPLAY_CHECKPOINT_NOT_FOUND = "API_REPLAY_CHECKPOINT_NOT_FOUND"
+
+#: No checkpoint found to fork from (same lookup as replay, different operation).
+API_FORK_CHECKPOINT_NOT_FOUND = "API_FORK_CHECKPOINT_NOT_FOUND"
+
 # ---------------------------------------------------------------------------
 # Description registry
 # ---------------------------------------------------------------------------
@@ -78,7 +86,7 @@ API_ERRORS: dict[str, str] = {
         "Check the current status and retry if appropriate."
     ),
     API_TASK_ID_INVALID: (
-        "The task_id must be a positive integer."
+        "The task_id path parameter must not be empty."
     ),
     API_QUANT_INVALID_GRANULARITY: (
         "The requested bar granularity is not supported. "
@@ -116,5 +124,13 @@ API_ERRORS: dict[str, str] = {
     API_THREAD_STATUS_INVALID: (
         "The requested status value is not in the allowed set. "
         "Valid values: pending, running, completed, failed, cancelled."
+    ),
+    API_REPLAY_CHECKPOINT_NOT_FOUND: (
+        "No checkpoint found in the thread history where the target node is scheduled to run. "
+        "The node may not have executed yet in this thread."
+    ),
+    API_FORK_CHECKPOINT_NOT_FOUND: (
+        "No checkpoint found in the thread history where the target node is scheduled to run. "
+        "The node may not have executed yet in this thread."
     ),
 }

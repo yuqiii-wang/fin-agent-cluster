@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.db import get_session_factory as _get_session_factory
 from backend.db.redis.session.query_phase import set_query_phase
-from backend.sse_notifications.query_lifecycle import emit_query_received, emit_query_status
+from backend.sse_notifications.thread import emit_query_received, emit_query_status
 from backend.users.models import GuestUser, UserQuery
 from backend.users.schemas import QueryRequest, QueryResponse
 

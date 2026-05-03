@@ -3,8 +3,8 @@ import { BASE } from "./config";
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
 
-/** Cancel a running LLM task — marks it as cancelled and stops streaming. */
-export async function cancelTask(taskId: number): Promise<void> {
+/** Cancel a running task by UUID — sends cancel signal via task control channel. */
+export async function cancelTask(taskId: string): Promise<void> {
   const res = await fetch(`${BASE}/tasks/${taskId}/cancel`, { method: "POST" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -12,8 +12,8 @@ export async function cancelTask(taskId: number): Promise<void> {
   }
 }
 
-/** Pass a running LLM task — stops streaming and accepts partial output as final result. */
-export async function passTask(taskId: number): Promise<void> {
+/** Pass (accept partial output) a running streaming task by UUID. */
+export async function passTask(taskId: string): Promise<void> {
   const res = await fetch(`${BASE}/tasks/${taskId}/pass`, { method: "POST" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

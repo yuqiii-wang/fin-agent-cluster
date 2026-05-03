@@ -40,7 +40,7 @@ from backend.db.redis.session.query_status_ack_store import (
     get_unacked_phases,
     increment_phase_retry,
 )
-from backend.sse_notifications.channel import publish_lifecycle
+from backend.sse_notifications.channel import publish_thread_lifecycle
 from backend.users.models import UserQuery
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ async def _verify_once() -> None:
                     thread_id,
                 )
             try:
-                await publish_lifecycle(
+                await publish_thread_lifecycle(
                     thread_id,
                     {
                         "event": "query_status",

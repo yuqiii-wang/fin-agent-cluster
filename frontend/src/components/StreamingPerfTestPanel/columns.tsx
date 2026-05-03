@@ -1,13 +1,13 @@
 import { Badge, Button, Space, Tag, Tooltip, Typography } from "antd";
 import type { GlobalToken } from "antd/es/theme/interface";
 import type { ColumnsType } from "antd/es/table";
-import { InfoCircleOutlined, PauseCircleOutlined, UnorderedListOutlined } from "@ant-design/icons";
+import { CompressOutlined, InfoCircleOutlined, PauseCircleOutlined, UnorderedListOutlined } from "@ant-design/icons";
 import type { ThreadSession } from "./types";
 import { TERMINAL_STATUSES } from "./types";
 import { isSessionStable } from "./useSessionManager";
 import { isSessionSuspicious } from "./aggregateStats";
 import { styles, getColumnColors } from "./columns.styles";
-import { ThinkingStream } from "../OutputViewer/subRenderers";
+import { StreamingTaskOutput } from "../../services/streaming/core";
 
 const { Text } = Typography;
 
@@ -57,15 +57,20 @@ function IdentityStack({ record, expanded, onToggle }: { record: ThreadSession; 
   }
 
   return (
-    <div
-      style={{ fontFamily: "monospace", cursor: "pointer" }}
-      onClick={onToggle}
-      title="Click to collapse"
-    >
+    <div style={{ fontFamily: "monospace", position: "relative" }}>
+      <Tooltip title="Collapse">
+        <Button
+          type="text"
+          size="small"
+          icon={<CompressOutlined />}
+          onClick={onToggle}
+          style={{ position: "absolute", top: 0, right: 0, padding: 0, height: 16, width: 16, minWidth: 16, fontSize: 10 }}
+        />
+      </Tooltip>
       <IdentityRow label="Thread" value={record.thread_id} />
       {record.node_id      && <IdentityRow label="Node"   value={record.node_id} />}
-      {record.leaf_node_id && <IdentityRow label="Leaf"   value={record.leaf_node_id} />}
-      {record.task_id != null && <IdentityRow label="Task" value={String(record.task_id)} numeric />}
+      {record.task_id     && <IdentityRow label="Task"   value={record.task_id} />}
+      {record.task_id != null && <IdentityRow label="TaskUUID" value={record.task_id} />}
       {record.stream_id    && <IdentityRow label="Stream" value={record.stream_id} />}
     </div>
   );
@@ -440,6 +445,7 @@ export function buildColumns(
       render: (_: unknown, record: ThreadSession) => {
         const streamText = record.stream_text ?? "";
         const isExpanded = expandedTokenLogId === record.thread_id;
+        const isRunning = !record.closed && !TERMINAL_STATUSES.has(record.status);
         return (
           <div>
             <Button
@@ -451,9 +457,11 @@ export function buildColumns(
               {isExpanded ? "Hide" : "Show"}
             </Button>
             {isExpanded && (
-              <ThinkingStream
+              <StreamingTaskOutput
                 stream={streamText}
-                isRunning={!record.closed && !TERMINAL_STATUSES.has(record.status)}
+                isRunning={isRunning}
+                tokenCount={record.tokens > 0 ? record.tokens : undefined}
+                status={record.status}
               />
             )}
           </div>

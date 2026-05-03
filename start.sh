@@ -13,13 +13,13 @@ for arg in "$@"; do [[ "$arg" == "--prod" ]] && PROD_MODE=true; done
 # Kill all related processes
 taskkill //F //IM ollama.exe >/dev/null 2>&1 || true
 netstat -ano | grep ":3000" | awk '{print $5}' | sort -u | xargs -r -I{} taskkill //F //PID {}
-taskkill //F //IM python.exe >/dev/null 2>&1 || true
-netstat -ano 2>/dev/null | awk '/:11434.*LISTENING/{print $5}' | tr -d '\r' | xargs -r -I{} taskkill //F //PID {} >/dev/null 2>&1 || true
+ps -elf | grep python | awk '{print $4}' | xargs kill -9
 
 # Start all processes
 ollama serve
 
 # UI Start
+netstat -ano 2>/dev/null | awk '/:11434.*LISTENING/{print $5}' | tr -d '\r' | xargs -r -I{} taskkill //F //PID {} >/dev/null 2>&1 || true
 if [ "$PROD_MODE" = true ]; then
   # The UI is served from nginx on port 22332; API calls go to Kong on 8443.
   # CORS for http://localhost:22332 is already allowed in Kong's global CORS plugin.
