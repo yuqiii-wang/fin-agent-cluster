@@ -241,7 +241,7 @@ async def xread(
     Args:
         stream:   Stream name.
         last_id:  Exclusive lower bound message ID.  Use ``'$'`` for only
-                  new messages, ``'0'`` to replay from the beginning.
+                  new messages, ``'0'`` to read from the beginning.
         count:    Maximum messages to return.
         block_ms: Milliseconds to block waiting for new messages; 0 = no block.
 

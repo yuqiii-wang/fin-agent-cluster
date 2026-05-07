@@ -121,9 +121,9 @@ async def submit_query(request: QueryRequest, user: GuestUser) -> QueryResponse:
         request.query[:80],
     )
 
-    # Store phase in Redis so late-connecting SSE clients can replay it.
+    # Store phase in Redis so late-connecting SSE clients can recover it.
     await set_query_phase(thread_id, "received")
-    # Emit query_status for the existing query_status replay channel.
+    # Emit query_status for the query_status channel.
     await emit_query_status(thread_id, "received")
     # Emit query_received via Redis Pub/Sub + push to pending-notify store for retry.
     await emit_query_received(thread_id)

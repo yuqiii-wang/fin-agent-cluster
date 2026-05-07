@@ -10,10 +10,12 @@
  *   └─────────────────────────────────────────────┘
  */
 
+import { useEffect, useState } from "react";
 import { Button, Space, Tag, Typography, theme, Alert, Spin } from "antd";
 import { ReloadOutlined, SendOutlined } from "@ant-design/icons";
 import { useSingleTestSession } from "../../services/singleTest";
 import { GraphVisualizationPanel } from "../GraphVisualizationPanel";
+import { fetchSystemHealth, type SystemHealthResponse } from "../../api/queries";
 
 const { Text } = Typography;
 
@@ -23,8 +25,42 @@ export interface SingleTestPanelProps {
 
 export function SingleTestPanel({ userToken }: SingleTestPanelProps) {
   const { token } = theme.useToken();
-  const { session, graphState, tokenStreams, tokenCounts, sendRequest, resumeRequest, replayRequest, forkRequest, reset, isActive, isPendingControl } = useSingleTestSession(userToken);
+  const { session, graphState, tokenStreams, tokenCounts, sendRequest, resumeRequest, reset, isActive, isPendingControl } = useSingleTestSession(userToken);
   const anyPending = isActive || isPendingControl;
+  const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(null);
+  const [healthLoading, setHealthLoading] = useState(true);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [hasAutoRun, setHasAutoRun] = useState(false);
+
+  // Fetch system health on mount
+  useEffect(() => {
+    async function checkHealth() {
+      try {
+        setHealthLoading(true);
+        const health = await fetchSystemHealth();
+        setSystemHealth(health);
+        setHealthError(null);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setHealthError(msg);
+      } finally {
+        setHealthLoading(false);
+      }
+    }
+    checkHealth();
+  }, []);
+
+  // Auto-run after health check completes and 1 sec delay
+  useEffect(() => {
+    if (healthLoading || hasAutoRun || session) return;
+
+    const timer = setTimeout(() => {
+      sendRequest();
+      setHasAutoRun(true);
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [healthLoading, hasAutoRun, session, sendRequest]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: "16px 24px" }}>
@@ -69,6 +105,15 @@ export function SingleTestPanel({ userToken }: SingleTestPanelProps) {
         )}
         {session?.status === "error" && <Tag color="error">Error</Tag>}
 
+        {/* System health status */}
+        {healthLoading && <Spin size="small" />}
+        {healthError && <Tag color="error">Health check failed</Tag>}
+        {systemHealth && !healthLoading && !healthError && (
+          <Tag color={systemHealth.all_healthy ? "success" : "warning"}>
+            {systemHealth.all_healthy ? "All healthy" : "Unhealthy"} ({systemHealth.healthy_count}/{systemHealth.total})
+          </Tag>
+        )}
+
         {/* Thread ID */}
         {session?.thread_id && (
           <Text type="secondary" style={{ fontSize: 12, fontFamily: "monospace" }}>
@@ -96,8 +141,6 @@ export function SingleTestPanel({ userToken }: SingleTestPanelProps) {
           tokenStreams={tokenStreams}
           tokenCounts={tokenCounts}
           onResume={resumeRequest}
-          onReplay={replayRequest}
-          onFork={forkRequest}
           isPendingControl={isPendingControl}
         />
       </div>

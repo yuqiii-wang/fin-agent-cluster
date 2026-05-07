@@ -71,6 +71,4 @@ export type GraphEvent =
   | { type: "done"; status: string; ts: number }
   | { type: "reset" }
   /** Pre-populate all expected nodes with pending (grey) status before graph starts. */
-  | { type: "graph_topology_init"; nodes: Array<{ node_name: string; parent_node_names: string[] }> }
-  /** Mark specific nodes (by execution ID) as pending — used when replay/fork begins. */
-  | { type: "nodes_set_pending"; node_execution_ids: number[] };
+  | { type: "graph_topology_init"; nodes: Array<{ node_name: string; parent_node_names: string[] }> };

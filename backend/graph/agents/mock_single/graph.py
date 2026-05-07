@@ -8,9 +8,7 @@ The ``mock_analysis`` node is intentionally kept OUT of this subgraph and wired
 directly to the outer routing graph in :func:`~backend.graph.builder.build_graph`.
 
 The subgraph is compiled with ``checkpointer=True`` so it inherits the parent
-PostgresSaver and saves a checkpoint after each internal node step.  This
-enables time-travel replay from mid-subgraph nodes (query, mock_news,
-mock_stats, merge) without requiring a raw namespace scan at invocation time.
+PostgresSaver and saves a checkpoint after each internal node step.
 """
 
 from __future__ import annotations
@@ -60,7 +58,7 @@ def build_mock_single_subgraph() -> StateGraph:
 
     # checkpointer=True: inherit parent's AsyncPostgresSaver so each internal
     # node (query, mock_news, mock_stats, merge) gets its own checkpoint in
-    # the subgraph namespace, enabling per-node time-travel replay.
+    # the subgraph namespace.
     return g.compile(checkpointer=True)
 
 

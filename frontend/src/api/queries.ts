@@ -1,7 +1,28 @@
 import type { NodeExecutionInfo, QueryResponse, SessionStatus } from "../types";
 import { BASE } from "./config";
 
-// ── Queries ──────────────────────────────────────────────────────────────────
+// ── System health ─────────────────────────────────────────────────────────────
+
+export interface InstanceHealth {
+  url: string;
+  kind: "runner" | "assistant";
+  healthy: boolean;
+}
+
+export interface SystemHealthResponse {
+  all_healthy: boolean;
+  total: number;
+  healthy_count: number;
+  instances: InstanceHealth[];
+}
+
+export async function fetchSystemHealth(): Promise<SystemHealthResponse> {
+  const res = await fetch(`${BASE}/system/health`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// ── Queries ───────────────────────────────────────────────────────────────────
 
 export async function submitQuery(
   query: string,
@@ -22,7 +43,7 @@ export async function submitQuery(
 
 /**
  * Submit a perf-test query with cache disabled so each stream gets a fresh
- * backend execution (no browser or intermediate cache replay).
+ * backend execution (no browser or intermediate cache reuse).
  *
  * Test parameters (test_mode, total_tokens, timeout_secs, token_per_sec) are
  * encoded as JSON in the query string by :func:`buildPerfQuery` in
@@ -52,8 +73,11 @@ export async function fetchTasks(threadId: string): Promise<SessionStatus> {
   return res.json();
 }
 
-export async function fetchNodeExecutions(threadId: string): Promise<NodeExecutionInfo[]> {
-  const res = await fetch(`${BASE}/users/query/${threadId}/nodes`);
+export async function fetchNodeExecutions(threadId: string, version?: number): Promise<NodeExecutionInfo[]> {
+  const url = version !== undefined
+    ? `${BASE}/users/query/${threadId}/nodes?version=${version}`
+    : `${BASE}/users/query/${threadId}/nodes`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -165,50 +189,18 @@ export async function stablePerfStream(threadId: string, streamId: string, userT
 }
 
 /**
- * Replay a completed/paused/cancelled query from a specific node's last
- * LangGraph checkpoint (time-travel replay).
+ * Enable opt-in live streaming for a preview task (MOCK_ANALYSIS_PREVIEW).
+ * Sets the Redis live flag and flushes the buffered token preview to Centrifugo.
+ * After this call the task publishes new tokens live until it finishes.
  *
- * The backend finds the checkpoint where *nodeName* is in `snapshot.next`
- * and re-invokes the graph from that point.  Nodes before *nodeName* are
- * replayed from cache; the target node and its descendants execute fresh.
+ * Returns the number of buffered tokens that were flushed (for diagnostics).
  */
-export async function replayFromNode(threadId: string, nodeName: string): Promise<QueryResponse> {
-  const res = await fetch(`${BASE}/users/query/${threadId}/replay`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ node_name: nodeName }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.message ?? err.detail ?? `HTTP ${res.status}`);
-  }
-  return res.json();
-}
-
-export interface ForkFromNodeResponse {
-  source_thread_id: string;
-  new_thread_id: string;
-  node_name: string;
-  status: string;
-}
-
-/**
- * Fork a completed/paused/cancelled query from a specific node's checkpoint
- * into a completely new independent thread (LangGraph time-travel fork).
- *
- * Unlike replay (same thread), fork creates a new thread_id.  The original
- * thread is not modified.  The caller should subscribe to the new thread's
- * Centrifugo channel.
- */
-export async function forkFromNode(threadId: string, nodeName: string): Promise<ForkFromNodeResponse> {
-  const res = await fetch(`${BASE}/users/query/${threadId}/fork`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ node_name: nodeName }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.message ?? err.detail ?? `HTTP ${res.status}`);
-  }
-  return res.json();
+export async function enableTaskStream(threadId: string, taskId: string): Promise<number> {
+  const res = await fetch(
+    `${BASE}/users/query/${threadId}/tasks/${taskId}/enable-stream`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = await res.json();
+  return (body as { flushed: number }).flushed ?? 0;
 }

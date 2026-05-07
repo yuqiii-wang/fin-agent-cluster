@@ -7,8 +7,6 @@ Each module owns one lifecycle stage:
 * :mod:`cancel`  — ``cancel_query``, ``cancel_node``, ``cancel_task_by_uuid``
 * :mod:`pause`   — ``pause_query``     – set pause signal; graph pauses at next interrupt
 * :mod:`resume`  — ``resume_query``    – resume from last LangGraph checkpoint (paused or cancelled)
-* :mod:`replay`  — ``replay_from_node`` – time-travel replay from a specific node's checkpoint
-* :mod:`fork`    — ``fork_from_node``    – create an independent new thread from a specific node's checkpoint
 * :mod:`status`  — ``get_query_status``, ``get_query_tasks``, ``get_node_executions``
 * :mod:`threads` — ``list_threads``, ``get_thread_llm_responses``,
                    ``get_thread_state``, ``update_thread_status``,
@@ -22,8 +20,6 @@ from backend.users.queries.ack import ack_query
 from backend.users.queries.cancel import cancel_query, cancel_node, cancel_task_by_uuid
 from backend.users.queries.pause import pause_query
 from backend.users.queries.resume import resume_query
-from backend.users.queries.replay import replay_from_node
-from backend.users.queries.fork import fork_from_node
 from backend.users.queries.status import get_query_status, get_query_tasks, get_node_executions
 from backend.users.queries.threads import (
     list_threads,
@@ -42,8 +38,6 @@ __all__ = [
     "cancel_task_by_uuid",
     "pause_query",
     "resume_query",
-    "replay_from_node",
-    "fork_from_node",
     "get_query_status",
     "get_query_tasks",
     "get_node_executions",

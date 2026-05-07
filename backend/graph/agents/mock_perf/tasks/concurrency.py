@@ -46,12 +46,14 @@ async def run_concurrency_task(
     token_per_sec: int,
     timeout_secs: int,
     node_execution_id: int,
-    t0_node: float,
     node_id: str,
     task_id: str,
     stream_id: str,
     run_id: str,
+    t0_node: float | None = None,
 ) -> MockTaskResult:
+    if t0_node is None:
+        t0_node = time.monotonic()
     """Wrap the concurrency stream lifecycle: ingest + deliver simultaneously.
 
     Ingest is coordinated by the fanout scheduler: a single coordinator

@@ -12,17 +12,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-import time
 import uuid
-from datetime import datetime, timezone
 
+from backend.graph.agents._shared.base_node import BaseNode
 from backend.graph.state import StreamRunState
-from backend.graph.utils.execution_log import start_node_execution, update_node_execution_status
-from backend.sse_notifications.node import emit_node_status
 
 logger = logging.getLogger(__name__)
-
-_NODE_NAME: str = "mock_runner"
 
 _DEFAULT_TEST_MODE: str = "concurrency"
 _DEFAULT_TOTAL_TOKENS: int = 100_000
@@ -36,14 +31,7 @@ _RUN_ID_RE = re.compile(
 
 
 def _parse_perf_params(query: str) -> tuple[str, int, int, int, str | None]:
-    """Extract perf-test params and optional run_id from the query string.
-
-    Args:
-        query: Raw query string from ``StreamRunState``.
-
-    Returns:
-        Tuple ``(test_mode, total_tokens, timeout_secs, token_per_sec, run_id)``.
-    """
+    """Extract perf-test params and optional run_id from the query string."""
     run_id_match = _RUN_ID_RE.search(query)
     run_id: str | None = run_id_match.group(1) if run_id_match else None
 
@@ -66,106 +54,107 @@ def _parse_perf_params(query: str) -> tuple[str, int, int, int, str | None]:
         return _DEFAULT_TEST_MODE, _DEFAULT_TOTAL_TOKENS, _DEFAULT_TIMEOUT_SECS, _DEFAULT_TOKEN_PER_SEC, run_id
 
 
-async def perf_runner(state: StreamRunState) -> dict:
-    """Node — route to throughput or concurrency task and emit lifecycle events.
+class PerfRunnerNode(BaseNode):
+    """Performance runner node implementation."""
 
-    Generates ``node_id``, ``task_id``, and ``stream_id`` UUIDs then
-    delegates to the mode-specific task, which owns the full Celery dispatch,
-    SSE lifecycle, and node execution telemetry.
+    node_name: str = "mock_runner"
 
-    Emits ``node_status`` SSE events at 'running' (start) and the terminal
-    status so the frontend can track node-level lifecycle independently of
-    task-level events.
+    def _create_node_output(self, task_result) -> dict:
+        # Tasks handle finish_node_execution internally
+        return {}
 
-    Args:
-        state: :class:`~backend.graph.state.StreamRunState` populated by the runner.
+    def _log_completion(self, task_result, thread_id, node_id, elapsed_ms):
+        logger.info(
+            "[mock_runner] completed thread_id=%s node_id=%s elapsed_ms=%d",
+            thread_id, node_id, elapsed_ms,
+        )
 
-    Returns:
-        Partial state update containing ``node_id``, ``task_id``,
-        ``stream_id``, ``task_id``, and ``result``.
-    """
-    from backend.graph.agents.mock_perf.tasks.throughput import run_throughput_task  # noqa: PLC0415
-    from backend.graph.agents.mock_perf.tasks.concurrency import run_concurrency_task  # noqa: PLC0415
+    def _create_state_update(
+        self,
+        node_execution_id,
+        node_id,
+        task_id,
+        task_result,
+    ) -> dict:
+        return {
+            "node_execution_id": node_execution_id,
+            "task_id": task_result.pub_task_id,
+            "result": task_result.result_str,
+            "node_id": node_id,
+            "task_id": task_id,
+            "stream_id": self._stream_id,
+        }
 
-    thread_id: str = state["thread_id"]
-    parent_node_execution_id: int | None = state.get("node_execution_id")
-    test_mode, total_tokens, timeout_secs, token_per_sec, run_id = _parse_perf_params(
-        state.get("query", "")
-    )
+    async def __call__(self, state: StreamRunState) -> dict:
+        from backend.graph.agents.mock_perf.tasks.throughput import run_throughput_task
+        from backend.graph.agents.mock_perf.tasks.concurrency import run_concurrency_task
 
-    logger.info(
-        "[perf_runner] test_mode=%s total_tokens=%d timeout_secs=%d"
-        " token_per_sec=%d run_id=%s thread_id=%s",
-        test_mode, total_tokens, timeout_secs, token_per_sec, run_id, thread_id,
-    )
+        thread_id: str = state["thread_id"]
+        parent_node_execution_id: int | None = state.get("node_execution_id")
+        test_mode, total_tokens, timeout_secs, token_per_sec, run_id = _parse_perf_params(
+            state.get("query", "")
+        )
 
-    node_id: str = str(uuid.uuid4())
-    task_id: str = str(uuid.uuid4())
-    stream_id: str = str(uuid.uuid4())
-    started_at = datetime.now(timezone.utc)
-    t0_node = time.monotonic()
+        logger.info(
+            "[mock_runner] test_mode=%s total_tokens=%d timeout_secs=%d"
+            " token_per_sec=%d run_id=%s thread_id=%s",
+            test_mode, total_tokens, timeout_secs, token_per_sec, run_id, thread_id,
+        )
 
-    node_execution_id = await start_node_execution(
-        thread_id,
-        _NODE_NAME,
-        {
+        node_id: str = str(uuid.uuid4())
+        task_id: str = str(uuid.uuid4())
+        self._stream_id: str = str(uuid.uuid4())
+
+        node_input = {
             "total_tokens": total_tokens,
             "timeout_secs": timeout_secs,
             "test_mode": test_mode,
             "token_per_sec": token_per_sec,
             "node_id": node_id,
             "task_id": task_id,
-            "stream_id": stream_id,
-        },
-        started_at,
-        node_uuid=node_id,
-        parent_node_execution_id=parent_node_execution_id,
-    )
-    await emit_node_status(thread_id, node_id, _NODE_NAME, "running")
+            "stream_id": self._stream_id,
+        }
 
-    terminal_status = "completed"
-    try:
-        if test_mode == "concurrency":
-            task_result = await run_concurrency_task(
-                thread_id=thread_id,
-                token_per_sec=token_per_sec,
-                timeout_secs=timeout_secs,
-                node_execution_id=node_execution_id,
-                t0_node=t0_node,
-                node_id=node_id,
-                task_id=task_id,
-                stream_id=stream_id,
-                run_id=run_id,
-            )
-        else:
-            task_result = await run_throughput_task(
-                thread_id=thread_id,
-                total_tokens=total_tokens,
-                timeout_secs=timeout_secs,
-                node_execution_id=node_execution_id,
-                t0_node=t0_node,
-                node_id=node_id,
-                task_id=task_id,
-                stream_id=stream_id,
-            )
-    except Exception:
-        terminal_status = "failed"
-        await update_node_execution_status(node_execution_id, terminal_status)
-        await emit_node_status(thread_id, node_id, _NODE_NAME, terminal_status)
-        raise
+        async def task_runner(thread_id_arg, node_id_arg, node_execution_id_arg):
+            if test_mode == "concurrency":
+                return await run_concurrency_task(
+                    thread_id=thread_id_arg,
+                    token_per_sec=token_per_sec,
+                    timeout_secs=timeout_secs,
+                    node_execution_id=node_execution_id_arg,
+                    node_id=node_id_arg,
+                    task_id=task_id,
+                    stream_id=self._stream_id,
+                    run_id=run_id,
+                    t0_node=None,
+                )
+            else:
+                return await run_throughput_task(
+                    thread_id=thread_id_arg,
+                    total_tokens=total_tokens,
+                    timeout_secs=timeout_secs,
+                    node_execution_id=node_execution_id_arg,
+                    node_id=node_id_arg,
+                    task_id=task_id,
+                    stream_id=self._stream_id,
+                    t0_node=None,
+                )
 
-    # run_throughput_task / run_concurrency_task already call finish_node_execution
-    # internally, so we only need to update the node status here.
-    await emit_node_status(thread_id, node_id, _NODE_NAME, terminal_status)
+        return await self._execute_node_workflow(
+            thread_id,
+            parent_node_execution_id,
+            node_input,
+            task_runner,
+            use_start_finish=True,
+        )
 
-    return {
-        "node_execution_id": node_execution_id,
-        "task_id": task_result.pub_task_id,
-        "result": task_result.result_str,
-        "node_id": node_id,
-        "task_id": task_id,
-        "stream_id": stream_id,
-    }
+
+_perf_runner_instance = PerfRunnerNode()
+
+
+async def perf_runner(state: StreamRunState) -> dict:
+    """LangGraph node function wrapper for PerfRunnerNode class."""
+    return await _perf_runner_instance(state)
 
 
 __all__ = ["perf_runner"]

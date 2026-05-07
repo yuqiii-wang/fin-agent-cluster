@@ -206,28 +206,3 @@ class ResyncResponse(BaseModel):
 
     thread_id: str
     events_emitted: int
-
-
-class ReplayFromNodeRequest(BaseModel):
-    """Request to replay a query from a specific node's last checkpoint."""
-
-    node_name: str
-
-
-class ForkFromNodeRequest(BaseModel):
-    """Request to fork a query thread from a specific node's checkpoint.
-
-    Creates a completely new thread that starts at the fork point, leaving
-    the source thread untouched.  The caller receives the new thread_id.
-    """
-
-    node_name: str
-
-
-class ForkFromNodeResponse(BaseModel):
-    """Response from a successful fork operation."""
-
-    source_thread_id: str
-    new_thread_id: str
-    node_name: str
-    status: str

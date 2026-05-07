@@ -18,6 +18,11 @@ Check in fin quant trading domain for best practices and existing solutions befo
 * Do NOT add hardcoded time lag or grace period for any flow; if got racing or other safety concerns, implement proper locking or queuing mechanism to ensure safety without hardcoded time lag.
 * Debug on git bash, although backend runs on WSL2, only try wsl if want to `python run.py` to launch the whole backend, for other debugging purposes, use git bash to run individual files or commands, do not use wsl for debugging.
 * Most of the infra, e.g., KONG API, Redis, Postgres, Centrifugo, Grafana stack are run in docker.
+* OK to add debug logs for debugging or understanding the flow, ok to keep err logs for error cases, but do NOT add info or debug logs for normal flow.
+* If debugging takes a long time, once resolved should add error logs for the issue encountered.
+* In docs dir, there is a debugs dir, write debug docs for any non-trivial debugging process.
+* In langgraph, horizontally early/before and later/after means within the same version the nodes are position in the close to root node (early/before) or close to leaf nodes (later/after); vertically early/before and later/after means across versions, the earlier version is early/before and the later version is later/after.
+* Do NOT use test/mock names if the code is for more generic use.
 
 ### Backend and Frontend Communications
 
@@ -44,6 +49,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 About agent nodes:
 
 * every node has `models` and `tasks` dir.
+* try to use native `langgraph` methods as much as possible, e.g., for `@task`, there is native cache, redis is used to implement cache for `@task`
 
 About DB and SQL:
 

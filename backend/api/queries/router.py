@@ -29,22 +29,17 @@ from backend.users.queries import (
     cancel_node,
     cancel_query,
     cancel_task_by_uuid,
-    fork_from_node,
     get_node_executions,
     get_query_status,
     get_query_tasks,
     pause_query,
     resume_query,
-    replay_from_node,
     submit_query,
 )
 from backend.users.schemas import (
-    ForkFromNodeRequest,
-    ForkFromNodeResponse,
     NodeExecutionInfo,
     QueryRequest,
     QueryResponse,
-    ReplayFromNodeRequest,
     SessionStatus,
 )
 from backend.db.redis.session.perf_stable_signal import set_perf_stable
@@ -109,34 +104,6 @@ async def resume_query_route(thread_id: str) -> QueryResponse:
     return await resume_query(thread_id)
 
 
-@router.post("/query/{thread_id}/replay", response_model=QueryResponse)
-async def replay_query_route(thread_id: str, body: ReplayFromNodeRequest) -> QueryResponse:
-    """Replay a completed/paused/cancelled query from a specific node's last checkpoint.
-
-    Uses LangGraph time-travel: finds the checkpoint where *node_name* is in
-    ``snapshot.next`` and re-invokes the graph from that point.  Nodes before
-    *node_name* are replayed from cached checkpoints (not re-executed); the
-    target node and all subsequent nodes execute fresh.
-
-    The thread must not be currently running.
-    """
-    return await replay_from_node(thread_id, body.node_name)
-
-
-@router.post("/query/{thread_id}/fork", response_model=ForkFromNodeResponse)
-async def fork_query_route(thread_id: str, body: ForkFromNodeRequest) -> ForkFromNodeResponse:
-    """Fork a query from a specific node's checkpoint into a new independent thread.
-
-    Unlike replay (which re-runs the same thread), fork creates a brand-new
-    ``thread_id`` that starts from the fork point.  The source thread is not
-    modified.  The caller receives the new ``thread_id`` and can subscribe to
-    its Centrifugo channel independently.
-
-    The source thread must not be currently running.
-    """
-    return await fork_from_node(thread_id, body.node_name)
-
-
 @router.post("/query/{thread_id}/tasks/{task_id}/cancel")
 async def cancel_task_route(
     thread_id: str,
@@ -145,6 +112,26 @@ async def cancel_task_route(
 ) -> dict:
     """Send a cancel signal to a specific task by its governance UUID."""
     return await cancel_task_by_uuid(thread_id, task_id, node_id=node_id)
+
+
+@router.post("/query/{thread_id}/tasks/{task_id}/enable-stream", status_code=200)
+async def enable_task_stream_route(thread_id: str, task_id: str) -> dict:
+    """Enable live Centrifugo streaming for a buffered opt-in streaming task.
+
+    When called, sets a Redis flag so the running analysis/report task
+    immediately begins forwarding buffered and future tokens to Centrifugo.
+    The user can trigger this by clicking the task panel in the graph inspector.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        task_id:   Task invocation UUID to enable streaming for.
+
+    Returns:
+        Echo of thread_id, task_id, and streaming status.
+    """
+    from backend.db.redis.session.task_preview import enable_task_stream  # noqa: PLC0415
+    await enable_task_stream(thread_id, task_id)
+    return {"thread_id": thread_id, "task_id": task_id, "streaming": True}
 
 
 @router.post("/query/{thread_id}/perf-stable", status_code=204)

@@ -150,12 +150,12 @@ Centrifugo multiplexes publications per-subscription over the shared WS frame
 const sub = centrifuge.newSubscription(channel, {
   token: subscription_token,
   recoverable: true,
-  since: { epoch: '', offset: 0 },  // ← replay ALL history from the beginning
+  since: { epoch: '', offset: 0 },  // ← deliver ALL history from the beginning
 });
 sub.subscribe();
 ```
 
-`since: {epoch:'', offset:0}` forces Centrifugo to replay its full channel history
+`since: {epoch:'', offset:0}` forces Centrifugo to deliver its full channel history
 on subscription.  This covers events (e.g. `query_received`, `started`) that were
 published *before* the WebSocket connected — critical because the graph can start
 running within milliseconds of the query submit while the WS bootstrap takes ~100ms.

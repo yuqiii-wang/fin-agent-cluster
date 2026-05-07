@@ -58,9 +58,9 @@ async def ack_query(thread_id: str) -> QueryResponse:
             return QueryResponse(thread_id=thread_id, status="running")
 
         if uq.status in ("completed", "cancelled", "failed"):
-            # Late ACK after graph already finished (e.g. Centrifugo history replay
-            # on reconnect).  Return the terminal status so the client can recover
-            # without treating this as an error.
+            # Late ACK after graph already finished (e.g. client reconnected and
+            # re-sent ACK after history delivery).  Return the terminal status so
+            # the client can recover without treating this as an error.
             logger.warning(
                 "[ack] late_ack_ignored thread_id=%s status=%s",
                 thread_id,

@@ -157,7 +157,7 @@ async def emit_event_route(
 ) -> EmitEventResponse:
     """Publish a lifecycle event to the thread's Centrifugo channel.
 
-    Does **not** modify any database rows.  Use this to replay events to
+    Does **not** modify any database rows.  Use this to re-emit events to
     reconnecting clients or to inject synthetic events for debugging/testing.
 
     ``event`` must be a lifecycle event type — high-frequency stream events
@@ -185,7 +185,7 @@ async def resync_thread_route(
     Reads the latest status of the thread and all its tasks from DB and
     publishes one ``query_status`` event plus one lifecycle event per task.
     Intended for clients that reconnect mid-session and need to rebuild
-    their local state without replaying the full Centrifugo channel history.
+    their local state without re-fetching the full Centrifugo channel history.
 
     Args:
         thread_id: LangGraph thread UUID.

@@ -2,7 +2,8 @@
 
 Sub-packages
 ------------
-analysis_node — LLM ingest/digest of merged_analysis via Celery throughput stream.
+analysis_node — LLM ingest/digest of merged_analysis via opt-in streaming.
+report_node   — Trading signal report generation via opt-in streaming.
 
 Sub-modules
 -----------
@@ -20,6 +21,7 @@ from backend.graph.agents._shared.nodes.news_node import mock_news_node
 from backend.graph.agents._shared.nodes.query_node import query_node
 from backend.graph.agents._shared.nodes.stats_node import mock_stats_node
 from backend.graph.agents.mock_single.nodes.analysis_node import mock_analysis_node
+from backend.graph.agents.mock_single.nodes.report_node import mock_report_node
 
 __all__ = [
     "query_node",
@@ -27,4 +29,5 @@ __all__ = [
     "mock_stats_node",
     "merge_node",
     "mock_analysis_node",
+    "mock_report_node",
 ]

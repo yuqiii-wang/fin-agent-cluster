@@ -224,7 +224,7 @@ export function useSessionManager(
       if (tid !== undefined) { clearTimeout(tid); timeouts.current.delete(thread_id); }
 
       // Drain any pending token patch so the final token count is accurate.
-      // This handles late-connecting sessions where history-replay token batches
+      // This handles late-connecting sessions where history token batches
       // arrive after the group-stable tick has already set status="completed"
       // (which causes the normal 100ms tick flush to skip this session).
       const pendingPatch = pendingTokenPatchesRef.current.get(thread_id);
@@ -237,7 +237,7 @@ export function useSessionManager(
         prev.map((s) => {
           if (s.thread_id !== thread_id) return s;
           // When stream_id is known, skip sessions from a different stream run
-          // to guard against stale events replayed on the same thread channel.
+          // to guard against stale events re-delivered on the same thread channel.
           if (stream_id && s.stream_id && s.stream_id !== stream_id) return s;
           // If already closed (optimistic cancel or tick auto-complete), preserve existing status.
           if (s.closed) return s;
@@ -252,7 +252,7 @@ export function useSessionManager(
 
           // Definitive timeout→completed upgrade for concurrency mode.
           // Previous approach used isSessionStable() (tps_history-based), which fails for
-          // late-connecting sessions that receive all tokens via history-replay in a burst
+          // late-connecting sessions that receive all tokens via history delivery in a burst
           // (the 1s TPS tick skips terminal-status sessions so tps_history stays empty).
           // New: upgrade if ANY tokens were received — in concurrency mode, timeout IS the
           // intended stop mechanism; a session that received tokens ran correctly.
@@ -373,11 +373,11 @@ export function useSessionManager(
             const thread_id = res.thread_id;
             submittedIdsRef.current.push(thread_id);
             // Set status='received' immediately from the HTTP response — don't wait for
-            // Centrifugo history replay of query_status to avoid stale 'connecting' label.
+            // Centrifugo history delivery of query_status to avoid stale 'connecting' label.
             setSessions((prev) => prev.map((s) => s.thread_id === tempId ? { ...s, thread_id, status: "received" as const } : s));
             console.info("[perf] stream spawned thread_id=%s label=%s", thread_id, label);
             // ACK immediately — the HTTP response already confirms status='received' with
-            // the backend-generated UUID. Don't wait for Centrifugo history replay of
+            // the backend-generated UUID. Don't wait for Centrifugo history delivery of
             // query_received (subject to 600s TTL race).
             ackQuery(thread_id, userToken).catch((err) =>
               console.warn("[perf] immediate ack failed thread_id=%s", thread_id, err)

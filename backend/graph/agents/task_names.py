@@ -27,6 +27,12 @@ Task name used by both mock_perf (concurrency mode) and mock_single
 (analysis_node) — emits ``token_batch`` events at a fixed TPS rate.
 """
 
+MOCK_ANALYSIS_PREVIEW: str = "MOCK_ANALYSIS_PREVIEW"
+"""Task name for the mock_single analysis node opt-in streaming task."""
+
+MOCK_REPORT_PREVIEW: str = "MOCK_REPORT_PREVIEW"
+"""Task name for the mock_single report node opt-in streaming task."""
+
 # ---------------------------------------------------------------------------
 # fin_analyst names
 # ---------------------------------------------------------------------------
@@ -51,6 +57,8 @@ STATIC_KEYS: frozenset[str] = frozenset({
     STREAM_RUNNER_THROUGHPUT,
     STREAM_RUNNER_CONCURRENCY,
     MOCK_RUNNER_CONCURRENCY,
+    MOCK_ANALYSIS_PREVIEW,
+    MOCK_REPORT_PREVIEW,
     FIN_ANALYST_ANALYSIS,
     ANALYZE_USER_QUERY,
     ADD_STATIC_QUERY_METRICS,

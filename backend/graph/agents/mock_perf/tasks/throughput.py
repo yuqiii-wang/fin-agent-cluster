@@ -43,12 +43,14 @@ async def run_throughput_task(
     total_tokens: int,
     timeout_secs: int,
     node_execution_id: int,
-    t0_node: float,
     node_id: str,
     task_id: str,
     stream_id: str,
     task_name_override: str | None = None,
+    t0_node: float | None = None,
 ) -> MockTaskResult:
+    if t0_node is None:
+        t0_node = time.monotonic()
     """Wrap the throughput stream lifecycle: ingest -> phase transition -> complete.
 
     Dispatches a Celery ``run_stream_ingest_throughput`` task, emits

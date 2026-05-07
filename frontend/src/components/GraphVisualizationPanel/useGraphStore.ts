@@ -8,7 +8,7 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
       return EMPTY_GRAPH_STATE;
 
     case "node_input": {
-      // Avoid exact duplicates (history replay by same node_execution_id).
+      // Avoid exact duplicates (history re-delivery by same node_execution_id).
       if (state.nodes.some((n) => n.node_execution_id === event.node_execution_id)) return state;
       const newNode: GraphNode = {
         node_execution_id: event.node_execution_id,
@@ -18,8 +18,7 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
         started_at_ms: event.ts,
         input: event.input,
       };
-      // On resume/replay, a node that ran before (in any status, including "running"
-      // from an interrupted replay) re-runs with a new node_execution_id.
+      // On resume, a node that ran before re-runs with a new node_execution_id.
       // Replace the stale entry regardless of status so the DAG stays clean
       // and purge its associated tasks (they will be re-emitted).
       const staleIdx = state.nodes.findIndex(
@@ -28,7 +27,6 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
       if (staleIdx >= 0) {
         const updatedNodes = [...state.nodes];
         updatedNodes[staleIdx] = newNode;
-        // Remove tasks belonging to the stale node so replay starts clean.
         const staleName = state.nodes[staleIdx].node_name;
         const updatedTasks = state.tasks.filter((t) => t.node_name !== staleName);
         return { ...state, nodes: updatedNodes, tasks: updatedTasks };
@@ -105,7 +103,7 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
         };
         return { ...state, tasks: updated };
       }
-      // Task terminal before "started" (history replay) — insert completed directly
+      // Task terminal before "started" (late history delivery) — insert completed directly
       return {
         ...state,
         tasks: [
@@ -138,17 +136,6 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
         return { ...state, nodes: pausedNodes, tasks: nonRunningTasks, isDone: true, doneStatus: event.status };
       }
       return { ...state, isDone: true, doneStatus: event.status };
-
-    case "nodes_set_pending": {
-      // Mark specific nodes (by execution ID) as pending (grey) before replay/fork
-      // re-executes them.  Called optimistically before the SSE stream opens so the
-      // DAG shows grey placeholders while awaiting the first node_input ack.
-      const pendingIds = new Set(event.node_execution_ids);
-      const updatedNodes = state.nodes.map((n) =>
-        pendingIds.has(n.node_execution_id) ? { ...n, status: "pending" as const } : n,
-      );
-      return { ...state, nodes: updatedNodes };
-    }
 
     default:
       return state;

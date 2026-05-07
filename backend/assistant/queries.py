@@ -8,7 +8,6 @@ Endpoints:
     POST /users/query/{thread_id}/cancel                  cancel a running query
     POST /users/query/{thread_id}/pause                   pause at next checkpoint
     POST /users/query/{thread_id}/resume                  resume paused/cancelled query
-    POST /users/query/{thread_id}/replay                  time-travel replay from node
     POST /users/query/{thread_id}/nodes/{node_id}/cancel  cancel a node + its tasks
     POST /users/query/{thread_id}/tasks/{task_id}/cancel  cancel a specific task
     POST /users/query/{thread_id}/perf-stable             signal stable TPS
@@ -32,9 +31,8 @@ from backend.users.queries import (
     get_query_tasks,
     pause_query,
     resume_query,
-    replay_from_node,
 )
-from backend.users.schemas import NodeExecutionInfo, QueryResponse, SessionStatus, ReplayFromNodeRequest
+from backend.users.schemas import NodeExecutionInfo, QueryResponse, SessionStatus
 from backend.db.redis.session.perf_stable_signal import set_perf_stable
 from backend.users.auth import ensure_guest
 
@@ -76,12 +74,6 @@ async def pause_query_route(thread_id: str) -> QueryResponse:
 async def resume_query_route(thread_id: str) -> QueryResponse:
     """Resume a cancelled, failed, or paused query from its last LangGraph checkpoint."""
     return await resume_query(thread_id)
-
-
-@router.post("/query/{thread_id}/replay", response_model=QueryResponse)
-async def replay_query_route(thread_id: str, body: ReplayFromNodeRequest) -> QueryResponse:
-    """Replay a completed/paused/cancelled query from a specific node's last checkpoint."""
-    return await replay_from_node(thread_id, body.node_name)
 
 
 @router.post("/query/{thread_id}/perf-stable", status_code=204)

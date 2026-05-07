@@ -290,7 +290,7 @@ async def emit_thread_event(
 ) -> EmitEventResponse:
     """Publish a lifecycle event to the thread's Centrifugo channel.
 
-    Does **not** write to the database.  Use this to replay events to
+    Does **not** write to the database.  Use this to re-emit events to
     reconnecting clients or to inject synthetic events for debugging.
 
     Args:
@@ -334,7 +334,7 @@ async def resync_thread(thread_id: str) -> ResyncResponse:
     Reads the current DB state and publishes one ``query_status`` event for
     the thread and one ``started`` / ``completed`` / ``failed`` / ``cancelled``
     event per task.  Intended for clients that reconnect mid-session and need
-    to catch up without replaying the full Centrifugo history.
+    to catch up without re-fetching the full Centrifugo history.
 
     Args:
         thread_id: LangGraph thread UUID.

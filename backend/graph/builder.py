@@ -4,7 +4,7 @@ Topology::
 
     Outer graph:
         START → (conditional route) → mock_perf_subgraph | mock_single_subgraph | fin_analyst_subgraph → …
-        mock_single_subgraph → mock_analysis → END   (mock_analysis is an outer-graph node)
+        mock_single_subgraph → mock_analysis → mock_report → END   (both are outer-graph nodes)
         mock_perf_subgraph → END
         fin_analyst_subgraph → END
 
@@ -14,14 +14,14 @@ Topology::
 
     mock_single_subgraph (compiled by build_mock_single_subgraph()):
         prep path:        START → query_node → [mock_news, mock_stats] → merge_node → END
-        NOTE: mock_analysis is NOT in this subgraph — see below.
+        NOTE: mock_analysis and mock_report are NOT in this subgraph — see below.
 
     mock_analysis (direct outer-graph node):
-        Wired as: mock_single_subgraph → mock_analysis → END
-        No ``interrupt()`` is used here — pause is handled by direct
-        ``asyncio.Task.cancel()`` in ``pause_query``.  Using ``interrupt()``
-        in an outer-graph node with ``@task`` caused ``Command(resume=True)``
-        to load an earlier checkpoint and loop back through the subgraph.
+        Wired as: mock_single_subgraph → mock_analysis → mock_report
+
+    mock_report (direct outer-graph node):
+        Wired as: mock_analysis → mock_report → END
+        No ``interrupt()`` is used — pause handled by direct asyncio.Task.cancel().
 
     fin_analyst_subgraph:
         START → fin_analyst_runner → END
@@ -30,7 +30,7 @@ Routing is query-text driven:
 
     ``"DO STREAMING PERFORMANCE TEST NOW"``  → mock_perf_subgraph (perf_runner path)
     ``"DO MOCK ANALYSIS NOW"``               → mock_perf_subgraph (analysis path)
-    ``"DO E2E TEST NOW"``                    → mock_single_subgraph → mock_analysis
+    ``"DO E2E TEST NOW"``                    → mock_single_subgraph → mock_analysis → mock_report
     all other queries                        → fin_analyst_subgraph
 """
 
@@ -83,6 +83,7 @@ def build_graph() -> StateGraph:
     from backend.graph.agents.mock_perf import build_mock_perf_subgraph  # noqa: PLC0415
     from backend.graph.agents.mock_single import build_mock_single_subgraph  # noqa: PLC0415
     from backend.graph.agents.mock_single.nodes.analysis_node import mock_analysis_node  # noqa: PLC0415
+    from backend.graph.agents.mock_single.nodes.report_node import mock_report_node  # noqa: PLC0415
     from backend.graph.agents.fin_analyst import fin_analyst_runner  # noqa: PLC0415
 
     # ── Mock-perf inner sub-graph ────────────────────────────────────────
@@ -103,8 +104,10 @@ def build_graph() -> StateGraph:
     outer.add_node("mock_perf_subgraph", compiled_mock_perf)
     outer.add_node("mock_single_subgraph", compiled_mock_single)
     outer.add_node("fin_analyst_subgraph", compiled_analyst)
-    # mock_analysis is a direct outer-graph node (NOT inside mock_single_subgraph).
+    # mock_analysis and mock_report are direct outer-graph nodes (NOT inside
+    # mock_single_subgraph) to avoid the nested-subgraph resume bug.
     outer.add_node("mock_analysis", mock_analysis_node)
+    outer.add_node("mock_report", mock_report_node)
     outer.add_conditional_edges(START, _route_query, {
         "mock_perf_subgraph": "mock_perf_subgraph",
         "mock_single_subgraph": "mock_single_subgraph",
@@ -112,7 +115,8 @@ def build_graph() -> StateGraph:
     })
     outer.add_edge("mock_perf_subgraph", END)
     outer.add_edge("mock_single_subgraph", "mock_analysis")
-    outer.add_edge("mock_analysis", END)
+    outer.add_edge("mock_analysis", "mock_report")
+    outer.add_edge("mock_report", END)
     outer.add_edge("fin_analyst_subgraph", END)
 
     return outer

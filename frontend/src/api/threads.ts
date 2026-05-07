@@ -142,7 +142,7 @@ export async function emitThreadEvent(
  * Re-emit current thread and task states as Centrifugo events.
  *
  * Intended for clients that reconnect mid-session and need to rebuild
- * their local state without replaying the full channel history.
+ * their local state without re-fetching the full channel history.
  *
  * @param threadId  LangGraph thread UUID.
  * @param token     X-User-Token for the authenticated user.

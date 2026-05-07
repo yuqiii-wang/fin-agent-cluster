@@ -224,6 +224,18 @@ routes:
       policy: local
       limit_by: ip
       hide_client_headers: false
+- name: route-system-health
+  service: fastapi-runner
+  paths:
+  - /api/v1/system
+  - /api/v1/system/health
+  strip_path: false
+  methods:
+  - GET
+  - OPTIONS
+  protocols:
+  - http
+  - https
 - name: route-tasks
   service: fastapi-assistant
   paths:
@@ -274,17 +286,6 @@ routes:
   service: fastapi-runner
   paths:
   - ~/api/v1/users/query/[^/]+/resume$
-  methods:
-  - POST
-  - OPTIONS
-  strip_path: false
-  protocols:
-  - http
-  - https
-- name: route-query-replay
-  service: fastapi-runner
-  paths:
-  - ~/api/v1/users/query/[^/]+/replay$
   methods:
   - POST
   - OPTIONS

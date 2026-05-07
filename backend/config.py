@@ -52,9 +52,13 @@ class Settings(BaseSettings):
     # fmp      — Financial Modeling Prep REST API (requires FMP_API_KEY)
     STATS_PROVIDER: str = "mock"
     FASTAPI_PORT: int = 8432
+    # Number of runner FastAPI instances (must match run.py --runner-instances and Kong targets).
+    RUNNER_INSTANCE_COUNT: int = 4
     # Base port for assistant FastAPI instances (non-LangGraph).
     # Runner instances start at FASTAPI_PORT; assistants at FASTAPI_ASSISTANT_PORT.
     FASTAPI_ASSISTANT_PORT: int = 8436
+    # Number of assistant FastAPI instances (must match run.py --assistant-instances and Kong targets).
+    ASSISTANT_INSTANCE_COUNT: int = 2
     # Outbound HTTP proxy for all external calls (LLM, market-data, news, embeddings).
     # Example: HTTP_PROXY=http://127.0.0.1:7890
     # Leave unset to connect directly.

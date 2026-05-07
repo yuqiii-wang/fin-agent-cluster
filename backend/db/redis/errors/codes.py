@@ -54,7 +54,7 @@ REDIS_ROUTER_NO_URLS = "REDIS_ROUTER_NO_URLS"
 REDIS_ERRORS: dict[str, str] = {
     REDIS_PUBLISH_FAILED: (
         "Publishing a lifecycle event to Redis Pub/Sub failed. "
-        "The SSE client may not receive this event; it will be replayed on reconnect."
+        "The SSE client may not receive this event; it will be re-delivered on reconnect."
     ),
     REDIS_STREAM_WRITE_FAILED: (
         "Writing a token or batch event to a Redis stream failed. "

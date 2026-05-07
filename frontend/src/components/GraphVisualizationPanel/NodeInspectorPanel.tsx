@@ -13,20 +13,18 @@ import {
   CloseOutlined,
   MinusCircleFilled,
   PlayCircleOutlined,
-  RetweetOutlined,
-  BranchesOutlined,
   StopOutlined,
   SyncOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
+  App,
   Button,
   Collapse,
   Empty,
   Space,
   Tag,
   Typography,
-  message,
 } from "antd";
 import { useState } from "react";
 import { cancelNode, cancelTaskByUuid, passTask, cancelTask, fetchTaskMeta, resumeQuery, pauseQuery } from "../../api";
@@ -121,6 +119,7 @@ interface TaskDetailProps {
 }
 
 function TaskDetail({ task, threadId, taskMeta, nodeInput, tokenStream, tokenCount }: TaskDetailProps) {
+  const { message } = App.useApp();
   const [cancellingStream, setCancellingStream] = useState(false);
   const [cancellingLlm, setCancellingLlm] = useState(false);
   const [passing, setPassing] = useState(false);
@@ -277,11 +276,7 @@ interface NodeInspectorPanelProps {
   onClose: () => void;
   /** Called when the user clicks Resume — must re-open the SSE stream. */
   onResume?: () => void;
-  /** Called when the user clicks Replay — opens SSE then calls replay API. */
-  onReplay?: (nodeName: string) => void;
-  /** Called when the user clicks Fork — forks to a new independent thread from this node's checkpoint. */
-  onFork?: (nodeName: string) => void;
-  /** True while a control action (pause/resume/replay/fork/cancel) is awaiting backend ack. */
+  /** True while a control action (pause/resume/cancel) is awaiting backend ack. */
   isPendingControl?: boolean;
 }
 
@@ -294,10 +289,9 @@ export function NodeInspectorPanel({
   tokenCounts,
   onClose,
   onResume,
-  onReplay,
-  onFork,
   isPendingControl,
 }: NodeInspectorPanelProps) {
+  const { message } = App.useApp();
   const [cancellingNode, setCancellingNode] = useState(false);
   const [pausingNode, setPausingNode] = useState(false);
   const [resuming, setResuming] = useState(false);
@@ -386,32 +380,6 @@ export function NodeInspectorPanel({
       setResuming(false); // only clear on error; success clears via useEffect
     }
     // Do NOT clear resuming here — the useEffect clears it when node becomes running.
-  }
-
-  async function handleReplay() {
-    if (!node?.node_name) return;
-    try {
-      if (onReplay) {
-        // onReplay opens the SSE stream then calls replayFromNode once subscribed.
-        // The in-flight guard in useSingleTestSession prevents duplicate calls.
-        onReplay(node.node_name);
-      }
-      message.success(`Replay started from node "${node.node_name}"`);
-    } catch (e) {
-      message.error(`Replay failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
-  async function handleFork() {
-    if (!node?.node_name) return;
-    try {
-      if (onFork) {
-        onFork(node.node_name);
-      }
-      message.success(`Fork started from node "${node.node_name}"`);
-    } catch (e) {
-      message.error(`Fork failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
   }
 
   // Build Collapse items from tasks
@@ -544,30 +512,6 @@ export function NodeInspectorPanel({
               onClick={handleResume}
             >
               Resume
-            </Button>
-          )}
-          {!cancellingNode && node.status === "completed" && onReplay && (
-            <Button
-              size="small"
-              icon={<RetweetOutlined />}
-              onClick={handleReplay}
-              loading={isPendingControl}
-              disabled={isPendingControl}
-              data-testid="replay-btn"
-            >
-              Replay
-            </Button>
-          )}
-          {!cancellingNode && node.status === "completed" && onFork && (
-            <Button
-              size="small"
-              icon={<BranchesOutlined />}
-              onClick={handleFork}
-              loading={isPendingControl}
-              disabled={isPendingControl}
-              data-testid="fork-btn"
-            >
-              Fork
             </Button>
           )}
           <Button

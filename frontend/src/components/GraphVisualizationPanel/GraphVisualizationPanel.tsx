@@ -330,15 +330,11 @@ interface GraphVisualizationPanelProps {
   tokenCounts?: Record<string, number>;
   /** Called when the user clicks Resume — re-opens the SSE stream. */
   onResume?: () => void;
-  /** Called when the user clicks Replay(nodeName) — re-opens SSE then starts replay. */
-  onReplay?: (nodeName: string) => void;
-  /** Called when the user clicks Fork(nodeName) — creates a new independent thread from this node's checkpoint. */
-  onFork?: (nodeName: string) => void;
-  /** True while a control action (pause/resume/replay/fork/cancel) is awaiting backend ack. */
+  /** True while a control action (pause/resume/cancel) is awaiting backend ack. */
   isPendingControl?: boolean;
 }
 
-export function GraphVisualizationPanel({ graphState, threadId, tokenStreams, tokenCounts, onResume, onReplay, onFork, isPendingControl }: GraphVisualizationPanelProps) {
+export function GraphVisualizationPanel({ graphState, threadId, tokenStreams, tokenCounts, onResume, isPendingControl }: GraphVisualizationPanelProps) {
   const { token } = theme.useToken();
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedCx, setSelectedCx] = useState<number | undefined>(undefined);
@@ -484,8 +480,6 @@ export function GraphVisualizationPanel({ graphState, threadId, tokenStreams, to
           tokenCounts={tokenCounts}
           onClose={() => { setSelectedNode(null); setSelectedCx(undefined); }}
           onResume={onResume}
-          onReplay={onReplay}
-          onFork={onFork}
           isPendingControl={isPendingControl}
         />
       )}

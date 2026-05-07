@@ -231,7 +231,7 @@ results = await client.xread({key: last_id}, block=2_000, count=100)
 - `block=2_000` ms: the pump wakes at most every 2 s when idle, allowing clean
   cancellation without the `block=0` (forever) risk.
 - `count=100`: read up to 100 entries per call — batching on the Redis side.
-- Start from `"$"` (newest) not `"0"` (beginning) unless you need replay.
+- Start from `"$"` (newest) not `"0"` (beginning) unless you need to read from the beginning.
 
 ### Stream trimming
 
@@ -252,14 +252,14 @@ await client.delete(stream_key(thread_id))
 
 | | Redis Pub/Sub | Redis Streams |
 |---|---|---|
-| Delivery | Fire-and-forget; missed if no subscriber | Persistent; consumers can replay from any offset |
+| Delivery | Fire-and-forget; missed if no subscriber | Persistent; consumers can read from any offset |
 | Ordering | No | Yes (entry IDs) |
 | Consumer groups | No | Yes |
 | Memory | None (ephemeral) | Grows until trimmed |
-| Best for | Lifecycle events (few/session, ephemeral OK) | Token events (many/session, replay needed) |
+| Best for | Lifecycle events (few/session, ephemeral OK) | Token events (many/session, persistence needed) |
 
 **Use Pub/Sub** when: ephemeral delivery is acceptable and the DB is the source of truth (lifecycle events).  
-**Use Streams** when: you need persistence, replay, or consumer groups (token events, batch workers).
+**Use Streams** when: you need persistence, offset-based reading, or consumer groups (token events, batch workers).
 
 ---
 

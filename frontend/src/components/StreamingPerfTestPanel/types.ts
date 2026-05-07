@@ -131,7 +131,7 @@ export interface PendingTokenPatch {
 }
 
 export const DEFAULT_PERF_CONFIG: PerfTestConfig = {
-  testMode: "throughput",
+  testMode: "single",
   tokenCount: 100_000,
   tokenPerSec: 100,
   timeoutSecs: 60,

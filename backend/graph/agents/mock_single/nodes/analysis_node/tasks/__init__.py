@@ -1,10 +1,11 @@
 """analysis_node.tasks — task functions for the mock_single analysis node.
 
-The concurrency ingest task is the shared Celery-based implementation from
-``mock_perf``.  Importing it here keeps ``node.py`` free of cross-agent
-import paths.
+Provides :func:`run_mock_analysis_task`, an opt-in streaming task that
+generates mock tokens silently by default.  Tokens are pushed to Centrifugo
+only when the user enables streaming via the API endpoint.
 """
 
-from backend.graph.agents.mock_perf.tasks.concurrency import run_concurrency_task
+from backend.graph.agents.mock_single.nodes.analysis_node.tasks.analysis import run_mock_analysis_task
+from backend.graph.agents.mock_single.nodes.analysis_node.tasks.result import MockAnalysisResult
 
-__all__ = ["run_concurrency_task"]
+__all__ = ["run_mock_analysis_task", "MockAnalysisResult"]

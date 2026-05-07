@@ -17,7 +17,6 @@
 
 import { useCallback, useRef, useState } from "react";
 import { ackQuery, resumeQuery, submitPerfQuery } from "../../api";
-import { replayFromNode, forkFromNode } from "../../api";
 import { openStream } from "../../api/stream";
 import { sendDoneAck } from "../streaming/core";
 import { useGraphStore } from "../../components/GraphVisualizationPanel/useGraphStore";
@@ -25,36 +24,6 @@ import type { GraphEvent, GraphNode } from "../../components/GraphVisualizationP
 import { useTokenBatchFlush } from "../streaming/core";
 
 const SINGLE_TRIGGER = "DO E2E TEST NOW";
-
-/**
- * Compute node_execution_ids of all nodes that will be re-run when replaying
- * from `startName`.  The backend's checkpoint for `startName` is the snapshot
- * BEFORE `startName` (and all its siblings at the same fan-out level) ran.
- * So the pending set is everything EXCEPT the guaranteed-non-re-run ancestors.
- *
- * Algorithm: BFS *upward* from `startName` to find all ancestors (including
- * the start node itself), then mark every non-ancestor as pending.
- */
-function getPendingExecIds(nodes: GraphNode[], startName: string): number[] {
-  const startNode = nodes.find((n) => n.node_name === startName);
-  if (!startNode) return [];
-
-  // BFS upward to collect ancestors (nodes whose checkpoints are NOT reset).
-  const ancestors = new Set<number>();
-  const upQueue = [...startNode.parent_node_execution_ids];
-  while (upQueue.length > 0) {
-    const pid = upQueue.shift()!;
-    if (ancestors.has(pid)) continue;
-    ancestors.add(pid);
-    const parentNode = nodes.find((n) => n.node_execution_id === pid);
-    if (parentNode) upQueue.push(...parentNode.parent_node_execution_ids);
-  }
-
-  // Everything that is NOT an ancestor will be re-run → mark pending.
-  return nodes
-    .filter((n) => !ancestors.has(n.node_execution_id))
-    .map((n) => n.node_execution_id);
-}
 
 export type SingleTestStatus =
   | "idle"          // no request sent yet
@@ -79,13 +48,8 @@ export interface UseSingleTestSessionReturn {
   tokenCounts: Record<string, number>;
   sendRequest: () => Promise<void>;
   resumeRequest: () => void;
-  /** Replay graph from a specific node's last checkpoint (time-travel). */
-  replayRequest: (nodeName: string) => void;
-  /** Fork graph from a specific node's checkpoint into a new independent thread. */
-  forkRequest: (nodeName: string) => void;
   reset: () => void;
   isActive: boolean;
-  /** True while a control action (replay/fork) is awaiting the first backend ack. */
   isPendingControl: boolean;
 }
 
@@ -107,25 +71,9 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
   const { graphState, dispatchEvent, resetGraph } = useGraphStore();
   const cleanupRef = useRef<(() => void) | null>(null);
   const runIdRef = useRef(crypto.randomUUID());
-  // Ref-based guard: prevents a second replayRequest from firing while a replay
-  // is inflight (between click and the first SSE event that updates node status).
-  // Using a ref (not state) so the guard is synchronous and not affected by
-  // React's async state-update batching.
-  const replayInFlightRef = useRef(false);
-  // Same pattern for fork.
-  const forkInFlightRef = useRef(false);
-  // State-based pending flag for UI feedback (spinner / disable buttons).
-  const [replayPending, setReplayPending] = useState(false);
-  const [forkPending, setForkPending] = useState(false);
-  // Ref mirror of pending state for use inside callbacks without stale closures.
-  const replayPendingRef = useRef(false);
-  const forkPendingRef = useRef(false);
-  // Non-stale reference to current graph nodes (updated each render).
-  const graphNodesRef = useRef<GraphNode[]>([]);
-  graphNodesRef.current = graphState.nodes;
 
   const isActive = session?.status === "submitting" || session?.status === "streaming";
-  const isPendingControl = replayPending || forkPending;
+  const isPendingControl = false;
 
   /** Dispatch a GraphEvent, typed. */
   const dispatch = useCallback((ev: GraphEvent) => dispatchEvent(ev), [dispatchEvent]);
@@ -137,7 +85,7 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
    *
    * @param thread_id  LangGraph thread UUID.
    * @param onReady    Optional callback fired once the subscription is active.
-   *                   When provided, history replay is skipped (`recoverHistory:
+   *                   When provided, channel history is skipped (`recoverHistory:
    *                   false`) so stale `done` events from a previous run are not
    *                   re-processed.  The caller (resumeRequest) uses this to
    *                   fire resumeQuery only after the channel is subscribed,
@@ -205,17 +153,6 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
             input: (d["input"] as Record<string, unknown>) ?? {},
             ts: typeof d["started_at_ms"] === "number" ? d["started_at_ms"] : Date.now(),
           });
-          // Clear pending control on first node_input ack (replay/fork started)
-          if (replayPendingRef.current) {
-            console.log(`[sse:replay_ack] first node_input after replay: node=${nodeName} thread=${thread_id}`);
-            replayPendingRef.current = false;
-            setReplayPending(false);
-          }
-          if (forkPendingRef.current) {
-            console.log(`[sse:fork_ack] first node_input after fork: node=${nodeName} thread=${thread_id}`);
-            forkPendingRef.current = false;
-            setForkPending(false);
-          }
         },
         onNodeOutput: (data) => {
           const d = data as Record<string, unknown>;
@@ -313,12 +250,6 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
           console.log(`[sse:done] status=${doneStatus} thread=${thread_id}`);
           dispatch({ type: "done", status: doneStatus, ts: Date.now() });
           setSession((prev) => prev ? { ...prev, status: "done", doneStatus } : prev);
-          replayInFlightRef.current = false;
-          forkInFlightRef.current = false;
-          replayPendingRef.current = false;
-          forkPendingRef.current = false;
-          setReplayPending(false);
-          setForkPending(false);
           // Send done-ack so the assistant can clean up session state.
           sendDoneAck(thread_id, userToken, doneStatus).catch(() => {});
           if (flushIntervalRef.current != null) {
@@ -329,8 +260,6 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
           cleanupRef.current = null;
         },
         onClose: () => {
-          replayInFlightRef.current = false;
-          forkInFlightRef.current = false;
           setSession((prev) => {
             if (!prev || prev.status === "done") return prev;
             return { ...prev, status: "done", doneStatus: "disconnected" };
@@ -378,12 +307,6 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
     }
   }, [isActive, userToken, resetGraph, openSessionStream]);
 
-  /**
-   * Resume the current cancelled/failed thread without resetting the graph.
-   * Opens a fresh Centrifugo subscription (no history replay to avoid
-   * re-processing the previous run's `done` event), then fires `resumeQuery`
-   * only once the subscription is active so no events are missed.
-   */
   const resumeRequest = useCallback(() => {
     const thread_id = session?.thread_id;
     if (!thread_id || isActive) return;
@@ -393,72 +316,6 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
       );
     });
   }, [session, isActive, openSessionStream]);
-
-  /**
-   * Replay from a specific node's last checkpoint (LangGraph time-travel).
-   * Opens a fresh Centrifugo subscription first, then fires `replayFromNode`
-   * only once subscribed so no lifecycle events are missed.
-   *
-   * A ref-based in-flight guard prevents rapid double-clicks from spawning a
-   * second replay before the first one's SSE events update the node status.
-   * Pending state is set immediately so the UI disables action buttons and
-   * marks the replayed node + descendants as grey (pending) in the DAG.
-   */
-  const replayRequest = useCallback((nodeName: string) => {
-    const thread_id = session?.thread_id;
-    if (!thread_id || isActive) return;
-    // Synchronous ref guard: React state batching can make `isActive` stale for
-    // one render cycle after the first click.  The ref is always up-to-date.
-    if (replayInFlightRef.current) return;
-    replayInFlightRef.current = true;
-    replayPendingRef.current = true;
-    setReplayPending(true);
-    // Optimistically mark the replayed node and all non-ancestor nodes as pending
-    // (grey) so the DAG shows them as "awaiting re-execution" before SSE events
-    // arrive.  Includes siblings (e.g. mock_stats when replaying from mock_news)
-    // since the backend resets the checkpoint before both ran.
-    const pendingIds = getPendingExecIds(graphNodesRef.current, nodeName);
-    if (pendingIds.length > 0) {
-      dispatch({ type: "nodes_set_pending", node_execution_ids: pendingIds });
-    }
-    openSessionStream(thread_id, () => {
-      replayFromNode(thread_id, nodeName)
-        .catch((err) => {
-          console.error("[single] replay failed:", err);
-          replayInFlightRef.current = false;
-          replayPendingRef.current = false;
-          setReplayPending(false);
-        });
-    });
-  }, [session, isActive, openSessionStream, dispatch]);
-
-  /**
-   * Fork from a specific node's checkpoint into a completely new thread.
-   * The original thread is untouched.  The session switches to the new thread.
-   * Pending state is set immediately so the UI disables action buttons.
-   */
-  const forkRequest = useCallback((nodeName: string) => {
-    const thread_id = session?.thread_id;
-    if (!thread_id || isActive) return;
-    if (forkInFlightRef.current) return;
-    forkInFlightRef.current = true;
-    forkPendingRef.current = true;
-    setForkPending(true);
-    // Fork creates new thread_id — reset graph for fresh visualization.
-    resetGraph();
-    forkFromNode(thread_id, nodeName)
-      .then((res) => {
-        const new_thread_id = res.new_thread_id;
-        setSession({ thread_id: new_thread_id, status: "streaming" });
-        openSessionStream(new_thread_id);
-      })
-      .catch((err) => {
-        console.error("[single] fork failed:", err);
-        forkInFlightRef.current = false;
-        forkPendingRef.current = false;
-        setForkPending(false);
-      });
-  }, [session, isActive, resetGraph, openSessionStream]);
 
   const reset = useCallback(() => {
     cleanupRef.current?.();
@@ -474,11 +331,7 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
     setTokenCounts({});
     resetGraph();
     setSession(null);
-    replayPendingRef.current = false;
-    forkPendingRef.current = false;
-    setReplayPending(false);
-    setForkPending(false);
   }, [resetGraph]);
 
-  return { session, graphState, tokenStreams, tokenCounts, sendRequest, resumeRequest, replayRequest, forkRequest, reset, isActive, isPendingControl };
+  return { session, graphState, tokenStreams, tokenCounts, sendRequest, resumeRequest, reset, isActive, isPendingControl };
 }

@@ -9,7 +9,6 @@
  *   3. No duplicate nodes spawned after resume (node_id stays stable).
  *   4. Tasks inside a cancelled node should show cancelled, not running.
  *   5. Paused node shows purple color and ⏸ icon; running tasks reset to not-run.
- *   6. Replay button appears on completed nodes and re-runs from that node.
  */
 
 import { test, expect, type Page, type Locator } from "@playwright/test";
@@ -18,9 +17,9 @@ import { test, expect, type Page, type Locator } from "@playwright/test";
 
 /**
  * Exact ordered list of node names that the mock_single pipeline emits.
- * Topology: query → [mock_news, mock_stats] → merge → mock_analysis
- * (mock_analysis is wired directly to the outer LangGraph routing graph,
- *  NOT inside the mock_single_subgraph — see backend/graph/builder.py)
+ * Topology: query → [mock_news, mock_stats] → merge → mock_analysis → mock_report
+ * (mock_analysis and mock_report are wired directly to the outer LangGraph routing
+ *  graph, NOT inside the mock_single_subgraph — see backend/graph/builder.py)
  */
 const EXPECTED_NODES: readonly string[] = [
   "query",
@@ -28,9 +27,10 @@ const EXPECTED_NODES: readonly string[] = [
   "mock_stats",
   "merge",
   "mock_analysis",
+  "mock_report",
 ] as const;
 
-const EXPECTED_NODE_COUNT = EXPECTED_NODES.length; // 5
+const EXPECTED_NODE_COUNT = EXPECTED_NODES.length; // 6
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -318,76 +318,6 @@ test.describe("Single Test mode — graph visualization", () => {
     for (const row of taskRows) {
       const status = await row.getAttribute("data-status");
       expect(status, "No task should remain 'running' after pause").not.toBe("running");
-    }
-  });
-
-  // ── Feature: Replay button on completed node re-runs from checkpoint ─────
-
-  test("replay button appears on completed node and triggers re-run", async ({ page }) => {
-    // Capture [sse:*] logs to cross-verify ack reception.
-    const consoleLogs: string[] = [];
-    page.on("console", (msg) => {
-      const text = msg.text();
-      if (text.startsWith("[sse:")) consoleLogs.push(text);
-    });
-
-    await page.getByRole("button", { name: /send request/i }).click();
-
-    // Wait for all 5 nodes to complete — use assertExactNodes for full verification.
-    await assertExactNodes(page, EXPECTED_NODES, 90_000);
-
-    // Verify done ack was received by UI for the initial run.
-    const firstDoneAck = consoleLogs.find((l) => l.includes("[sse:done]") && l.includes("status=completed"));
-    console.log(`[test] initial run done ack: ${firstDoneAck ?? "NOT FOUND"}`);
-    expect(firstDoneAck, "Expected [sse:done] status=completed for initial run").toBeTruthy();
-
-    // Open inspector for mock_news (first to complete; safe replay target).
-    await page.locator('[data-testid="graph-node"][data-node-name="mock_news"]').click();
-
-    // Replay button should be visible for a completed node.
-    const replayBtn = page.locator('[data-testid="replay-btn"]');
-    await expect(replayBtn).toBeVisible({ timeout: 5_000 });
-
-    // Click Replay — backend re-runs mock_news and its descendants.
-    // Immediately after click, mock_news and descendants should be grey (pending).
-    await replayBtn.click();
-
-    // Node switches to "pending" synchronously, so the replay button (only shown for
-    // completed nodes) disappears immediately — confirm it's gone within 3s.
-    await expect(replayBtn).not.toBeVisible({ timeout: 3_000 });
-
-    // mock_news and siblings/descendants should show as pending (grey).
-    // Ancestor-based pending now includes mock_stats too (sibling of mock_news).
-    const pendingNode = page.locator('[data-testid="graph-node"][data-status="pending"]');
-    const pendingCount = await pendingNode.count();
-    // At least mock_news and mock_stats should be pending (+ merge + mock_analysis).
-    expect(pendingCount, "Expected pending nodes after replay click (mock_news, mock_stats, merge, mock_analysis)").toBeGreaterThanOrEqual(2);
-
-    // mock_news should transition back to "running" (new node_input SSE ack).
-    await expect(
-      page.locator('[data-testid="graph-node"][data-node-name="mock_news"][data-status="running"]')
-    ).toBeVisible({ timeout: 20_000 });
-
-    // Verify [sse:replay_ack] log appeared when first node_input arrived.
-    const replayAck = consoleLogs.find((l) => l.includes("[sse:replay_ack]"));
-    console.log(`[test] replay node_input ack: ${replayAck ?? "NOT FOUND"}`);
-    expect(replayAck, "Expected [sse:replay_ack] when first node_input arrived after replay").toBeTruthy();
-
-    // Wait for all nodes to settle and verify exact final state.
-    await assertExactNodes(page, EXPECTED_NODES, 90_000);
-
-    // Verify done ack for the replay run.
-    const allDoneAcks = consoleLogs.filter((l) => l.includes("[sse:done]") && l.includes("status=completed"));
-    console.log(`[test] total done(completed) acks: ${allDoneAcks.length}`);
-    expect(allDoneAcks.length, "Expected done(completed) ack for replay run too").toBeGreaterThanOrEqual(2);
-
-    // All nodes should be completed after replay finishes.
-    const allNodes = await getNodes(page).all();
-    for (const n of allNodes) {
-      const nodeName = await n.getAttribute("data-node-name");
-      const status = await n.getAttribute("data-status");
-      console.log(`[test] final node: name=${nodeName} status=${status}`);
-      expect(status, `Node ${nodeName} should be completed after replay`).toBe("completed");
     }
   });
 });

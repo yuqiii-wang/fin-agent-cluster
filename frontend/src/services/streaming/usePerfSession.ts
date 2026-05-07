@@ -121,7 +121,7 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
               "[perf] ZERO-TOKEN TIMEOUT — session never advanced past status=%s. " +
               "Possible causes: (1) ingesting phase event dropped by Centrifugo, " +
               "(2) session not dispatched in fanout batch, " +
-              "(3) WebSocket delivery gap with no history replay. stream_id=%s",
+              "(3) WebSocket delivery gap with no history re-delivery. stream_id=%s",
               state.sessionStatus, state.stream_id,
             );
           }

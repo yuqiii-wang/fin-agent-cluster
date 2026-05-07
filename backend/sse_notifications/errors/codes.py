@@ -27,7 +27,7 @@ SSE_TOKEN_STREAM_FAILED = "SSE_TOKEN_STREAM_FAILED"
 SSE_NOTIFY_ERRORS: dict[str, str] = {
     SSE_PUBLISH_FAILED: (
         "Publishing a lifecycle event to Redis failed. "
-        "The SSE client may not receive this event; it will be replayed on reconnect."
+        "The SSE client may not receive this event; it will be re-delivered on reconnect."
     ),
     SSE_TOKEN_STREAM_FAILED: (
         "Token stream delivery encountered an error. "

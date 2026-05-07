@@ -101,3 +101,5 @@ celerybeat-schedule.*
 logs
 
 pg-backup
+
+frontend/tests/results

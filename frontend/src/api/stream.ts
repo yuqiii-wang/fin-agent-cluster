@@ -110,7 +110,7 @@ function dispatch(data: unknown, handlers: StreamHandlers): void {
  * @param userToken X-User-Token from localStorage.
  * @param handlers  Event callbacks.
  * @param options   `recoverHistory` (default true) — when false the subscription
- *                  omits the `since` field so Centrifugo does NOT replay channel
+ *                  omits the `since` field so Centrifugo does NOT re-deliver channel
  *                  history. Use `false` for resume streams to avoid re-processing
  *                  stale `done` / `cancelled` events from the previous run.
  * @returns Cleanup function that disconnects the WebSocket.
@@ -195,10 +195,10 @@ export function openStream(
       });
 
       sub.on("error", (ctx) => {
-        const code = ctx.error?.code;
-        const temporary = ctx.error?.temporary ?? true;
+        const code = (ctx.error as any)?.code;
+        const temporary = (ctx.error as any)?.temporary ?? true;
         console.warn("[stream] subscription error channel=%s threadId=%s code=%s temporary=%s msg=%s",
-          channel, threadId, code, temporary, ctx.error?.message);
+          channel, threadId, code, temporary, (ctx.error as any)?.message);
         // Non-temporary (fatal) subscription errors indicate permanent failure — the
         // subscription will NOT be retried by centrifuge-js.  Surface this as onFailed
         // so the session UI can show an error state rather than hanging indefinitely.
@@ -210,7 +210,7 @@ export function openStream(
           );
           handlers.onFailed?.({
             event: "failed",
-            message: `Centrifugo subscription failed (code ${code}): ${ctx.error?.message ?? "unknown"}`,
+            message: `Centrifugo subscription failed (code ${code}): ${(ctx.error as any)?.message ?? "unknown"}`,
             error: "centrifugo_token_error",
           });
         }
