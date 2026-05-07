@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Layout, Tag, Typography } from "antd";
 import { HistoryOutlined } from "@ant-design/icons";
 import { HistoryPanel } from "./components/HistoryPanel";
-import { SingleTestPanel } from "./components/SingleTestPanel";
+import { StreamingPerfTestPanel } from "./components/StreamingPerfTestPanel";
 import { fetchActiveThread, fetchHistory } from "./api";
 import { useGuestAuth } from "./hooks/useGuestAuth";
 import { useStyles } from "./App.styles";
@@ -54,7 +54,7 @@ export default function App() {
 
         <Content style={styles.content}>
           {!authLoading && userToken && (
-            <SingleTestPanel userToken={userToken} />
+            <StreamingPerfTestPanel userToken={userToken} />
           )}
         </Content>
       </Layout>

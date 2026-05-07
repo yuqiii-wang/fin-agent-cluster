@@ -47,7 +47,7 @@ export const MessageList = memo(function MessageList({ messages, onNodeClick }: 
                     threadId={msg.thread_id ?? ""}
                     onNodeClick={onNodeClick}
                     queryRunning={msg.status === "running"}
-                    queryResumable={msg.status === "cancelled" || msg.status === "failed" || msg.status === "paused"}
+                    queryResumable={msg.status === "cancelled" || msg.status === "failed"}
                   />
                 )}
 

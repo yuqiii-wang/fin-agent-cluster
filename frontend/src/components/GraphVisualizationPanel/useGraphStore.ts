@@ -1,11 +1,65 @@
 import { useCallback, useReducer } from "react";
-import type { GraphEvent, GraphNode, GraphState, GraphTask } from "./types";
+import type { GraphEvent, GraphNode, GraphState, GraphTask, GraphTopology } from "./types";
 import { EMPTY_GRAPH_STATE } from "./types";
+
+// ── Synthetic execution IDs for pre-created subgraph container nodes ──────────
+// Negative to avoid collision with real DB PKs (always > 0).
+const SYNTHETIC_ID_BASE = -1000;
+function syntheticId(index: number): number {
+  return SYNTHETIC_ID_BASE - index;
+}
+
+/** Derive the runtime status of a subgraph container from its inner nodes. */
+function deriveContainerStatus(innerNodes: GraphNode[]): GraphNode["status"] {
+  if (innerNodes.length === 0) return "pending";
+  if (innerNodes.some((n) => n.status === "running")) return "running";
+  if (innerNodes.some((n) => n.status === "failed")) return "failed";
+  if (innerNodes.some((n) => n.status === "cancelled")) return "cancelled";
+  if (innerNodes.every((n) => n.status === "completed")) return "completed";
+  // Some completed, none running → still working (more nodes may arrive)
+  return "running";
+}
+
+/**
+ * Rebuild container-node statuses based on current inner nodes.
+ * Returns the nodes array with updated synthetic container entries.
+ */
+function syncContainerStatuses(nodes: GraphNode[]): GraphNode[] {
+  const hasSynthetic = nodes.some((n) => n.is_synthetic);
+  if (!hasSynthetic) return nodes;
+
+  return nodes.map((n) => {
+    if (!n.is_synthetic || n.node_type !== "Subgraph") return n;
+    const innerNodes = nodes.filter((x) => x.subgraph_parent === n.node_name);
+    const derivedStatus = deriveContainerStatus(innerNodes);
+    if (derivedStatus === n.status) return n;
+    return { ...n, status: derivedStatus };
+  });
+}
 
 function applyEvent(state: GraphState, event: GraphEvent): GraphState {
   switch (event.type) {
     case "reset":
       return EMPTY_GRAPH_STATE;
+
+    case "graph_topology_init": {
+      const topology: GraphTopology = {
+        outer_nodes: event.outer_nodes,
+        subgraphs: event.subgraphs,
+      };
+      // Pre-create synthetic pending nodes for outer nodes (including subgraph containers).
+      // These are replaced/updated as real SSE events arrive.
+      const syntheticNodes: GraphNode[] = event.outer_nodes.map((n, i) => ({
+        node_execution_id: syntheticId(i),
+        parent_node_execution_ids: [],  // outer view uses name-based edges, not ID-based
+        node_name: n.node_name,
+        status: "pending" as const,
+        started_at_ms: 0,
+        node_type: n.node_type,
+        is_synthetic: true,
+      }));
+      return { ...EMPTY_GRAPH_STATE, nodes: syntheticNodes, topology };
+    }
 
     case "node_input": {
       // Avoid exact duplicates (history re-delivery by same node_execution_id).
@@ -17,21 +71,28 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
         status: "running",
         started_at_ms: event.ts,
         input: event.input,
+        node_type: event.node_type,
+        subgraph_parent: event.subgraph_parent,
       };
       // On resume, a node that ran before re-runs with a new node_execution_id.
       // Replace the stale entry regardless of status so the DAG stays clean
       // and purge its associated tasks (they will be re-emitted).
+      // For synthetic outer nodes, keep them — they are in a different scope.
       const staleIdx = state.nodes.findIndex(
-        (n) => n.node_name === event.node_name,
+        (n) => !n.is_synthetic && n.node_name === event.node_name,
       );
+      let updatedNodes: GraphNode[];
+      let updatedTasks: GraphTask[];
       if (staleIdx >= 0) {
-        const updatedNodes = [...state.nodes];
+        updatedNodes = [...state.nodes];
         updatedNodes[staleIdx] = newNode;
         const staleName = state.nodes[staleIdx].node_name;
-        const updatedTasks = state.tasks.filter((t) => t.node_name !== staleName);
-        return { ...state, nodes: updatedNodes, tasks: updatedTasks };
+        updatedTasks = state.tasks.filter((t) => t.node_name !== staleName);
+      } else {
+        updatedNodes = [...state.nodes, newNode];
+        updatedTasks = state.tasks;
       }
-      return { ...state, nodes: [...state.nodes, newNode] };
+      return { ...state, nodes: syncContainerStatuses(updatedNodes), tasks: updatedTasks };
     }
 
     case "node_output": {
@@ -47,7 +108,7 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
         elapsed_ms: event.elapsed_ms,
         output: event.output,
       };
-      return { ...state, nodes: updated };
+      return { ...state, nodes: syncContainerStatuses(updated) };
     }
 
     case "node_status": {
@@ -70,7 +131,7 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
               }
             : {}),
         };
-        return { ...state, nodes: updated };
+        return { ...state, nodes: syncContainerStatuses(updated) };
       }
       return state;
     }
@@ -123,18 +184,6 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
     }
 
     case "done":
-      // When the graph is paused, any tasks still in "running" state were not
-      // cleanly terminated (e.g. streaming tasks via Celery).  Remove them so
-      // the UI shows a clean slate — they will re-appear when the run resumes.
-      // Also mark any running nodes as "paused" — the backend emits done(paused)
-      // instead of a node_status("paused") event, so we derive node status here.
-      if (event.status === "paused") {
-        const pausedNodes = state.nodes.map((n) =>
-          n.status === "running" ? { ...n, status: "paused" as const } : n,
-        );
-        const nonRunningTasks = state.tasks.filter((t) => t.status !== "running");
-        return { ...state, nodes: pausedNodes, tasks: nonRunningTasks, isDone: true, doneStatus: event.status };
-      }
       return { ...state, isDone: true, doneStatus: event.status };
 
     default:

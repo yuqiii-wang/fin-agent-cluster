@@ -14,14 +14,11 @@ inside the nested ``mock_single_subgraph``).
 
 Design note — no ``interrupt()``
 ---------------------------------
-An earlier design called ``interrupt()`` here so that a pause signal could be
-honored at this checkpoint boundary. That design was abandoned because:
-
-1. ``interrupt()`` inside an outer-graph StateGraph node causes
-   ``Command(resume=True)`` to load an earlier checkpoint (before
-   ``mock_single_subgraph`` ran), re-triggering the router and looping.
-2. Pause is now handled by direct ``asyncio.Task.cancel()`` in
-   ``pause_query`` (same as cancel), so no checkpoint boundary is needed.
+``interrupt()`` inside an outer-graph StateGraph node causes
+``Command(resume=True)`` to load an earlier checkpoint (before
+``mock_single_subgraph`` ran), re-triggering the router and looping.
+Cancel is handled by direct ``asyncio.Task.cancel()``, so no checkpoint
+boundary is needed.
 
 ``CancelledError`` from a direct cancel propagates naturally through
 ``_run_analysis_node`` → ``mock_analysis_node`` → the asyncio task wrapper.
@@ -96,6 +93,7 @@ class MockAnalysisNode(BaseNode):
                 thread_id=thread_id_arg,
                 task_id=task_id,
                 node_execution_id=node_execution_id_arg,
+                node_id=node_id_arg,
                 t0_node=None,  # BaseNode tracks t0 internally
             )
 

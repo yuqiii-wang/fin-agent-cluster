@@ -66,10 +66,11 @@ def _configure_proxy(proxy: str | None) -> None:
 
 
 def _start_celery(concurrency: int = 2) -> list[subprocess.Popen]:
-    """Start a single ``celery-ingest`` worker.
+    """Start a ``celery-ingest`` worker and a ``celery beat`` scheduler.
 
-    The worker consumes from the ``stream:ingest`` queue.  Beat scheduling is
-    not used — all tasks are dispatched on demand (no beat_schedule is defined).
+    The worker consumes from the ``stream:ingest`` queue.  The beat process
+    schedules periodic tasks (e.g. ``persist_llm_completions`` every 10 s)
+    that flush ``fin:llm:completions`` → ``fin_agents.llm_responses``.
 
     Returns:
         List of :class:`subprocess.Popen` handles to pass to :func:`_stop_celery`.
@@ -79,7 +80,7 @@ def _start_celery(concurrency: int = 2) -> list[subprocess.Popen]:
     env = os.environ.copy()
     _creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if is_windows else 0
 
-    cmd = [
+    worker_cmd = [
         sys.executable, "-m", "celery",
         "-A", "backend.streaming.celery_app.celery_app",
         "worker",
@@ -90,10 +91,22 @@ def _start_celery(concurrency: int = 2) -> list[subprocess.Popen]:
         "--loglevel=info",
     ]
     if not is_windows:
-        cmd += ["--without-gossip", "--without-mingle"]
+        worker_cmd += ["--without-gossip", "--without-mingle"]
+
+    beat_cmd = [
+        sys.executable, "-m", "celery",
+        "-A", "backend.streaming.celery_app.celery_app",
+        "beat",
+        "--loglevel=info",
+    ]
 
     print(f"[run.py] Starting celery-ingest (concurrency={concurrency}, pool={pool}) ...")
-    return [subprocess.Popen(cmd, env=env, creationflags=_creation_flags)]
+    worker = subprocess.Popen(worker_cmd, env=env, creationflags=_creation_flags)
+
+    print("[run.py] Starting celery beat scheduler ...")
+    beat = subprocess.Popen(beat_cmd, env=env, creationflags=_creation_flags)
+
+    return [worker, beat]
 
 
 

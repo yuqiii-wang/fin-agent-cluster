@@ -10,9 +10,10 @@ Emitted events
 """
 
 from backend.sse_notifications.node.notifications import (
+    emit_graph_topology,
     emit_node_input,
     emit_node_output,
     emit_node_status,
 )
 
-__all__ = ["emit_node_input", "emit_node_output", "emit_node_status"]
+__all__ = ["emit_node_input", "emit_node_output", "emit_node_status", "emit_graph_topology"]

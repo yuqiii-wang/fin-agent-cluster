@@ -17,7 +17,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { ackQuery, resumeQuery, submitPerfQuery } from "../../api";
-import { openStream } from "../../api/stream";
+import { openSseStream, openTokenStream } from "../../api/stream";
 import { sendDoneAck } from "../streaming/core";
 import { useGraphStore } from "../../components/GraphVisualizationPanel/useGraphStore";
 import type { GraphEvent, GraphNode } from "../../components/GraphVisualizationPanel/types";
@@ -127,16 +127,18 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
       });
     }, 100);
 
-    const cleanup = openStream(thread_id, userToken, {
-        onToken: (data) => {
-          const d = data as { task_id: string; data: string };
-          const taskId = d.task_id;
-          const tok = d.data ?? "";
-          if (!tok) return;
-          tokenStreamBufferRef.current[taskId] = (tokenStreamBufferRef.current[taskId] ?? "") + tok;
-          tokenCountBufferRef.current[taskId] = (tokenCountBufferRef.current[taskId] ?? 0) + 1;
+    // Combined cleanup ref so onDone can tear down both subscriptions.
+    const closeRef = { current: (() => {}) as () => void };
+
+    const closeSse = openSseStream(thread_id, userToken, {
+        onGraphTopologyInit: (data) => {
+          const d = data as Record<string, unknown>;
+          dispatch({
+            type: "graph_topology_init",
+            outer_nodes: (d["outer_nodes"] as any[]) ?? [],
+            subgraphs: (d["subgraphs"] as Record<string, any>) ?? {},
+          });
         },
-        onTokenBatch,
         onNodeInput: (data) => {
           const d = data as Record<string, unknown>;
           const execId = d["node_execution_id"] as number;
@@ -151,6 +153,8 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
             node_name: nodeName,
             parent_node_execution_ids: parentIds,
             input: (d["input"] as Record<string, unknown>) ?? {},
+            node_type: typeof d["node_type"] === "string" ? d["node_type"] : undefined,
+            subgraph_parent: typeof d["subgraph_parent"] === "string" ? d["subgraph_parent"] : undefined,
             ts: typeof d["started_at_ms"] === "number" ? d["started_at_ms"] : Date.now(),
           });
         },
@@ -188,7 +192,6 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
           console.log(
             `[sse:task_started] task=${d["task_name"]} node=${d["node_name"]} task_id=${d["task_id"]} thread=${thread_id}`,
           );
-          // Collect extra_payload fields as task input (everything except known fields)
           const { event: _e, task_id: _t, node_name: _n, task_name: _k, provider: _p, ...rest } = d;
           dispatch({
             type: "task_started",
@@ -250,13 +253,12 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
           console.log(`[sse:done] status=${doneStatus} thread=${thread_id}`);
           dispatch({ type: "done", status: doneStatus, ts: Date.now() });
           setSession((prev) => prev ? { ...prev, status: "done", doneStatus } : prev);
-          // Send done-ack so the assistant can clean up session state.
           sendDoneAck(thread_id, userToken, doneStatus).catch(() => {});
           if (flushIntervalRef.current != null) {
             clearInterval(flushIntervalRef.current);
             flushIntervalRef.current = null;
           }
-          cleanup();
+          closeRef.current();
           cleanupRef.current = null;
         },
         onClose: () => {
@@ -269,11 +271,23 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
             flushIntervalRef.current = null;
           }
         },
-        // When onReady is provided (resume path), fire it once subscribed.
         onSubscribed: onReady,
       }, { recoverHistory: !onReady });
 
-      cleanupRef.current = cleanup;
+    const closeToken = openTokenStream(thread_id, userToken, {
+      onToken: (data) => {
+        const d = data as { task_id: string; data: string };
+        const taskId = d.task_id;
+        const tok = d.data ?? "";
+        if (!tok) return;
+        tokenStreamBufferRef.current[taskId] = (tokenStreamBufferRef.current[taskId] ?? "") + tok;
+        tokenCountBufferRef.current[taskId] = (tokenCountBufferRef.current[taskId] ?? 0) + 1;
+      },
+      onTokenBatch,
+    });
+
+    closeRef.current = () => { closeSse(); closeToken(); };
+    cleanupRef.current = closeRef.current;
   }, [userToken, drainBatch, onTokenBatch, dispatch]);
 
   const sendRequest = useCallback(async () => {

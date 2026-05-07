@@ -11,7 +11,7 @@ that owns the thread's session keys.  The frontend is told which
 Centrifugo WebSocket endpoint to connect to via the token endpoint:
 
     GET /api/v1/centrifugo/token?thread_id=<uuid>
-    → {"ws_url": "ws://kong/centrifugo-0/connection/websocket",
+    → {"ws_url": "ws://kong/centrifugo-token-0/connection/websocket",
        "connection_token": "<JWT>",
        "subscription_token": "<JWT>"}
 
@@ -39,6 +39,7 @@ belongs to and allow future per-scope differentiation.
 from backend.auth.jwt import make_connection_token, make_subscription_token
 from backend.centrifugo.client import (
     get_shard_index,
+    get_sse_shard_index,
     publish_node_event,
     publish_stream_event,
     publish_task_event,
@@ -53,4 +54,5 @@ __all__ = [
     "make_connection_token",
     "make_subscription_token",
     "get_shard_index",
+    "get_sse_shard_index",
 ]

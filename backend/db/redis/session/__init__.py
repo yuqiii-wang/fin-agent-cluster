@@ -24,11 +24,6 @@ backend.db.redis.session.cancel_signal
     Cross-instance asyncio.Task cancellation via Redis Pub/Sub
     (:func:`publish_cancel`, :func:`run_cancel_listener`).
 
-backend.db.redis.session.pause_signal
-    Redis-backed pause signal for LangGraph interrupt-based pause/resume
-    (:func:`set_pause_signal`, :func:`check_and_consume_pause_signal`,
-    :func:`delete_pause_signal`).
-
 backend.db.redis.session.perf_stable_signal
     Redis-backed stable signal for concurrent perf-test sessions
     (:func:`set_perf_stable`, :func:`check_and_consume_perf_stable`).
@@ -57,11 +52,6 @@ from backend.db.redis.session.task_ack_store import (
     record_task_step,
 )
 from backend.db.redis.session.cancel_signal import publish_cancel, run_cancel_listener
-from backend.db.redis.session.pause_signal import (
-    check_and_consume_pause_signal,
-    delete_pause_signal,
-    set_pause_signal,
-)
 from backend.db.redis.session.perf_stable_signal import (
     check_and_consume_perf_stable,
     set_perf_stable,
@@ -89,9 +79,6 @@ __all__ = [
     "increment_task_step_retry",
     "publish_cancel",
     "run_cancel_listener",
-    "set_pause_signal",
-    "check_and_consume_pause_signal",
-    "delete_pause_signal",
     "set_perf_stable",
     "check_and_consume_perf_stable",
     "record_query_status_event",

@@ -81,7 +81,7 @@ export interface TaskInfo {
   node_execution_id: number | null;
   node_name: string;
   task_name: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "paused";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   input: Record<string, unknown>;
   output: Record<string, unknown>;
   created_at: string;
@@ -113,7 +113,7 @@ export interface NodeGroup {
   node_name: string;
   /** Governance node UUID — present once the node has started executing. */
   node_id?: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "paused";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   tasks: TaskInfo[];
 }
 
@@ -122,7 +122,7 @@ export interface SseNodeStatus {
   event: "node_status";
   node_id: string;
   node_name: string;
-  status: "running" | "completed" | "failed" | "cancelled" | "paused";
+  status: "running" | "completed" | "failed" | "cancelled";
   thread_id: string;
 }
 
@@ -166,7 +166,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   thread_id?: string;
-  status?: "running" | "completed" | "failed" | "cancelled" | "paused";
+  status?: "running" | "completed" | "failed" | "cancelled";
   streamingCursor?: boolean;
   /** True when this message was produced by the streaming perf test. */
   isPerfTest?: boolean;
@@ -178,7 +178,7 @@ export interface NodeExecutionInfo {
   id: number;
   node_name: string;
   node_uuid: string | null;
-  status: "running" | "completed" | "failed" | "cancelled" | "paused";
+  status: "running" | "completed" | "failed" | "cancelled";
   input: Record<string, unknown>;
   output: Record<string, unknown>;
   started_at: string;
@@ -228,7 +228,7 @@ export interface ThreadStateResponse {
 
 /** Request body for POST /api/v1/threads/{thread_id}/status. */
 export interface UpdateThreadStatusRequest {
-  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "paused";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   error?: string | null;
   emit_event?: boolean;
 }

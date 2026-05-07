@@ -33,6 +33,8 @@ services:
       PGDATA: /var/lib/postgresql/18/docker
     user: root
     entrypoint: ["/bin/bash", "/replica-setup.sh"]
+    ports:
+      - "${POSTGRES_REPLICA_PORT:-6544}:5432"
     volumes:
       - postgres_replica_data:/var/lib/postgresql
       - ./sql/postgres/replica/setup.sh:/replica-setup.sh:ro
@@ -45,21 +47,37 @@ services:
       timeout: 5s
       retries: 10
 
-  redis-0:
+  redis-token-0:
     image: redis:8.6.2-trixie
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-3456}:6379"
     volumes:
-      - redis_0_data:/data
+      - redis_token_0_data:/data
 
-  redis-1:
+  redis-token-1:
     image: redis:8.6.2-trixie
     restart: unless-stopped
     ports:
       - "${REDIS_PORT_1:-3457}:6379"
     volumes:
-      - redis_1_data:/data
+      - redis_token_1_data:/data
+
+  redis-sse-0:
+    image: redis:8.6.2-trixie
+    restart: unless-stopped
+    ports:
+      - "${REDIS_SSE_PORT:-3459}:6379"
+    volumes:
+      - redis_sse_0_data:/data
+
+  redis-sse-1:
+    image: redis:8.6.2-trixie
+    restart: unless-stopped
+    ports:
+      - "${REDIS_SSE_PORT_1:-3460}:6379"
+    volumes:
+      - redis_sse_1_data:/data
 
   kong-migrations:
     image: kong/kong-gateway:3.12.0.5-20260415-rhel-fips
@@ -190,38 +208,80 @@ services:
       timeout: 5s
       retries: 5
 
-  centrifugo-0:
+  centrifugo-token-0:
     image: centrifugo/centrifugo:v6.7.1-amd64
     restart: unless-stopped
     command: centrifugo -c /centrifugo/config.json
     volumes:
-      - ./centrifugo/centrifugo-0/config.json:/centrifugo/config.json:ro
+      - ./centrifugo/centrifugo-token-0/config.json:/centrifugo/config.json:ro
     environment:
       CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY: ${CENTRIFUGO_SECRET:-centrifugo-dev-secret-key}
       CENTRIFUGO_HTTP_API_KEY: ${CENTRIFUGO_API_KEY:-centrifugo-api-key}
     ports:
       - "${CENTRIFUGO_0_PORT:-8101}:8000"
     depends_on:
-      - redis-0
+      - redis-token-0
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  centrifugo-1:
+  centrifugo-token-1:
     image: centrifugo/centrifugo:v6.7.1-amd64
     restart: unless-stopped
     command: centrifugo -c /centrifugo/config.json
     volumes:
-      - ./centrifugo/centrifugo-1/config.json:/centrifugo/config.json:ro
+      - ./centrifugo/centrifugo-token-1/config.json:/centrifugo/config.json:ro
     environment:
       CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY: ${CENTRIFUGO_SECRET:-centrifugo-dev-secret-key}
       CENTRIFUGO_HTTP_API_KEY: ${CENTRIFUGO_API_KEY:-centrifugo-api-key}
     ports:
       - "${CENTRIFUGO_1_PORT:-8102}:8000"
     depends_on:
-      - redis-1
+      - redis-token-1
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # centrifugo-sse-0/1 — dedicated Centrifugo nodes for lifecycle SSE events.
+  # All FastAPI-published events (started, completed, done, query_*, node_*, stream_*) go here.
+  # Thread sharding by SHA-256 % 2 ensures each thread always hits the same node.
+  # centrifugo-token-0/1 are reserved exclusively for LLM token streaming.
+  centrifugo-sse-0:
+    image: centrifugo/centrifugo:v6.7.1-amd64
+    restart: unless-stopped
+    command: centrifugo -c /centrifugo/config.json
+    volumes:
+      - ./centrifugo/centrifugo-sse-0/config.json:/centrifugo/config.json:ro
+    environment:
+      CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY: ${CENTRIFUGO_SECRET:-centrifugo-dev-secret-key}
+      CENTRIFUGO_HTTP_API_KEY: ${CENTRIFUGO_API_KEY:-centrifugo-api-key}
+    ports:
+      - "${CENTRIFUGO_SSE_PORT:-8103}:8000"
+    depends_on:
+      - redis-sse-0
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  centrifugo-sse-1:
+    image: centrifugo/centrifugo:v6.7.1-amd64
+    restart: unless-stopped
+    command: centrifugo -c /centrifugo/config.json
+    volumes:
+      - ./centrifugo/centrifugo-sse-1/config.json:/centrifugo/config.json:ro
+    environment:
+      CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY: ${CENTRIFUGO_SECRET:-centrifugo-dev-secret-key}
+      CENTRIFUGO_HTTP_API_KEY: ${CENTRIFUGO_API_KEY:-centrifugo-api-key}
+    ports:
+      - "${CENTRIFUGO_SSE_PORT_1:-8104}:8000"
+    depends_on:
+      - redis-sse-1
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
       interval: 10s
@@ -283,8 +343,10 @@ services:
 volumes:
   postgres_primary_data:
   postgres_replica_data:
-  redis_0_data:
-  redis_1_data:
+  redis_token_0_data:
+  redis_token_1_data:
+  redis_sse_0_data:
+  redis_sse_1_data:
   prometheus_data:
   grafana_data:
   loki_data:

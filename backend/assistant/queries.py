@@ -6,8 +6,7 @@ routes those exclusively to runner instances.
 
 Endpoints:
     POST /users/query/{thread_id}/cancel                  cancel a running query
-    POST /users/query/{thread_id}/pause                   pause at next checkpoint
-    POST /users/query/{thread_id}/resume                  resume paused/cancelled query
+    POST /users/query/{thread_id}/resume                  resume cancelled/failed query
     POST /users/query/{thread_id}/nodes/{node_id}/cancel  cancel a node + its tasks
     POST /users/query/{thread_id}/tasks/{task_id}/cancel  cancel a specific task
     POST /users/query/{thread_id}/perf-stable             signal stable TPS
@@ -29,7 +28,6 @@ from backend.users.queries import (
     get_node_executions,
     get_query_status,
     get_query_tasks,
-    pause_query,
     resume_query,
 )
 from backend.users.schemas import NodeExecutionInfo, QueryResponse, SessionStatus
@@ -62,12 +60,6 @@ async def cancel_task_route(
 ) -> dict:
     """Send a cancel signal to a specific task by its governance UUID."""
     return await cancel_task_by_uuid(thread_id, task_id, node_id=node_id)
-
-
-@router.post("/query/{thread_id}/pause", response_model=QueryResponse)
-async def pause_query_route(thread_id: str) -> QueryResponse:
-    """Request that a running query pause at the next LangGraph interrupt checkpoint."""
-    return await pause_query(thread_id)
 
 
 @router.post("/query/{thread_id}/resume", response_model=QueryResponse)

@@ -5,7 +5,6 @@ Mounted at ``/users`` under the parent API router, so full paths are:
     POST /api/v1/users/query
     POST /api/v1/users/query/{thread_id}/ack
     POST /api/v1/users/query/{thread_id}/cancel
-    POST /api/v1/users/query/{thread_id}/pause
     POST /api/v1/users/query/{thread_id}/resume
     POST /api/v1/users/query/{thread_id}/nodes/{node_id}/cancel
     POST /api/v1/users/query/{thread_id}/tasks/{task_id}/cancel
@@ -32,7 +31,6 @@ from backend.users.queries import (
     get_node_executions,
     get_query_status,
     get_query_tasks,
-    pause_query,
     resume_query,
     submit_query,
 )
@@ -82,24 +80,12 @@ async def cancel_node_route(thread_id: str, node_id: str) -> dict:
     return await cancel_node(thread_id, node_id)
 
 
-@router.post("/query/{thread_id}/pause", response_model=QueryResponse)
-async def pause_query_route(thread_id: str) -> QueryResponse:
-    """Request that a running query pause at the next LangGraph interrupt checkpoint.
-
-    Sets a Redis pause signal.  The graph runner will stop auto-approving the
-    next ``interrupt()`` call and emit a ``done(paused)`` SSE event once the
-    graph has persisted its checkpoint.  Use ``POST /resume`` to continue.
-    """
-    return await pause_query(thread_id)
-
-
 @router.post("/query/{thread_id}/resume", response_model=QueryResponse)
 async def resume_query_route(thread_id: str) -> QueryResponse:
-    """Resume a cancelled, failed, or paused query from its last LangGraph checkpoint.
+    """Resume a cancelled or failed query from its last LangGraph checkpoint.
 
-    Dispatches the correct resume strategy:
-    - ``paused``: ``Command(resume=True)`` — continues from the interrupt checkpoint.
-    - ``cancelled`` / ``failed``: ``input=None`` — re-runs from last pre-node checkpoint.
+    Dispatches to ``run_resume_async`` which passes ``input=None`` so LangGraph
+    loads the last pre-node checkpoint and re-runs the interrupted node from scratch.
     """
     return await resume_query(thread_id)
 

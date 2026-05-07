@@ -73,8 +73,10 @@ _DEFAULTS: dict[str, str] = {
     "OLLAMA_MODEL": "qwen3.5-27b",
     "REDIS_HOST": "redis",
     "REDIS_PORT": "6379",
-    "CENTRIFUGO_0_HOST": "centrifugo-0",
-    "CENTRIFUGO_1_HOST": "centrifugo-1",
+    "CENTRIFUGO_TOKEN_0_HOST": "centrifugo-token-0",
+    "CENTRIFUGO_TOKEN_1_HOST": "centrifugo-token-1",
+    "CENTRIFUGO_SSE_0_HOST": "centrifugo-sse-0",
+    "CENTRIFUGO_SSE_1_HOST": "centrifugo-sse-1",
 }
 
 # List-valued Kong keys — fragments are concatenated across files.

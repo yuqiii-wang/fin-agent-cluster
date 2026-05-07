@@ -94,13 +94,27 @@ export default defineConfig(({ mode }) => {
         //
         // In directMode these entries are absent: stream.ts uses the backend-returned
         // wss://localhost:8443 URL directly — fully WSS, no HTTP/1.1 hop.
-        "/centrifugo-0": {
+        // centrifugo-sse-0/1: SSE lifecycle events (shard-routed by thread_id SHA-256 % 2)
+        "/centrifugo-sse-0": {
           target: "http://127.0.0.1:8888",
           changeOrigin: true,
           ws: true,
           agent: false,
         },
-        "/centrifugo-1": {
+        "/centrifugo-sse-1": {
+          target: "http://127.0.0.1:8888",
+          changeOrigin: true,
+          ws: true,
+          agent: false,
+        },
+        // centrifugo-token-0/1: LLM token streaming only
+        "/centrifugo-token-0": {
+          target: "http://127.0.0.1:8888",
+          changeOrigin: true,
+          ws: true,
+          agent: false,
+        },
+        "/centrifugo-token-1": {
           target: "http://127.0.0.1:8888",
           changeOrigin: true,
           ws: true,

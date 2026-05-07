@@ -110,6 +110,10 @@ async def _persist_batch() -> dict[str, int]:
 async def _upsert_response(record: LLMCompletionMessage) -> None:
     """INSERT one LLM completion record to ``fin_agents.llm_responses``.
 
+    Opens a dedicated psycopg connection directly from the write URL because
+    this function runs inside a Celery worker process where the FastAPI shared
+    pool (``open_pools()``) is never initialised.
+
     Uses ``ON CONFLICT (event_id) DO NOTHING`` for idempotent re-delivery.
     ``task_id`` is persisted when present, establishing the optional 1:1 link
     between ``llm_responses`` and ``tasks``.
@@ -117,9 +121,17 @@ async def _upsert_response(record: LLMCompletionMessage) -> None:
     Args:
         record: Validated :class:`~backend.streaming.schemas.LLMCompletionMessage`.
     """
-    from backend.db import raw_conn  # noqa: PLC0415
+    import psycopg  # noqa: PLC0415
+    from psycopg.rows import dict_row  # noqa: PLC0415
+    from backend.config import get_settings  # noqa: PLC0415
 
-    async with raw_conn() as conn:
+    settings = get_settings()
+    async with await psycopg.AsyncConnection.connect(
+        settings.DATABASE_PG_URL,
+        autocommit=True,
+        row_factory=dict_row,
+        options="-csearch_path=fin_agents",
+    ) as conn:
         cur = await conn.execute(
             """
             INSERT INTO fin_agents.llm_responses

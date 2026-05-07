@@ -83,6 +83,7 @@ class MockReportNode(BaseNode):
                 thread_id=thread_id_arg,
                 task_id=task_id,
                 node_execution_id=node_execution_id_arg,
+                node_id=node_id_arg,
                 t0_node=None,
             )
 

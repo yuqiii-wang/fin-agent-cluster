@@ -64,6 +64,7 @@ async def run_mock_analysis_task(
     thread_id: str,
     task_id: str,
     node_execution_id: int,
+    node_id: str = "",
     t0_node: float | None = None,
 ) -> MockAnalysisResult:
     """Simulate a financial analysis pass with opt-in token streaming.
@@ -76,6 +77,8 @@ async def run_mock_analysis_task(
         thread_id:          LangGraph thread UUID.
         task_id:            Task invocation UUID (matches the ``fin_agents.tasks`` row).
         node_execution_id:  DB row ID from :func:`start_node_execution`.
+        node_id:            Governance UUID of the parent node (used as extra_payload
+                            so the frontend can match this task to its node circle).
         t0_node:            ``time.monotonic()`` captured at node entry.
 
     Returns:
@@ -94,7 +97,7 @@ async def run_mock_analysis_task(
         node_execution_id,
         provider="mock",
         task_id=task_id,
-        extra_payload={"node_name": "mock_analysis"},
+        extra_payload={"node_id": node_id},
     )
 
     batch_delay = _BATCH_SIZE / _TOKEN_PER_SEC  # seconds per batch

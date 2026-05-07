@@ -17,4 +17,5 @@ __all__ = [
     "GRAPH_RUNNER_ERRORS",
     "GRAPH_NOT_INITIALIZED",
     "GRAPH_DB_UNAVAILABLE",
+     "SHUTDOWN.md",
 ]

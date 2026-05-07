@@ -1,14 +1,18 @@
 /**
- * Centrifugo WebSocket streaming client.
+ * Centrifugo WebSocket streaming client — two-tier architecture.
  *
- * Replaces the previous EventSource/SSE implementation.  All real-time events
- * (token, started, completed, failed, cancelled, done, query_* perf_*) arrive
- * on the ``thread:{threadId}`` Centrifugo channel.
+ * Tier 1: centrifugo-sse-0/1  — SSE lifecycle events, shard-routed by SHA-256(threadId) % 2.
+ *   Channel: thread:{threadId}
+ *   Events:  started, completed, failed, cancelled, done, query_*, node_*, stream_*
+ *   Usage:   openSseStream(threadId, userToken, { onStarted, onDone, ... })
  *
- * Usage:
- *   const cleanup = openStream(threadId, { onToken, onDone, ... });
- *   // later:
- *   cleanup();
+ * Tier 2: centrifugo-token-0/1  — LLM token streaming (shard-routed, optional).
+ *   Channel: thread:{threadId}
+ *   Events:  token, token_batch
+ *   Usage:   openTokenStream(threadId, userToken, { onToken, onTokenBatch })
+ *
+ * Both use the shared Centrifuge connection pool (one WS per unique ws_url).
+ * The backend returns the correct shard ws_url from the token endpoints.
  */
 
 import type { Subscription } from "centrifuge";
@@ -25,7 +29,15 @@ export interface CentrifugoTokenResponse {
   channel: string;
 }
 
-/** Fetch Centrifugo connection + subscription tokens from FastAPI. */
+export interface CentrifugoSseTokenResponse {
+  ws_url: string;
+  connection_token: string;
+  subscription_token: string;
+  shard_index: number;
+  channel: string;
+}
+
+/** Fetch token-stream Centrifugo JWTs (centrifugo-0/1, shard-routed). */
 export async function fetchCentrifugoToken(
   threadId: string,
   userToken: string
@@ -38,12 +50,24 @@ export async function fetchCentrifugoToken(
   return res.json();
 }
 
+/** Fetch SSE lifecycle Centrifugo JWTs (centrifugo-sse-0/1, shard-routed by thread_id). */
+export async function fetchCentrifugoSseToken(
+  threadId: string,
+  userToken: string
+): Promise<CentrifugoSseTokenResponse> {
+  const url = `${BASE}/auth/centrifugo/sse-token?thread_id=${encodeURIComponent(threadId)}`;
+  const res = await fetch(url, {
+    headers: { "X-User-Token": userToken },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching Centrifugo SSE token`);
+  return res.json();
+}
+
 // ── Stream event handlers ────────────────────────────────────────────────────
 
 export interface StreamHandlers {
+  /** Lifecycle events (delivered via centrifugo-sse-0/1, shard-routed) */
   onStarted?: (data: unknown) => void;
-  onToken?: (data: unknown) => void;
-  onTokenBatch?: (data: unknown) => void;
   onIngestComplete?: (data: unknown) => void;
   onStreamStopped?: (data: unknown) => void;
   onStreamComplete?: (data: unknown) => void;
@@ -54,208 +78,291 @@ export interface StreamHandlers {
   onQueryStatus?: (data: unknown) => void;
   onQueryReceived?: (data: unknown) => void;
   onQueryAckConfirmed?: (data: unknown) => void;
-  /** Fired when a node starts — carries topology (parent_node_execution_id). */
   onNodeInput?: (data: unknown) => void;
-  /** Fired when a node finishes — carries output + elapsed_ms. */
   onNodeOutput?: (data: unknown) => void;
-  /** Fired when a node's lifecycle status changes (node_status SSE event). */
   onNodeStatus?: (data: unknown) => void;
+  onGraphTopologyInit?: (data: unknown) => void;
+  /** Token events (delivered via centrifugo-0/1) */
+  onToken?: (data: unknown) => void;
+  onTokenBatch?: (data: unknown) => void;
   /**
-   * Fired when the Centrifugo subscription becomes active and all channel history
-   * has been delivered as `publication` events.  Use this as the signal to
-   * proactively poll `GET /users/query/{threadId}` if no lifecycle events were
-   * received from history (i.e. the query is already past the `received` phase).
+   * Fired when the centrifugo-sse-{shard} subscription becomes active and all channel
+   * history has been delivered.  Use this to poll backend status if no lifecycle
+   * events arrived from history.
    */
   onSubscribed?: () => void;
   onClose?: () => void;
 }
 
-/** Dispatch a Centrifugo publication payload to the correct handler. */
-function dispatch(data: unknown, handlers: StreamHandlers): void {
+/** Dispatch a lifecycle publication (centrifugo-sse-0/1) to the correct handler. */
+function dispatchLifecycle(data: unknown, handlers: StreamHandlers): void {
   if (!data || typeof data !== "object") return;
   const ev = (data as Record<string, unknown>)["event"] as string | undefined;
   if (!ev) return;
 
   switch (ev) {
-    case "started":               handlers.onStarted?.(data); break;
-    case "token":                 handlers.onToken?.(data); break;
-    case "token_batch":          handlers.onTokenBatch?.(data); break;
-    case "ingest_complete":       handlers.onIngestComplete?.(data); break;
-    case "stream_stopped":        handlers.onStreamStopped?.(data); break;
-    case "stream_complete":       handlers.onStreamComplete?.(data); break;
-    case "completed":             handlers.onCompleted?.(data); break;
-    case "failed":                handlers.onFailed?.(data); break;
-    case "cancelled":             handlers.onCancelled?.(data); break;
-    case "done":                  handlers.onDone?.(data); break;
-    case "query_status":          handlers.onQueryStatus?.(data); break;
-    case "query_received":        handlers.onQueryReceived?.(data); break;
-    case "query_ack_confirmed":   handlers.onQueryAckConfirmed?.(data); break;
-    case "node_input":            handlers.onNodeInput?.(data); break;
-    case "node_output":           handlers.onNodeOutput?.(data); break;
-    case "node_status":           handlers.onNodeStatus?.(data); break;
+    case "started":             handlers.onStarted?.(data); break;
+    case "ingest_complete":     handlers.onIngestComplete?.(data); break;
+    case "stream_stopped":      handlers.onStreamStopped?.(data); break;
+    case "stream_complete":     handlers.onStreamComplete?.(data); break;
+    case "completed":           handlers.onCompleted?.(data); break;
+    case "failed":              handlers.onFailed?.(data); break;
+    case "cancelled":           handlers.onCancelled?.(data); break;
+    case "done":                handlers.onDone?.(data); break;
+    case "query_status":        handlers.onQueryStatus?.(data); break;
+    case "query_received":      handlers.onQueryReceived?.(data); break;
+    case "query_ack_confirmed": handlers.onQueryAckConfirmed?.(data); break;
+    case "node_input":          handlers.onNodeInput?.(data); break;
+    case "node_output":         handlers.onNodeOutput?.(data); break;
+    case "node_status":         handlers.onNodeStatus?.(data); break;
+    case "graph_topology_init": handlers.onGraphTopologyInit?.(data); break;
     default:
       break;
   }
 }
 
-// ── Main openStream function ─────────────────────────────────────────────────
+/** Dispatch a token publication (centrifugo-0/1) to the correct handler. */
+function dispatchToken(data: unknown, handlers: StreamHandlers): void {
+  if (!data || typeof data !== "object") return;
+  const ev = (data as Record<string, unknown>)["event"] as string | undefined;
+  if (!ev) return;
+
+  switch (ev) {
+    case "token":       handlers.onToken?.(data); break;
+    case "token_batch": handlers.onTokenBatch?.(data); break;
+    default:
+      break;
+  }
+}
+// ── Shared subscription factory ──────────────────────────────────────────────
 
 /**
- * Connect to Centrifugo and subscribe to the ``thread:{threadId}`` channel.
- *
- * Fetches JWT tokens from FastAPI, establishes a WebSocket connection to the
- * correct Centrifugo shard, and invokes callbacks on publication events.
- *
- * @param threadId  LangGraph thread UUID.
- * @param userToken X-User-Token from localStorage.
- * @param handlers  Event callbacks.
- * @param options   `recoverHistory` (default true) — when false the subscription
- *                  omits the `since` field so Centrifugo does NOT re-deliver channel
- *                  history. Use `false` for resume streams to avoid re-processing
- *                  stale `done` / `cancelled` events from the previous run.
- * @returns Cleanup function that disconnects the WebSocket.
+ * Internal helper — creates a Centrifuge subscription for *channel* on the
+ * client at *wsUrl* and wires *onPublication*, *onSubscribed*, *onError*, and
+ * *onUnsubscribed* handlers.  Returns a cleanup function.
  */
-export function openStream(
+function _createSubscription(
+  wsUrl: string,
+  connectionToken: string,
+  subscriptionToken: string,
+  channel: string,
+  recoverHistory: boolean,
+  onPublication: (data: unknown) => void,
+  onSubscribed: (() => void) | undefined,
+  onFatal: (msg: string) => void,
+  onUnexpectedClose: (() => void) | undefined,
+  logPrefix: string,
   threadId: string,
-  userToken: string,
-  handlers: StreamHandlers,
-  options: { recoverHistory?: boolean } = {},
 ): () => void {
-  let sub: Subscription | null = null;
-  let closed = false;
-  // Set before calling sub.unsubscribe() so the unsubscribed event handler
-  // can distinguish a manual cleanup from an unexpected server-side close.
+  const centrifuge = getOrCreateShardClient(wsUrl, connectionToken);
+
+  const existingSub = centrifuge.getSubscription(channel);
+  if (existingSub) {
+    existingSub.unsubscribe();
+    existingSub.removeAllListeners();
+    centrifuge.removeSubscription(existingSub);
+  }
+
+  const sub = centrifuge.newSubscription(channel, {
+    token: subscriptionToken,
+    recoverable: recoverHistory,
+    ...(recoverHistory ? { since: { epoch: "", offset: 0 } } : {}),
+  });
+
   let manualClose = false;
+  let closed = false;
 
   const cleanup = () => {
     if (closed) return;
     closed = true;
     manualClose = true;
-    sub?.unsubscribe();
-    sub?.removeAllListeners();
-    // Do NOT disconnect the shared shard client — other subscriptions are still active.
+    sub.unsubscribe();
+    sub.removeAllListeners();
   };
 
-  // Fetch tokens then connect.
-  fetchCentrifugoToken(threadId, userToken)
-    .then(({ ws_url, connection_token, subscription_token, channel, shard_index }) => {
+  sub.on("publication", (ctx) => {
+    onPublication(ctx.data);
+  });
+
+  sub.on("error", (ctx) => {
+    const code = (ctx.error as any)?.code;
+    const temporary = (ctx.error as any)?.temporary ?? true;
+    console.warn(
+      "[%s] subscription error channel=%s threadId=%s code=%s temporary=%s msg=%s",
+      logPrefix, channel, threadId, code, temporary, (ctx.error as any)?.message,
+    );
+    if (!temporary && !closed) {
+      closed = true;
+      onFatal(
+        `Centrifugo subscription failed (code ${code}): ${(ctx.error as any)?.message ?? "unknown"}`,
+      );
+    }
+  });
+
+  sub.on("subscribed", () => {
+    onSubscribed?.();
+  });
+
+  sub.on("unsubscribed", (ctx) => {
+    if (!manualClose && !closed) {
+      console.warn(
+        "[%s] subscription unsubscribed unexpectedly channel=%s threadId=%s code=%d",
+        logPrefix, channel, threadId, ctx.code,
+      );
+      closed = true;
+      if (ctx.code > 0) {
+        onFatal(`Centrifugo subscription closed by server (code ${ctx.code})`);
+      } else {
+        onUnexpectedClose?.();
+      }
+    }
+  });
+
+  sub.subscribe();
+  return cleanup;
+}
+
+// ── openSseStream ─────────────────────────────────────────────────────────────
+
+/**
+ * Connect to **centrifugo-sse-{shard}** and subscribe to the ``thread:{threadId}``
+ * channel for all SSE lifecycle events (started, completed, failed, done,
+ * query_*, node_*, stream_*).  Token events are NOT delivered here.
+ *
+ * @param threadId  LangGraph thread UUID.
+ * @param userToken X-User-Token from localStorage.
+ * @param handlers  Event callbacks.  `onToken`/`onTokenBatch` are ignored here.
+ * @param options   `recoverHistory` (default true).
+ * @returns Cleanup function that unsubscribes.
+ */
+export function openSseStream(
+  threadId: string,
+  userToken: string,
+  handlers: StreamHandlers,
+  options: { recoverHistory?: boolean } = {},
+): () => void {
+  let cleanup: (() => void) | null = null;
+  let closed = false;
+
+  const earlyCleanup = () => {
+    closed = true;
+    cleanup?.();
+  };
+
+  const recoverHistory = options.recoverHistory !== false;
+
+  fetchCentrifugoSseToken(threadId, userToken)
+    .then(({ ws_url, connection_token, subscription_token, channel }) => {
       if (closed) {
-        // cleanup() was called before the Centrifugo connection could be established
-        // (e.g. the session was cancelled or the component unmounted while the token
-        // fetch was in flight).  Log so the browser console can surface which streams
-        // hit this race and under what circumstances.
         console.error(
-          "[stream] CLOSED GUARD: cleanup fired before Centrifugo connect threadId=%s — " +
-          "stream will stay at its current status. If this recurs, check for premature " +
-          "cleanup calls (freezeAll, handleRestart, or component unmount).",
+          "[sse-stream] CLOSED GUARD: cleanup before connect threadId=%s",
           threadId,
         );
         return;
       }
 
-      // Rewrite the backend-returned ws_url (Docker-internal hostname) to use
-      // the current page origin so the WS upgrade goes through the same proxy
-      // that serves the page:
-      //  - Dev (Vite proxy):  ws://localhost:3000/centrifugo-{n}/connection/websocket
-      //  - Prod (nginx 22332): wss://localhost:22332/centrifugo-{n}/connection/websocket
-      // The backend already includes the /centrifugo-{shard}/ path prefix, so
-      // only the scheme+host needs to be rewritten.
       const wsScheme = window.location.protocol === "https:" ? "wss:" : "ws:";
       const localWsUrl = ws_url.replace(
         /^wss?:\/\/[^/]+/,
         `${wsScheme}//${window.location.host}`,
       );
 
-      // Reuse (or create) the shared Centrifuge connection for this shard.
-      // This keeps the total WebSocket count at 1 per shard regardless of how
-      // many concurrent streams are open.
-      const centrifuge = getOrCreateShardClient(localWsUrl, connection_token);
+      cleanup = _createSubscription(
+        localWsUrl,
+        connection_token,
+        subscription_token,
+        channel,
+        recoverHistory,
+        (data) => dispatchLifecycle(data, handlers),
+        handlers.onSubscribed,
+        (msg) => handlers.onFailed?.({ event: "failed", message: msg, error: "centrifugo_token_error" }),
+        handlers.onClose,
+        "sse-stream",
+        threadId,
+      );
 
-      const recoverHistory = options.recoverHistory !== false;
-
-      // If a previous subscription for this channel still exists in the shared
-      // client registry (e.g. after unsubscribe on cancel/done), remove it before
-      // creating a new one.  centrifuge.newSubscription() throws DuplicateSubscriptionError
-      // if the same channel is registered twice on the same client.
-      const existingSub = centrifuge.getSubscription(channel);
-      if (existingSub) {
-        existingSub.unsubscribe();
-        existingSub.removeAllListeners();
-        centrifuge.removeSubscription(existingSub);
-      }
-
-      sub = centrifuge.newSubscription(channel, {
-        token: subscription_token,
-        recoverable: recoverHistory,
-        ...(recoverHistory ? { since: { epoch: '', offset: 0 } } : {}),
-      });
-
-      sub.on("publication", (ctx) => {
-        dispatch(ctx.data, handlers);
-      });
-
-      sub.on("error", (ctx) => {
-        const code = (ctx.error as any)?.code;
-        const temporary = (ctx.error as any)?.temporary ?? true;
-        console.warn("[stream] subscription error channel=%s threadId=%s code=%s temporary=%s msg=%s",
-          channel, threadId, code, temporary, (ctx.error as any)?.message);
-        // Non-temporary (fatal) subscription errors indicate permanent failure — the
-        // subscription will NOT be retried by centrifuge-js.  Surface this as onFailed
-        // so the session UI can show an error state rather than hanging indefinitely.
-        if (!temporary && !closed) {
-          closed = true;
-          console.error(
-            "[stream] fatal subscription error — reporting centrifugo_token_error channel=%s threadId=%s code=%s",
-            channel, threadId, code,
-          );
-          handlers.onFailed?.({
-            event: "failed",
-            message: `Centrifugo subscription failed (code ${code}): ${(ctx.error as any)?.message ?? "unknown"}`,
-            error: "centrifugo_token_error",
-          });
-        }
-      });
-
-      sub.on("subscribed", () => {
-        // All channel history has been delivered as publication events at this point.
-        // Signal callers so they can poll backend status if no lifecycle events arrived.
-        handlers.onSubscribed?.();
-      });
-
-      sub.on("unsubscribed", (ctx) => {
-        // Only propagate for unexpected server-side unsubscriptions.
-        // manualClose is set by cleanup() before calling sub.unsubscribe(), so
-        // that path is suppressed.
-        if (!manualClose && !closed) {
-          console.warn(
-            "[stream] subscription unsubscribed unexpectedly channel=%s threadId=%s code=%d",
-            channel, threadId, ctx.code,
-          );
-          // Server-side auth rejection (Centrifugo codes 100–111 are centrifugo
-          // protocol errors; codes >= 100 are server-initiated with a specific reason).
-          // Treat as centrifugo_token_error so the UI surfaces an actionable error.
-          const isServerAuthError = ctx.code > 0;
-          closed = true;
-          if (isServerAuthError) {
-            handlers.onFailed?.({
-              event: "failed",
-              message: `Centrifugo subscription closed by server (code ${ctx.code})`,
-              error: "centrifugo_token_error",
-            });
-          } else {
-            handlers.onClose?.();
-          }
-        }
-      });
-
-      sub.subscribe();
-      console.info("[stream] Centrifugo subscribed threadId=%s channel=%s ws=%s shard=%d", threadId, channel, localWsUrl, shard_index);
+      console.info(
+        "[sse-stream] subscribed threadId=%s channel=%s ws=%s",
+        threadId, channel, localWsUrl,
+      );
     })
     .catch((err) => {
       if (closed) return;
-      console.error("[stream] failed to fetch Centrifugo token threadId=%s", threadId, err);
+      console.error("[sse-stream] failed to fetch SSE token threadId=%s", threadId, err);
       handlers.onFailed?.({ event: "failed", message: String(err), error: "centrifugo_token_error" });
     });
 
-  return cleanup;
+  return earlyCleanup;
 }
+
+// ── openTokenStream ───────────────────────────────────────────────────────────
+
+/**
+ * Connect to **centrifugo-0/1** (shard-routed) and subscribe to the
+ * ``thread:{threadId}`` channel for LLM token events only.
+ *
+ * Token events are published by Centrifugo's built-in Redis Stream consumer
+ * from ``fin:llm:tokens``.  Only ``onToken`` and ``onTokenBatch`` are invoked.
+ *
+ * @param threadId  LangGraph thread UUID.
+ * @param userToken X-User-Token from localStorage.
+ * @param handlers  Only `onToken` and `onTokenBatch` are used.
+ * @param options   `recoverHistory` (default false — tokens are ephemeral).
+ * @returns Cleanup function that unsubscribes.
+ */
+export function openTokenStream(
+  threadId: string,
+  userToken: string,
+  handlers: Pick<StreamHandlers, "onToken" | "onTokenBatch">,
+  options: { recoverHistory?: boolean } = {},
+): () => void {
+  let cleanup: (() => void) | null = null;
+  let closed = false;
+
+  const earlyCleanup = () => {
+    closed = true;
+    cleanup?.();
+  };
+
+  const recoverHistory = options.recoverHistory === true;
+
+  fetchCentrifugoToken(threadId, userToken)
+    .then(({ ws_url, connection_token, subscription_token, channel, shard_index }) => {
+      if (closed) return;
+
+      const wsScheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const localWsUrl = ws_url.replace(
+        /^wss?:\/\/[^/]+/,
+        `${wsScheme}//${window.location.host}`,
+      );
+
+      cleanup = _createSubscription(
+        localWsUrl,
+        connection_token,
+        subscription_token,
+        channel,
+        recoverHistory,
+        (data) => dispatchToken(data, handlers),
+        undefined,
+        (msg) => console.warn("[token-stream] fatal error threadId=%s: %s", threadId, msg),
+        undefined,
+        "token-stream",
+        threadId,
+      );
+
+      console.info(
+        "[token-stream] subscribed threadId=%s channel=%s ws=%s shard=%d",
+        threadId, channel, localWsUrl, shard_index,
+      );
+    })
+    .catch((err) => {
+      if (closed) return;
+      console.warn("[token-stream] failed to fetch token threadId=%s", threadId, err);
+    });
+
+  return earlyCleanup;
+}
+
+// ── openStream (removed — use openSseStream + openTokenStream) ────────────────
+// openStream has been replaced by the two-tier approach above.
+// Call openSseStream() for lifecycle events and openTokenStream() for tokens.

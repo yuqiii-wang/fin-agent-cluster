@@ -2,7 +2,7 @@
   "engine": {
     "type": "redis",
     "redis": {
-      "address": "redis-0:6379"
+      "address": "redis-sse-1:6379"
     }
   },
   "client": {
@@ -46,19 +46,6 @@
       }
     ]
   },
-  "consumers": [
-    {
-      "enabled": true,
-      "name": "token_consumer",
-      "type": "redis_stream",
-      "redis_stream": {
-        "address": ["redis-0:6379"],
-        "streams": ["fin:llm:tokens"],
-        "consumer_group": "centrifugo-0-token",
-        "num_workers": 32
-      }
-    }
-  ],
   "health": {
     "enabled": true
   },

@@ -25,18 +25,38 @@ services:
     write_timeout: 30000      # 30 s
     read_timeout: 30000       # 30 s
 
-  # Centrifugo shard 0 -- WebSocket event hub backed by redis-0.
-  - name: centrifugo-0
-    host: centrifugo-0-upstream
+  # Centrifugo token shard 0 -- WebSocket LLM token streaming backed by redis-token-0.
+  - name: centrifugo-token-0
+    host: centrifugo-token-0-upstream
     port: 80
     protocol: ws
     connect_timeout: 10000    # 10 s
     write_timeout: 3600000    # 60 min -- WebSocket connections are long-lived
     read_timeout: 3600000     # 60 min
 
-  # Centrifugo shard 1 -- WebSocket event hub backed by redis-1.
-  - name: centrifugo-1
-    host: centrifugo-1-upstream
+  # Centrifugo token shard 1 -- WebSocket LLM token streaming backed by redis-token-1.
+  - name: centrifugo-token-1
+    host: centrifugo-token-1-upstream
+    port: 80
+    protocol: ws
+    connect_timeout: 10000    # 10 s
+    write_timeout: 3600000    # 60 min
+    read_timeout: 3600000     # 60 min
+
+  # centrifugo-sse-0 -- SSE lifecycle event hub shard 0 (thread SHA-256 % 2 == 0).
+  # Frontend subscribes here for all lifecycle events (started, completed, done, query_*, etc.).
+  # LLM token events remain on centrifugo-token-0/1.
+  - name: centrifugo-sse-0
+    host: centrifugo-sse-0-upstream
+    port: 80
+    protocol: ws
+    connect_timeout: 10000    # 10 s
+    write_timeout: 3600000    # 60 min
+    read_timeout: 3600000     # 60 min
+
+  # centrifugo-sse-1 -- SSE lifecycle event hub shard 1 (thread SHA-256 % 2 == 1).
+  - name: centrifugo-sse-1
+    host: centrifugo-sse-1-upstream
     port: 80
     protocol: ws
     connect_timeout: 10000    # 10 s

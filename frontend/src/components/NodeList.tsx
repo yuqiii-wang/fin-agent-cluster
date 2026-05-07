@@ -17,7 +17,6 @@ const STEP_STATUS: Record<NodeGroup["status"], "wait" | "process" | "finish" | "
   completed: "finish",
   failed: "error",
   cancelled: "error",
-  paused: "wait",
 };
 
 interface Props {
@@ -230,9 +229,9 @@ export const NodeList = memo(function NodeList({ nodes, threadId, onNodeClick, t
 
     const canCancelNode = queryRunning && node.status === "running" && !!node.node_id;
     const isCancellingNode = !!node.node_id && cancellingNodes.has(node.node_id);
-    // Show Resume button when query is resumable and this node is the one that was cancelled or paused.
-    // "Resuming" a cancelled/paused node = resuming the whole thread from the last checkpoint.
-    const isCancelledNode = node.status === "cancelled" || node.status === "paused";
+    // Show Resume button when query is resumable and this node is the one that was cancelled.
+    // "Resuming" a cancelled node = resuming the whole thread from the last checkpoint.
+    const isCancelledNode = node.status === "cancelled";
     const showResume = queryResumable && isCancelledNode;
     // Show spinner while cancel is in-flight (stays until queryResumable=true, not just node_status).
     const showCancelSpinner = isCancellingNode && !showResume;

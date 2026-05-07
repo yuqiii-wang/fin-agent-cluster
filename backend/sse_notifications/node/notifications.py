@@ -72,6 +72,8 @@ async def emit_node_input(
     """
     from backend.graph.utils.execution_log import start_node_execution  # deferred
 
+    from backend.graph.agents.node_types import get_node_type, get_node_subgraph_parent  # deferred
+
     # DB stores a single FK for the first parent (or None)
     primary_parent = parent_node_execution_ids[0] if parent_node_execution_ids else None
     # Capture wall-clock and monotonic at the same instant so that
@@ -86,12 +88,16 @@ async def emit_node_input(
         node_uuid=node_uuid,
         parent_node_execution_id=primary_parent,
     )
+    node_type = get_node_type(node_name)
+    subgraph_parent = get_node_subgraph_parent(node_name)
     await publish_node_lifecycle(
         thread_id,
         {
             "event": "node_input",
             "node_execution_id": node_execution_id,
             "node_name": node_name,
+            "node_type": node_type,
+            "subgraph_parent": subgraph_parent,
             "parent_node_execution_ids": parent_node_execution_ids,
             "input": input_data,
             "started_at_ms": int(started_at.timestamp() * 1000),
@@ -215,4 +221,30 @@ async def emit_node_status(
     )
 
 
-__all__ = ["emit_node_input", "emit_node_output", "emit_node_status"]
+async def emit_graph_topology(thread_id: str) -> None:
+    """Emit a ``graph_topology_init`` SSE event with the complete static topology.
+
+    Called once at the start of each graph run so the frontend can pre-populate
+    subgraph container nodes (which never emit ``node_input`` / ``node_output``
+    events themselves) and know which inner nodes belong to which subgraph.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+    """
+    from backend.graph.topology import get_graph_topology  # deferred
+
+    topology = get_graph_topology()
+    await publish_node_lifecycle(
+        thread_id,
+        {
+            "event": "graph_topology_init",
+            "outer_nodes": [n.model_dump() for n in topology.outer_nodes],
+            "subgraphs": {
+                name: {"nodes": [n.model_dump() for n in sg.nodes]}
+                for name, sg in topology.subgraphs.items()
+            },
+        },
+    )
+
+
+__all__ = ["emit_node_input", "emit_node_output", "emit_node_status", "emit_graph_topology"]

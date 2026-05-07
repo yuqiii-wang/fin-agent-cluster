@@ -1,28 +1,44 @@
-# Centrifugo WebSocket routes -- real-time event streaming via two Centrifugo nodes.
-# Each route proxies WebSocket (and HTTP) connections to the corresponding Centrifugo shard.
-# strip_path: true removes the /centrifugo-{n} prefix so Centrifugo sees the path as
-# /connection/websocket, /api, /health, etc.
+# Centrifugo WebSocket routes -- real-time event streaming via dedicated Centrifugo nodes.
 #
-# The Centrifugo JWT bootstrap endpoint is served via the auth router:
-#   GET /api/v1/auth/centrifugo/token?thread_id=...
-# See api/v1/auth/routes.yml for rate-limit configuration.
+# Architecture:
+#   centrifugo-sse-0/1  — SSE lifecycle events (started, completed, done, query_*, node_*, stream_*).
+#                         Thread sharded by SHA-256 % 2.  FastAPI publishes to the correct shard.
+#                         Frontend connects to the shard returned by /auth/centrifugo/sse-token.
+#   centrifugo-token-0/1 — LLM token streaming only.  Events published by Redis Stream consumer.
+#                          Frontend connects optionally when token streaming is needed.
 #
-# WebSocket connections (from browser via centrifuge JS SDK):
-#   WS  /centrifugo-0/connection/websocket      -- Centrifugo shard 0 (-> redis-0)
-#   WS  /centrifugo-1/connection/websocket      -- Centrifugo shard 1 (-> redis-1)
+# The Centrifugo JWT bootstrap endpoints are served via the auth router:
+#   GET /api/v1/auth/centrifugo/token?thread_id=       -- token-stream (centrifugo-token-0/1)
+#   GET /api/v1/auth/centrifugo/sse-token?thread_id=   -- SSE lifecycle (centrifugo-sse-0/1)
 routes:
-  # Centrifugo shard 0 -- WebSocket only
-  - name: route-centrifugo-0
-    service: centrifugo-0
+  # centrifugo-sse-0 -- SSE lifecycle events WebSocket (shard 0)
+  - name: route-centrifugo-sse-0
+    service: centrifugo-sse-0
     paths:
-      - /centrifugo-0
+      - /centrifugo-sse-0
     strip_path: true
     protocols: [ws, wss]
 
-  # Centrifugo shard 1 -- WebSocket only
-  - name: route-centrifugo-1
-    service: centrifugo-1
+  # centrifugo-sse-1 -- SSE lifecycle events WebSocket (shard 1)
+  - name: route-centrifugo-sse-1
+    service: centrifugo-sse-1
     paths:
-      - /centrifugo-1
+      - /centrifugo-sse-1
+    strip_path: true
+    protocols: [ws, wss]
+
+  # Centrifugo token shard 0 -- LLM token streaming WebSocket only
+  - name: route-centrifugo-token-0
+    service: centrifugo-token-0
+    paths:
+      - /centrifugo-token-0
+    strip_path: true
+    protocols: [ws, wss]
+
+  # Centrifugo token shard 1 -- LLM token streaming WebSocket only
+  - name: route-centrifugo-token-1
+    service: centrifugo-token-1
+    paths:
+      - /centrifugo-token-1
     strip_path: true
     protocols: [ws, wss]

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type React from "react";
 import type { ChatMessage, ThreadSummary } from "../types";
-import { cancelQuery, createAckHandlers, fetchHistory, openStream, submitQuery } from "../api";
+import { cancelQuery, createAckHandlers, fetchHistory, openSseStream, openTokenStream, submitQuery } from "../api";
 import { fetchQueryStatus } from "../api/queries";
 import { buildSseHandlers } from "./sseHandlers";
 import { sendDoneAck } from "../services/streaming";
@@ -173,13 +173,8 @@ export function useStreamSession(
       });
       ackConfirmedRef.current = false;
       const recoverAckHandlers = userToken ? createAckHandlers(thread.thread_id, userToken, "recoverThread") : {};
-      const close = openStream(thread.thread_id, userToken ?? "", {
+      const closeSse = openSseStream(thread.thread_id, userToken ?? "", {
         ...baseHandlers,
-        // Intercept token events to update stall-detection timer.
-        onToken: (data) => {
-          lastTokenAtRef.current = Date.now();
-          baseHandlers.onToken?.(data);
-        },
         // Handle query_received if recovering a thread that hasn't been ACKed yet.
         ...recoverAckHandlers,
         onQueryAckConfirmed: (data) => {
@@ -211,6 +206,13 @@ export function useStreamSession(
             });
         },
       });
+      const closeToken = openTokenStream(thread.thread_id, userToken ?? "", {
+        onToken: (data) => {
+          lastTokenAtRef.current = Date.now();
+          baseHandlers.onToken?.(data);
+        },
+      });
+      const close = () => { closeSse(); closeToken(); };
       closeRef.current = close;
       cleanupSse.current = close;
     }
@@ -300,13 +302,14 @@ export function useStreamSession(
             setLoading(false);
           },
         });
-        const close = openStream(threadId, userToken ?? "", {
-          ...nackBase,
+        const closeSse = openSseStream(threadId, userToken ?? "", nackBase);
+        const closeToken = openTokenStream(threadId, userToken ?? "", {
           onToken: (data) => {
             lastTokenAtRef.current = Date.now();
             nackBase.onToken?.(data);
           },
         });
+        const close = () => { closeSse(); closeToken(); };
         closeRef.current = close;
         cleanupSse.current = close;
         return;
@@ -357,13 +360,8 @@ export function useStreamSession(
       });
       ackConfirmedRef.current = false;
       const ackHandlers = createAckHandlers(threadId, userToken, "useStreamSession");
-      const close = openStream(threadId, userToken ?? "", {
+      const closeSse = openSseStream(threadId, userToken ?? "", {
         ...baseHandlers,
-        // Intercept token events to update stall-detection timer.
-        onToken: (data) => {
-          lastTokenAtRef.current = Date.now();
-          baseHandlers.onToken?.(data);
-        },
         ...ackHandlers,
         onQueryAckConfirmed: (data) => {
           ackConfirmedRef.current = true;
@@ -394,6 +392,13 @@ export function useStreamSession(
             });
         },
       });
+      const closeToken = openTokenStream(threadId, userToken ?? "", {
+        onToken: (data) => {
+          lastTokenAtRef.current = Date.now();
+          baseHandlers.onToken?.(data);
+        },
+      });
+      const close = () => { closeSse(); closeToken(); };
       closeRef.current = close;
       cleanupSse.current = close;
     } catch (err: unknown) {

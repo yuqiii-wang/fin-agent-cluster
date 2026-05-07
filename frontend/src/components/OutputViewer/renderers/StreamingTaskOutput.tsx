@@ -12,13 +12,13 @@
  *   not running  → "Completed"
  *
  * Used by:
- *   - OutputViewer (single-test task output for perf-token tasks)
+ *   - TaskStreamViewer (on-demand streaming in OutputViewer)
  *   - columns.tsx Streaming Output column (perf-test table)
  */
 
 import { Flex, Typography } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
-import { StreamingOutput } from "../../../components/OutputViewer/renderers/StreamingOutput";
+import { StreamingOutput } from "./StreamingOutput";
 
 const { Text } = Typography;
 
@@ -45,10 +45,10 @@ interface StreamingTaskOutputProps {
 }
 
 /**
- * Streaming task output component shared by perf-test table and single-test
- * OutputViewer.  Renders an "Awaiting streaming…" spinner when no tokens have
- * arrived yet, and switches to the live StreamingOutput view as soon as the
- * first token batch is received.
+ * Streaming task output component shared by perf-test table and OutputViewer.
+ * Renders an "Awaiting streaming…" spinner when no tokens have arrived yet,
+ * and switches to the live StreamingOutput view as soon as the first token
+ * batch is received.
  */
 export function StreamingTaskOutput({
   stream,

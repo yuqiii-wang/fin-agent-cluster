@@ -1,6 +1,6 @@
 """ORM models for graph node execution records and agent sub-tasks."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import BigInteger, ForeignKey, Index, Integer, String, TIMESTAMP, func
@@ -9,6 +9,71 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.db.postgres.base import Base
 from backend.db.postgres.types import QueryStatus, query_status_sa_type
+
+
+class Node(Base):
+    """Per-thread node identity registry — one row per unique node_id (UUID) per thread.
+
+    Tracks the node's type classification (Typical / Reference / Subgraph) and
+    the most-recent execution reference.  Rows are created on-first-seen and
+    updated via ``INSERT … ON CONFLICT DO UPDATE`` from
+    :func:`~backend.graph.utils.execution_log.upsert_node_record`.
+
+    Distinct from :class:`NodeExecution` which logs every individual run:
+    a node can execute many times (loops) but has exactly one ``nodes`` row
+    per thread that carries its current status and type metadata.
+    """
+
+    __tablename__ = "nodes"
+
+    __table_args__ = (
+        Index("fin_agents_nodes_thread_id_idx", "thread_id"),
+        Index("fin_agents_nodes_node_name_thread_id_idx", "node_name", "thread_id"),
+        Index(
+            "fin_agents_nodes_referenced_node_id_idx",
+            "referenced_node_id",
+            postgresql_where="referenced_node_id IS NOT NULL",
+        ),
+        {"schema": "fin_agents"},
+    )
+
+    # Governance UUID generated at node invocation time (matches node_executions.node_uuid).
+    node_id: Mapped[str] = mapped_column(String, primary_key=True)
+
+    thread_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("fin_agents.user_queries.thread_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    node_name: Mapped[str] = mapped_column(String, nullable=False)
+
+    # Node type: 'Typical' (default), 'Subgraph' (compiled sub-graph),
+    # or 'Reference' (pointer to another node).
+    type: Mapped[str] = mapped_column(String, nullable=False, default="Typical")
+
+    # For Reference nodes: the target node_id within the same thread.
+    # NULL for Typical and Subgraph nodes.
+    referenced_node_id: Mapped[Optional[str]] = mapped_column(
+        String,
+        ForeignKey("fin_agents.nodes.node_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    last_status: Mapped[Optional[str]] = mapped_column(query_status_sa_type, nullable=True)
+    last_node_execution_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger,
+        ForeignKey("fin_agents.node_executions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    last_executed_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, nullable=False, server_default=func.now()
+    )
 
 
 class NodeExecution(Base):

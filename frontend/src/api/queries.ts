@@ -126,15 +126,6 @@ export async function resumeQuery(threadId: string): Promise<QueryResponse> {
   return res.json();
 }
 
-export async function pauseQuery(threadId: string): Promise<QueryResponse> {
-  const res = await fetch(`${BASE}/users/query/${threadId}/pause`, { method: "POST" });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `HTTP ${res.status}`);
-  }
-  return res.json();
-}
-
 export async function cancelTaskByUuid(
   threadId: string,
   taskId: string,

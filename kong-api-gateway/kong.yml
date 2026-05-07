@@ -55,7 +55,7 @@ upstreams:
     weight: 100
   - target: host.docker.internal:8437
     weight: 100
-- name: centrifugo-0-upstream
+- name: centrifugo-token-0-upstream
   algorithm: round-robin
   healthchecks:
     active:
@@ -68,9 +68,9 @@ upstreams:
       http_path: /health
       timeout: 5
   targets:
-  - target: centrifugo-0:8000
+  - target: centrifugo-token-0:8000
     weight: 100
-- name: centrifugo-1-upstream
+- name: centrifugo-token-1-upstream
   algorithm: round-robin
   healthchecks:
     active:
@@ -83,7 +83,37 @@ upstreams:
       http_path: /health
       timeout: 5
   targets:
-  - target: centrifugo-1:8000
+  - target: centrifugo-token-1:8000
+    weight: 100
+- name: centrifugo-sse-0-upstream
+  algorithm: round-robin
+  healthchecks:
+    active:
+      healthy:
+        interval: 10
+        successes: 1
+      unhealthy:
+        interval: 5
+        http_failures: 3
+      http_path: /health
+      timeout: 5
+  targets:
+  - target: centrifugo-sse-0:8000
+    weight: 100
+- name: centrifugo-sse-1-upstream
+  algorithm: round-robin
+  healthchecks:
+    active:
+      healthy:
+        interval: 10
+        successes: 1
+      unhealthy:
+        interval: 5
+        http_failures: 3
+      http_path: /health
+      timeout: 5
+  targets:
+  - target: centrifugo-sse-1:8000
     weight: 100
 services:
 - name: fastapi-runner
@@ -100,15 +130,29 @@ services:
   connect_timeout: 10000
   write_timeout: 30000
   read_timeout: 30000
-- name: centrifugo-0
-  host: centrifugo-0-upstream
+- name: centrifugo-token-0
+  host: centrifugo-token-0-upstream
   port: 80
   protocol: ws
   connect_timeout: 10000
   write_timeout: 3600000
   read_timeout: 3600000
-- name: centrifugo-1
-  host: centrifugo-1-upstream
+- name: centrifugo-token-1
+  host: centrifugo-token-1-upstream
+  port: 80
+  protocol: ws
+  connect_timeout: 10000
+  write_timeout: 3600000
+  read_timeout: 3600000
+- name: centrifugo-sse-0
+  host: centrifugo-sse-0-upstream
+  port: 80
+  protocol: ws
+  connect_timeout: 10000
+  write_timeout: 3600000
+  read_timeout: 3600000
+- name: centrifugo-sse-1
+  host: centrifugo-sse-1-upstream
   port: 80
   protocol: ws
   connect_timeout: 10000
@@ -144,18 +188,34 @@ routes:
   protocols:
   - http
   - https
-- name: route-centrifugo-0
-  service: centrifugo-0
+- name: route-centrifugo-sse-0
+  service: centrifugo-sse-0
   paths:
-  - /centrifugo-0
+  - /centrifugo-sse-0
   strip_path: true
   protocols:
   - ws
   - wss
-- name: route-centrifugo-1
-  service: centrifugo-1
+- name: route-centrifugo-sse-1
+  service: centrifugo-sse-1
   paths:
-  - /centrifugo-1
+  - /centrifugo-sse-1
+  strip_path: true
+  protocols:
+  - ws
+  - wss
+- name: route-centrifugo-token-0
+  service: centrifugo-token-0
+  paths:
+  - /centrifugo-token-0
+  strip_path: true
+  protocols:
+  - ws
+  - wss
+- name: route-centrifugo-token-1
+  service: centrifugo-token-1
+  paths:
+  - /centrifugo-token-1
   strip_path: true
   protocols:
   - ws

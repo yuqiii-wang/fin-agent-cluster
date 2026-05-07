@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     DATABASE_REDIS_URL: str = "redis://127.0.0.1:3456"
     # Ordered list of Redis node URLs for hash-based shard routing.
     # Comma-separated when provided via environment variable, e.g.:
-    #   DATABASE_REDIS_NODES=redis://redis-0:6379,redis://redis-1:6379
+    #   DATABASE_REDIS_NODES=redis://redis-token-0:6379,redis://redis-token-1:6379
     # When empty, the router falls back to DATABASE_REDIS_URL as a single node.
     DATABASE_REDIS_NODES: list[str] = []
     DB_CONNECT_TIMEOUT_SECONDS: int = 8
@@ -103,10 +103,19 @@ class Settings(BaseSettings):
     # ── Centrifugo real-time messaging ────────────────────────────────────────
     # Internal HTTP API URLs of the two Centrifugo nodes (WSL2 → Docker via mapped ports).
     # Comma-separated when provided via environment variable.
-    # Ordering MUST match DATABASE_REDIS_NODES: index 0 = centrifugo-0 → redis-0.
+    # Ordering MUST match DATABASE_REDIS_NODES: index 0 = centrifugo-token-0 → redis-token-0.
+    # These nodes are ONLY used for LLM token streaming (Redis Stream consumers).
     CENTRIFUGO_NODES: list[str] = [
         "http://127.0.0.1:8101",
         "http://127.0.0.1:8102",
+    ]
+    # Internal HTTP API URLs of the dedicated SSE Centrifugo nodes (centrifugo-sse-0/1).
+    # All lifecycle events (started, completed, done, query_*, node_*, stream_*) are
+    # published here via FastAPI HTTP API.  Thread sharded by SHA-256 % len.
+    # Token events stay in centrifugo-token-0/1.
+    CENTRIFUGO_SSE_NODES: list[str] = [
+        "http://127.0.0.1:8103",
+        "http://127.0.0.1:8104",
     ]
     # Shared HMAC secret used to sign Centrifugo connection / subscription JWTs.
     CENTRIFUGO_SECRET: str = "centrifugo-dev-secret-key"
@@ -142,6 +151,17 @@ class Settings(BaseSettings):
     @_fv("CENTRIFUGO_NODES", mode="before")
     @classmethod
     def _coerce_centrifugo_nodes(cls, v: object) -> object:
+        """Coerce a comma-separated string into a list before validation."""
+        if isinstance(v, str):
+            stripped = v.strip()
+            if not stripped:
+                return []
+            return [node.strip() for node in stripped.split(",") if node.strip()]
+        return v
+
+    @_fv("CENTRIFUGO_SSE_NODES", mode="before")
+    @classmethod
+    def _coerce_centrifugo_sse_nodes(cls, v: object) -> object:
         """Coerce a comma-separated string into a list before validation."""
         if isinstance(v, str):
             stripped = v.strip()

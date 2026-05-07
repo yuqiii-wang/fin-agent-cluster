@@ -99,14 +99,35 @@ async def lifespan(app: FastAPI):
         logger.info("[startup] Celery workers detected — LLM invocations delegated to Celery")
     else:
         _fallback_tasks = await start_fallback_workers()
-    yield
-    # Cancel the cancel-signal listener on shutdown.
-    _cancel_task.cancel()
-    # Cancel fallback tasks on shutdown (no-op if Celery was used)
-    for task in _fallback_tasks:
-        task.cancel()
-    # Close shared PostgreSQL connection pools.
-    await _close_pools()
+    try:
+        yield
+    finally:
+        # ── Graceful shutdown: cancel all running LangGraph queries ──
+        from backend.api.registry import running_tasks
+        import traceback
+        import sys
+        errors = []
+        for thread_id, task in list(running_tasks.items()):
+            if not task.done():
+                try:
+                    # Cancel the task to trigger cleanup (handled by runner)
+                    task.cancel()
+                except Exception as exc:
+                    errors.append((thread_id, str(exc), traceback.format_exc()))
+        # Wait for all tasks to finish/cancel
+        await asyncio.gather(*[t for t in running_tasks.values()], return_exceptions=True)
+        if errors:
+            for thread_id, err, tb in errors:
+                logger.error(f"[GRAPH_SHUTDOWN_FAILED] Error shutting down thread_id={thread_id}: {err}\n{tb}")
+        else:
+            logger.info("[GRAPH_SHUTDOWN_IN_PROGRESS] All running LangGraph queries cancelled.")
+        # Cancel the cancel-signal listener on shutdown.
+        _cancel_task.cancel()
+        # Cancel fallback tasks on shutdown (no-op if Celery was used)
+        for task in _fallback_tasks:
+            task.cancel()
+        # Close shared PostgreSQL connection pools.
+        await _close_pools()
 
 
 app = FastAPI(title="Financial Agent Cluster", version="1.0.0", lifespan=lifespan)

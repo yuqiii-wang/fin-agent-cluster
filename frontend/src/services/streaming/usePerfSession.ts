@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type React from "react";
-import { cancelQuery, createAckHandlers, openStream } from "../../api";
+import { cancelQuery, createAckHandlers, openSseStream, openTokenStream } from "../../api";
 import type { PendingTokenPatch, PerfTestConfig, ThreadSession } from "../../components/StreamingPerfTestPanel/types";
 import {
   createSessionClosureState,
@@ -84,13 +84,12 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
 
       console.info("[perf] opening stream thread_id=%s", thread_id);
 
-      const cleanup = openStream(thread_id, userToken, {
+      const closeSse = openSseStream(thread_id, userToken, {
         ...createAckHandlers(thread_id, userToken, "perf"),
         onQueryStatus,
         onIngestComplete,
         onStarted,
         onCompleted,
-        onTokenBatch,
         onStreamStopped,
         onStreamComplete,
         onDone,
@@ -98,6 +97,8 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
         onCancelled,
         onClose,
       });
+      const closeToken = openTokenStream(thread_id, userToken, { onTokenBatch });
+      const cleanup = () => { closeSse(); closeToken(); };
 
       // Register cleanup for freezeAll and the last-resort safety timeout.
       // helpers.dequeue() removes both when a terminal event fires.

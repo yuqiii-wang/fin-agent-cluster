@@ -102,6 +102,27 @@ CREATE INDEX IF NOT EXISTS fin_agents_node_executions_node_uuid_idx ON fin_agent
     WHERE node_uuid IS NOT NULL;
 
 
+CREATE TABLE IF NOT EXISTS fin_agents.nodes (
+    node_id          TEXT NOT NULL PRIMARY KEY,
+    thread_id        TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
+    node_name        TEXT NOT NULL,
+    type             TEXT CHECK 
+                    (type IN ('Typical', 'Reference', 'Subgraph')) NOT NULL DEFAULT 'Typical',
+    -- For Reference nodes: points to the target node_id within the same thread.
+    -- NULL for Typical and Subgraph nodes.
+    referenced_node_id TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE SET NULL,
+    last_status        fin_agents.query_status,
+    last_node_execution_id BIGINT REFERENCES fin_agents.node_executions (id) ON DELETE SET NULL,
+    last_executed_at   TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS fin_agents_nodes_thread_id_idx ON fin_agents.nodes (thread_id);
+CREATE INDEX IF NOT EXISTS fin_agents_nodes_node_name_thread_id_idx ON fin_agents.nodes (node_name, thread_id);
+CREATE INDEX IF NOT EXISTS fin_agents_nodes_referenced_node_id_idx ON fin_agents.nodes (referenced_node_id)
+    WHERE referenced_node_id IS NOT NULL;
+
 -- Sub-tasks emitted by each graph node (one row per fetch / LLM call).
 -- task_id is the primary key — the governance UUID generated in-node,
 -- eliminating the dual-identity problem of having both a numeric id and a uuid.

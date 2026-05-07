@@ -2,13 +2,16 @@
  * OutputViewer — smart output renderer for agent task/node output fields.
  *
  * Routing logic:
- *  1. LLM streaming (stream tokens present) → StreamingOutput
+ *  1. Task pending                           → spinner
  *  2. Task failed                            → ErrorDisplay
- *  3. Task running (LLM, no tokens yet)      → LlmWaitingStatus
- *  4. Task running (non-LLM)                 → RunningDescription (task_name label)
- *  5. Candlestick bars present               → CandlestickOutput
- *  6. Any other completed output             → JsonOutput
- *  7. No output                              → "No output available"
+ *  3. Perf-token task, stream prop provided  → StreamingTaskOutput (parent-managed)
+ *  4. Perf-token task, no stream prop        → TaskStreamViewer (self-managed Centrifugo)
+ *  5. LLM streaming (stream tokens present)  → StreamingOutput
+ *  6. Task running (LLM, no tokens yet)      → LlmWaitingStatus
+ *  7. Task running (non-LLM)                 → RunningDescription (task_name label)
+ *  8. Candlestick bars present               → CandlestickOutput
+ *  9. Any other completed output             → JsonOutput
+ * 10. No output                              → "No output available"
  */
 
 import { Flex, Typography } from "antd";
@@ -21,9 +24,10 @@ import {
   ErrorDisplay,
 } from "./subRenderers";
 import { StreamingOutput } from "./renderers/StreamingOutput";
+import { StreamingTaskOutput } from "./renderers/StreamingTaskOutput";
+import { TaskStreamViewer } from "./renderers/TaskStreamViewer";
 import { JsonOutput } from "./renderers/JsonOutput";
 import { CandlestickOutput } from "./renderers/CandlestickOutput";
-import { StreamingTaskOutput } from "../../services/streaming/core";
 
 export { isLlmTask, isPerfTokenTask };
 
@@ -73,15 +77,29 @@ export function OutputViewer({ task, stream, provider, taskMeta, tokenCount }: P
     stream ??
     (typeof task.output?.text === "string" ? (task.output.text as string) : undefined);
 
-  // Perf-token tasks (token_batch emitters): always render StreamingTaskOutput —
-  // it handles both the "awaiting first batch" waiting state and the live stream view.
+  // Perf-token tasks (token_batch emitters).
+  //   • stream prop provided → parent (e.g. useSingleTestSession) is already managing
+  //     the Centrifugo subscription; use StreamingTaskOutput to display it.
+  //   • stream prop undefined → no external subscription; use TaskStreamViewer so
+  //     the user can open/close an on-demand Centrifugo session.
   if (isPerfSilent) {
+    if (stream !== undefined) {
+      return (
+        <StreamingTaskOutput
+          stream={displayStream}
+          isRunning={task.status === "running"}
+          tokenCount={tokenCount}
+          status={task.status}
+        />
+      );
+    }
     return (
-      <StreamingTaskOutput
-        stream={displayStream}
-        isRunning={task.status === "running"}
+      <TaskStreamViewer
+        task={task}
+        completedStream={
+          typeof task.output?.text === "string" ? task.output.text : undefined
+        }
         tokenCount={tokenCount}
-        status={task.status}
       />
     );
   }

@@ -79,6 +79,23 @@ class LLMCompletionMessage(BaseStreamMessage):
     thinking: Optional[str] = None
     answer: Optional[str] = None
 
+    @classmethod
+    def model_validate(cls, obj, *args, **kwargs):  # type: ignore[override]
+        """Coerce empty-string optional fields to None before validation.
+
+        Redis Streams store all values as strings; fields serialised as
+        ``None`` are round-tripped as ``""`` (empty string).  Convert them
+        back to ``None`` so FK constraints (task_id) and nullable columns
+        receive the correct SQL NULL.
+        """
+        _NULLABLE = ("thread_id", "task_id", "task_name", "node_name", "prompts", "thinking", "answer")
+        if isinstance(obj, dict):
+            obj = {
+                k: (None if k in _NULLABLE and v == "" else v)
+                for k, v in obj.items()
+            }
+        return super().model_validate(obj, *args, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # HTTP API response models

@@ -44,7 +44,7 @@ from backend.sse_notifications.thread import (
     emit_query_ack_confirmed,
     emit_query_status,
 )
-from backend.sse_notifications.node import emit_node_input, emit_node_output, emit_node_status
+from backend.sse_notifications.node import emit_node_input, emit_node_output, emit_node_status, emit_graph_topology
 from backend.sse_notifications.task import (
     TaskCancelledSignal,
     TaskControlAction,
@@ -109,6 +109,7 @@ __all__ = [
     "emit_node_input",
     "emit_node_output",
     "emit_node_status",
+    "emit_graph_topology",
     # mock
     "emit_ingest_complete",
     "emit_stream_complete",

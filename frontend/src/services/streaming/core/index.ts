@@ -32,8 +32,12 @@ export { UI_STREAMING_ERRORS, getErrorDescription } from "./errors";
 export { useTokenBatchFlush } from "./useTokenBatchFlush";
 export type { UseTokenBatchFlushReturn, DrainedBatch } from "./useTokenBatchFlush";
 
-// ── Shared streaming output component ────────────────────────────────────────
-export { StreamingTaskOutput } from "./StreamingTaskOutput";
+// ── Shared streaming output component (now lives in OutputViewer/renderers) ──
+export { StreamingTaskOutput } from "../../../components/OutputViewer/renderers/StreamingTaskOutput";
+
+// ── On-demand task stream hook ────────────────────────────────────────────────
+export { useTaskStream } from "./useTaskStream";
+export type { UseTaskStreamReturn, TaskStreamPhase } from "./useTaskStream";
 
 // ── Session state ─────────────────────────────────────────────────────────────
 export { createSessionClosureState } from "./sessionState";

@@ -1,7 +1,8 @@
 # Kong upstreams -- FastAPI backend (runners + assistants) and Centrifugo WebSocket shards.
 # HTTP/2 on Kong's HTTPS listener handles browser->Kong multiplexing (no 6-conn limit).
 # BACKEND_HOST / RUNNER_PORT_* / ASSISTANT_PORT_* are injected via environment variables.
-# CENTRIFUGO_0_HOST and CENTRIFUGO_1_HOST default to the Docker service names.
+# CENTRIFUGO_TOKEN_0_HOST / CENTRIFUGO_TOKEN_1_HOST default to Docker service names.
+# CENTRIFUGO_SSE_0_HOST / CENTRIFUGO_SSE_1_HOST default to Docker service names.
 upstreams:
   # Runner upstream — 4 full FastAPI instances that handle ALL request types including LangGraph.
   - name: runner-upstream
@@ -45,8 +46,8 @@ upstreams:
       - target: "{BACKEND_HOST}:{ASSISTANT_PORT_2}"
         weight: 100
 
-  # Centrifugo shard 0 -- backed by redis-0
-  - name: centrifugo-0-upstream
+  # Centrifugo token shard 0 -- backed by redis-token-0
+  - name: centrifugo-token-0-upstream
     algorithm: round-robin
     healthchecks:
       active:
@@ -59,11 +60,11 @@ upstreams:
         http_path: /health
         timeout: 5
     targets:
-      - target: "{CENTRIFUGO_0_HOST}:8000"
+      - target: "{CENTRIFUGO_TOKEN_0_HOST}:8000"
         weight: 100
 
-  # Centrifugo shard 1 -- backed by redis-1
-  - name: centrifugo-1-upstream
+  # Centrifugo token shard 1 -- backed by redis-token-1
+  - name: centrifugo-token-1-upstream
     algorithm: round-robin
     healthchecks:
       active:
@@ -76,6 +77,42 @@ upstreams:
         http_path: /health
         timeout: 5
     targets:
-      - target: "{CENTRIFUGO_1_HOST}:8000"
+      - target: "{CENTRIFUGO_TOKEN_1_HOST}:8000"
+        weight: 100
+
+  # centrifugo-sse-0 upstream -- backed by redis-sse-0.
+  # Shard 0 of the SSE lifecycle tier (thread_id SHA-256 % 2 == 0).
+  - name: centrifugo-sse-0-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        healthy:
+          interval: 10
+          successes: 1
+        unhealthy:
+          interval: 5
+          http_failures: 3
+        http_path: /health
+        timeout: 5
+    targets:
+      - target: "{CENTRIFUGO_SSE_0_HOST}:8000"
+        weight: 100
+
+  # centrifugo-sse-1 upstream -- backed by redis-sse-1.
+  # Shard 1 of the SSE lifecycle tier (thread_id SHA-256 % 2 == 1).
+  - name: centrifugo-sse-1-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        healthy:
+          interval: 10
+          successes: 1
+        unhealthy:
+          interval: 5
+          http_failures: 3
+        http_path: /health
+        timeout: 5
+    targets:
+      - target: "{CENTRIFUGO_SSE_1_HOST}:8000"
         weight: 100
 

@@ -33,6 +33,6 @@ export interface FinTaskSnapshot {
   task_id: string;
   node_name: string;
   task_name: string;
-  status: "running" | "completed" | "failed" | "cancelled" | "paused";
+  status: "running" | "completed" | "failed" | "cancelled";
   output: Record<string, unknown>;
 }

@@ -7,6 +7,7 @@ LLM dispatch via Celery workers: :func:`~celery_llm.dispatch_llm`.
 """
 
 from backend.graph.utils.celery_llm import dispatch_llm
+from backend.graph.utils.execution_log import resolve_node_reference, upsert_node_record
 
-__all__ = ["dispatch_llm"]
+__all__ = ["dispatch_llm", "upsert_node_record", "resolve_node_reference"]
 

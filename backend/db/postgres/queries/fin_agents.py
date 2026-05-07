@@ -48,8 +48,8 @@ class NodeExecutionSQL:
 
     INSERT = """
         INSERT INTO fin_agents.node_executions
-            (thread_id, node_name, input, output, started_at, elapsed_ms)
-        VALUES (%s, %s, %s::jsonb, %s::jsonb, %s, %s)
+            (thread_id, node_name, node_uuid, parent_node_execution_id, input, output, started_at, elapsed_ms)
+        VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
     """
 
     LIST_BY_THREAD = """
@@ -57,6 +57,51 @@ class NodeExecutionSQL:
         FROM fin_agents.node_executions
         WHERE thread_id = %s
         ORDER BY started_at
+    """
+
+
+class NodeSQL:
+    """Queries against ``fin_agents.nodes`` (per-thread node identity registry)."""
+
+    GET_BY_ID = """
+        SELECT *
+        FROM fin_agents.nodes
+        WHERE node_id = %s
+          AND thread_id = %s
+        LIMIT 1
+    """
+
+    LIST_BY_THREAD = """
+        SELECT *
+        FROM fin_agents.nodes
+        WHERE thread_id = %s
+        ORDER BY created_at
+    """
+
+    RESOLVE_REFERENCE = """
+        WITH RECURSIVE ref_chain AS (
+            SELECT node_id, thread_id, node_name, type, referenced_node_id,
+                   last_status, last_node_execution_id, last_executed_at,
+                   created_at, updated_at,
+                   0 AS depth
+            FROM fin_agents.nodes
+            WHERE node_id = %s
+              AND thread_id = %s
+            UNION ALL
+            SELECT n.node_id, n.thread_id, n.node_name, n.type, n.referenced_node_id,
+                   n.last_status, n.last_node_execution_id, n.last_executed_at,
+                   n.created_at, n.updated_at,
+                   rc.depth + 1
+            FROM fin_agents.nodes n
+            JOIN ref_chain rc ON n.node_id = rc.referenced_node_id
+                              AND n.thread_id = rc.thread_id
+                              AND rc.type = 'Reference'
+                              AND rc.depth < 10
+        )
+        SELECT * FROM ref_chain
+        WHERE type != 'Reference'
+        ORDER BY depth
+        LIMIT 1
     """
 
 
