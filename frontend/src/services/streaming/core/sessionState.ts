@@ -55,6 +55,17 @@ export interface SessionClosureState {
   batchCount: number;
   /** EventSource cleanup ref — used by dequeue() to close the connection early. */
   esCleanup: (() => void) | null;
+  /**
+   * Timer handle for the "lost" detection path.
+   * Armed when a completion signal arrives with zero tokens received; if no
+   * token arrives within 5 s the session is marked "lost" and closed.
+   */
+  lostTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * Human-readable reason recorded when the safety timeout fires.
+   * Propagated to ThreadSession.close_reason for UI tooltip display.
+   */
+  closeReason: string | null;
 }
 
 /** Create the initial mutable closure state for a new perf-test session. */
@@ -75,5 +86,7 @@ export function createSessionClosureState(initialTokenCount: number): SessionClo
     batchSum: 0,
     batchCount: 0,
     esCleanup: null,
+    lostTimer: null,
+    closeReason: null,
   };
 }

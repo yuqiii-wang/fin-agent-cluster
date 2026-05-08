@@ -46,6 +46,11 @@ export function createTokenHandler(
         "[perf] FIRST token batch thread_id=%s count=%d sessionStatus=%s",
         thread_id, count, state.sessionStatus,
       );
+      // Cancel lost-detection timer — at least one token arrived.
+      if (state.lostTimer !== null) {
+        clearTimeout(state.lostTimer);
+        state.lostTimer = null;
+      }
     }
 
     // Capture ingest_ms embedded in the final batch by the Celery worker.
@@ -70,11 +75,12 @@ export function createTokenHandler(
     const recentTokens = d.recent_tokens ?? [];
     const stream_text = (state.tokensReceived > recentTokens.length ? "…\n" : "") + recentTokens.join("\n");
 
-    // Concurrency: ingest and delivery are simultaneous at a fixed TPS rate.
-    // The backend never emits query_status:digesting, so the frontend must
-    // self-transition on the first token batch.
+    // Self-transition to "digesting" on the first token batch for both modes:
+    // - Concurrency: ingest and delivery are simultaneous; backend never emits digesting.
+    // - Throughput: backend emits digesting AFTER all tokens are written to Redis Stream,
+    //   but centrifugo-token may deliver batches before the digesting SSE arrives via
+    //   centrifugo-sse, so the lifecycle event races against token delivery.
     const wasPreDigesting =
-      config.testMode === "concurrency" &&
       (state.sessionStatus === "connecting" || state.sessionStatus === "received" ||
        state.sessionStatus === "preparing" || state.sessionStatus === "ingesting");
     if (wasPreDigesting) state.sessionStatus = "digesting";

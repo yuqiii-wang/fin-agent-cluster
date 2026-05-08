@@ -46,7 +46,7 @@ upstreams:
       - target: "{BACKEND_HOST}:{ASSISTANT_PORT_2}"
         weight: 100
 
-  # Centrifugo token shard 0 -- backed by redis-token-0
+  # Centrifugo token shard 0 -- backed by redis-0
   - name: centrifugo-token-0-upstream
     algorithm: round-robin
     healthchecks:
@@ -63,7 +63,7 @@ upstreams:
       - target: "{CENTRIFUGO_TOKEN_0_HOST}:8000"
         weight: 100
 
-  # Centrifugo token shard 1 -- backed by redis-token-1
+  # Centrifugo token shard 1 -- backed by redis-1
   - name: centrifugo-token-1-upstream
     algorithm: round-robin
     healthchecks:
@@ -80,7 +80,7 @@ upstreams:
       - target: "{CENTRIFUGO_TOKEN_1_HOST}:8000"
         weight: 100
 
-  # centrifugo-sse-0 upstream -- backed by redis-sse-0.
+  # centrifugo-sse-0 upstream -- backed by redis-0 DB 1.
   # Shard 0 of the SSE lifecycle tier (thread_id SHA-256 % 2 == 0).
   - name: centrifugo-sse-0-upstream
     algorithm: round-robin
@@ -98,7 +98,7 @@ upstreams:
       - target: "{CENTRIFUGO_SSE_0_HOST}:8000"
         weight: 100
 
-  # centrifugo-sse-1 upstream -- backed by redis-sse-1.
+  # centrifugo-sse-1 upstream -- backed by redis-1 DB 1.
   # Shard 1 of the SSE lifecycle tier (thread_id SHA-256 % 2 == 1).
   - name: centrifugo-sse-1-upstream
     algorithm: round-robin

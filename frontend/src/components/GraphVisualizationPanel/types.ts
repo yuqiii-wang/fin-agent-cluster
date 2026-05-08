@@ -24,9 +24,9 @@ export interface InnerSubgraphTopology {
 }
 
 export interface GraphTopology {
-  /** Outer-level nodes including subgraph containers and outer typical nodes. */
+  /** Outer-level nodes including graph containers and outer typical nodes. */
   outer_nodes: GraphTopologyNode[];
-  /** Inner topology keyed by subgraph container node name. */
+  /** Inner topology keyed by graph container node name. */
   subgraphs: Record<string, InnerSubgraphTopology>;
 }
 
@@ -69,6 +69,8 @@ export interface GraphNode {
 
 export interface GraphTask {
   task_id: string;
+  /** LangGraph thread UUID — set from the task_started event; used by TaskStreamViewer. */
+  thread_id?: string;
   node_name: string;
   task_name: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -102,7 +104,7 @@ export type GraphEvent =
   | { type: "node_input"; node_execution_id: number; node_name: string; parent_node_execution_ids: number[]; input: Record<string, unknown>; node_type?: string; subgraph_parent?: string; ts: number }
   | { type: "node_output"; node_execution_id: number; node_name: string; output: Record<string, unknown>; elapsed_ms: number; ended_at_ms?: number; ts: number }
   | { type: "node_status"; node_id: string; node_name: string; status: string; ended_at_ms?: number; ts: number }
-  | { type: "task_started"; task_id: string; node_name: string; task_name: string; input: Record<string, unknown>; ts: number }
+  | { type: "task_started"; task_id: string; thread_id: string; node_name: string; task_name: string; input: Record<string, unknown>; ts: number }
   | { type: "task_terminal"; task_id: string; node_name: string; task_name: string; status: string; output: unknown; ts: number }
   | { type: "done"; status: string; ts: number }
   | { type: "reset" }

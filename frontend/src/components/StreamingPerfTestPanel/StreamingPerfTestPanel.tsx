@@ -318,7 +318,7 @@ export function StreamingPerfTestPanel({
               {singleTest.session.thread_id}
             </Typography.Text>
           )}
-          <GraphVisualizationPanel graphState={singleTest.graphState} threadId={singleTest.session?.thread_id} onResume={singleTest.resumeRequest} isPendingControl={singleTest.isPendingControl} />
+          <GraphVisualizationPanel graphState={singleTest.graphState} threadId={singleTest.session?.thread_id} tokenStreams={singleTest.tokenStreams} tokenCounts={singleTest.tokenCounts} onResume={singleTest.resumeRequest} isPendingControl={singleTest.isPendingControl} />
         </div>
       )}
 

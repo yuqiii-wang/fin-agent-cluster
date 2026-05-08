@@ -18,6 +18,7 @@ import type { SessionClosureState } from "./sessionState";
 import type { PerfTestConfig, ThreadSession } from "../../../components/StreamingPerfTestPanel/types";
 import { TERMINAL_STATUSES } from "../../../components/StreamingPerfTestPanel/types";
 import type { SessionHelpers } from "./sessionHelpers";
+import { fetchTasks } from "../../../api";
 
 export interface TerminalHandlerDeps {
   thread_id: string;
@@ -37,6 +38,36 @@ export function createTerminalHandlers(
 ) {
   const { thread_id, config, patch } = deps;
   const { terminate, activateDrainGuard, probeBackend } = helpers;
+
+  /**
+   * Arm the 5-second lost-token detection window.
+   * Called when a completion signal arrives but zero tokens have been received.
+   * If no token arrives within 5 s the session is marked "lost".
+   */
+  function armLostDetection(): void {
+    if (state.lostTimer !== null) return; // already armed
+    state.lostTimer = setTimeout(async () => {
+      state.lostTimer = null;
+      if (state.sessionClosed || state.tokensReceived > 0) return;
+      // Confirm backend task is truly completed by querying tasks API.
+      try {
+        const sessionStatus = await fetchTasks(thread_id);
+        const allDone = sessionStatus.tasks.every(
+          (t) => TERMINAL_STATUSES.has(t.status as ThreadSession["status"]),
+        );
+        if (!allDone) return; // tasks still running — not lost yet
+      } catch {
+        // If the API call fails, still mark lost since we already have a completed signal.
+      }
+      if (state.sessionClosed || state.tokensReceived > 0) return;
+      console.error(
+        "[perf] LOST thread_id=%s — backend completed but zero tokens delivered after 5s. "
+        + "Check Centrifugo consumer lag on fin:llm:tokens.",
+        thread_id,
+      );
+      terminate("lost", /* ackDone */ true);
+    }, 5_000);
+  }
 
   const onStreamStopped = (data: unknown): void => {
     const d = data as { stream_id?: string; node_id?: string; duration_secs?: number; total_published?: number; ingest_ms?: number };
@@ -107,6 +138,7 @@ export function createTerminalHandlers(
         state.actualTokensExpected - state.tokensReceived, thread_id,
       );
       probeBackend("perf_test_complete_early");
+      if (state.tokensReceived === 0) armLostDetection();
       return;
     }
     const concurrencyComplete = config.testMode === "concurrency";
@@ -152,6 +184,7 @@ export function createTerminalHandlers(
         state.actualTokensExpected - state.tokensReceived, thread_id,
       );
       probeBackend("done_early");
+      if (state.tokensReceived === 0) armLostDetection();
       activateDrainGuard("completed");
       return;
     }

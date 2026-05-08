@@ -136,7 +136,7 @@ async def run_throughput_task(
 
     # Ingest complete -- transition to digesting phase.
     await set_query_phase(thread_id, "digesting")
-    await emit_query_status(thread_id, "digesting")
+    await emit_query_status(thread_id, "digesting", stream_id=stream_id)
 
     pub_ms = int((time.monotonic() - t_pub) * 1000)
     tps_val = produced / max(pub_ms / 1000, 0.001)

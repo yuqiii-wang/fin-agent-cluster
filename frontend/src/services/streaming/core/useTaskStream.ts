@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { openSseStream, openTokenStream } from "../../../api/stream";
+import { openTokenStream } from "../../../api/stream";
 import { getStoredToken } from "../../../api";
 
 export type TaskStreamPhase = "idle" | "connecting" | "streaming" | "done" | "error";
@@ -51,6 +51,8 @@ export function useTaskStream(
   // Pending token data — SET semantics for text (latest batch wins), ADD for count delta.
   const pendingTextRef = useRef<string | null>(null);
   const pendingCountRef = useRef(0);
+  // Accumulated text for single-token mode (opt-in streaming).
+  const accTextRef = useRef("");
   // Ref-tracked phase so Centrifugo event callbacks see current value without
   // stale closure issues.
   const phaseRef = useRef<TaskStreamPhase>("idle");
@@ -59,6 +61,13 @@ export function useTaskStream(
     if (flushRef.current != null) {
       clearInterval(flushRef.current);
       flushRef.current = null;
+      // Flush any buffered tokens that haven't been committed to state yet.
+      const txt = pendingTextRef.current;
+      const cnt = pendingCountRef.current;
+      pendingTextRef.current = null;
+      pendingCountRef.current = 0;
+      if (txt !== null) setStreamText(txt);
+      if (cnt > 0) setTokenCount((prev) => prev + cnt);
     }
     cleanupRef.current?.();
     cleanupRef.current = null;
@@ -67,10 +76,17 @@ export function useTaskStream(
   useEffect(() => {
     if (!enabled || !threadId) {
       teardown();
-      phaseRef.current = "idle";
-      setPhase("idle");
-      setStreamText("");
-      setTokenCount(0);
+      // If we were streaming, transition to "done" and preserve accumulated text.
+      // Only reset to idle if we never reached streaming (connecting/error/idle).
+      if (phaseRef.current === "streaming") {
+        phaseRef.current = "done";
+        setPhase("done");
+      } else {
+        phaseRef.current = "idle";
+        setPhase("idle");
+        setStreamText("");
+        setTokenCount(0);
+      }
       return;
     }
 
@@ -83,6 +99,7 @@ export function useTaskStream(
 
     // Reset for fresh subscription.
     totalRef.current = 0;
+    accTextRef.current = "";
     pendingTextRef.current = null;
     pendingCountRef.current = 0;
     setStreamText("");
@@ -101,21 +118,20 @@ export function useTaskStream(
       if (cnt > 0) setTokenCount((prev) => prev + cnt);
     }, 100);
 
-    const closeSse = openSseStream(threadId, userToken, {
-      onDone: () => {
-        phaseRef.current = "done";
-        setPhase("done");
-      },
-      onFailed: () => {
-        phaseRef.current = "error";
-        setPhase("error");
-      },
-      onCancelled: () => {
-        phaseRef.current = "done";
-        setPhase("done");
-      },
-    });
     const closeToken = openTokenStream(threadId, userToken, {
+      onToken: (data) => {
+        const d = data as { data?: string };
+        const tok = d.data ?? "";
+        if (!tok) return;
+        totalRef.current += 1;
+        accTextRef.current += tok;
+        pendingTextRef.current = accTextRef.current;
+        pendingCountRef.current += 1;
+        if (phaseRef.current !== "streaming") {
+          phaseRef.current = "streaming";
+          setPhase("streaming");
+        }
+      },
       onTokenBatch: (data) => {
         const d = data as { count?: number; recent_tokens?: string[] };
         const recentTokens = d.recent_tokens ?? [];
@@ -134,9 +150,7 @@ export function useTaskStream(
         }
       },
     });
-    const combined = () => { closeSse(); closeToken(); };
-
-    cleanupRef.current = combined;
+    cleanupRef.current = closeToken;
     return teardown;
   }, [enabled, threadId, teardown]);
 

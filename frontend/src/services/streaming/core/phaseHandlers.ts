@@ -110,7 +110,7 @@ export function createPhaseHandlers(
     const d = data as { task_name?: string; output?: Record<string, unknown> };
     const key = d?.task_name ?? "";
     console.info("[perf] task completed %s key=%s", thread_id, key);
-    if (key === "mock_runner.throughput" || key === "mock_runner.concurrency") {
+    if (key === "MOCK_RUNNER_THROUGHPUT" || key === "MOCK_RUNNER_CONCURRENCY") {
       // Capture the authoritative published count from the backend task output.
       const backendPublished = d?.output?.["total_published"];
       if (typeof backendPublished === "number" && backendPublished > 0) {

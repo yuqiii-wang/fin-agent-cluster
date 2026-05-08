@@ -34,10 +34,10 @@ NODE_TYPE_REFERENCE: str = "Reference"
 # 'Reference' nodes are registered explicitly when introduced.
 
 _NODE_TYPE_REGISTRY: dict[str, str] = {
-    # ── Outer-graph subgraph containers ─────────────────────────────────────
-    "mock_perf_subgraph": NODE_TYPE_SUBGRAPH,
-    "mock_single_subgraph": NODE_TYPE_SUBGRAPH,
-    "fin_analyst_subgraph": NODE_TYPE_SUBGRAPH,
+    # ── Outer-graph graph containers ─────────────────────────────────────
+    "mock_perf_graph": NODE_TYPE_SUBGRAPH,
+    "mock_single_graph": NODE_TYPE_SUBGRAPH,
+    "fin_analyst_graph": NODE_TYPE_SUBGRAPH,
     # ── Outer-graph typical nodes (direct callables) ─────────────────────────
     "mock_analysis": NODE_TYPE_TYPICAL,
     "mock_report": NODE_TYPE_TYPICAL,
@@ -60,16 +60,16 @@ _NODE_TYPE_REGISTRY: dict[str, str] = {
 # Subgraph membership: maps each subgraph name to its direct inner nodes.
 # Used to derive node_type and subgraph_parent at SSE emit time.
 # ---------------------------------------------------------------------------
-_SUBGRAPH_MEMBERS: dict[str, list[str]] = {
-    "mock_perf_subgraph": ["perf_runner", "query_node", "news_node", "stats_node", "merge_node"],
-    "mock_single_subgraph": ["query", "mock_news", "mock_stats", "merge"],
-    "fin_analyst_subgraph": ["fin_analyst_runner"],
+_GRAPH_MEMBERS: dict[str, list[str]] = {
+    "mock_perf_graph": ["perf_runner", "query_node", "news_node", "stats_node", "merge_node"],
+    "mock_single_graph": ["query", "mock_news", "mock_stats", "merge"],
+    "fin_analyst_graph": ["fin_analyst_runner"],
 }
 
-# Reverse map: inner node name → parent subgraph name
-_NODE_SUBGRAPH_PARENT: dict[str, str] = {
-    member: subgraph
-    for subgraph, members in _SUBGRAPH_MEMBERS.items()
+# Reverse map: inner node name → parent graph name
+_NODE_GRAPH_PARENT: dict[str, str] = {
+    member: graph
+    for graph, members in _GRAPH_MEMBERS.items()
     for member in members
 }
 
@@ -90,28 +90,28 @@ def get_node_type(node_name: str) -> str:
     return _NODE_TYPE_REGISTRY.get(node_name, NODE_TYPE_TYPICAL)
 
 
-def get_subgraph_members(subgraph_name: str) -> list[str]:
-    """Return the list of inner node names for a given subgraph.
+def get_graph_members(graph_name: str) -> list[str]:
+    """Return the list of inner node names for a given graph container.
 
     Args:
-        subgraph_name: The LangGraph subgraph node name.
+        graph_name: The LangGraph graph container node name.
 
     Returns:
-        List of inner node name strings; empty list for unknown subgraphs.
+        List of inner node name strings; empty list for unknown graphs.
     """
-    return _SUBGRAPH_MEMBERS.get(subgraph_name, [])
+    return _GRAPH_MEMBERS.get(graph_name, [])
 
 
-def get_node_subgraph_parent(node_name: str) -> str | None:
-    """Return the subgraph name that owns *node_name*, or ``None`` for outer nodes.
+def get_node_graph_parent(node_name: str) -> str | None:
+    """Return the graph container name that owns *node_name*, or ``None`` for outer nodes.
 
     Args:
         node_name: A LangGraph node name.
 
     Returns:
-        The parent subgraph name string, or ``None`` if the node is not an inner node.
+        The parent graph container name string, or ``None`` if the node is not an inner node.
     """
-    return _NODE_SUBGRAPH_PARENT.get(node_name)
+    return _NODE_GRAPH_PARENT.get(node_name)
 
 
 __all__ = [
@@ -119,6 +119,6 @@ __all__ = [
     "NODE_TYPE_SUBGRAPH",
     "NODE_TYPE_REFERENCE",
     "get_node_type",
-    "get_subgraph_members",
-    "get_node_subgraph_parent",
+    "get_graph_members",
+    "get_node_graph_parent",
 ]

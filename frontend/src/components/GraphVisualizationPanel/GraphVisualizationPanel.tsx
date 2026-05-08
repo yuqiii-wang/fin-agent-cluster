@@ -143,6 +143,26 @@ export function GraphVisualizationPanel({
     return map;
   }, [tasks]);
 
+  // ── Timeline nodes ────────────────────────────────────────────────────────
+  // When zoomed into a subgraph, show individual inner nodes on the timeline.
+  // In the outer view, replace synthetic subgraph containers with aggregated
+  // timing derived from their inner nodes (first start → last end).
+
+  const timelineNodes = useMemo((): GraphNode[] => {
+    if (expandedSubgraph) {
+      return innerNodeLayouts.map((l) => l.node);
+    }
+    const now = Date.now();
+    return visibleNodes.map((n) => {
+      if (n.node_type !== "Subgraph" || !n.is_synthetic) return n;
+      const innerNodes = nodes.filter((x) => x.subgraph_parent === n.node_name && x.started_at_ms > 0);
+      if (innerNodes.length === 0) return n;
+      const aggStart = Math.min(...innerNodes.map((x) => x.started_at_ms));
+      const aggEnd = Math.max(...innerNodes.map((x) => x.ended_at_ms ?? now));
+      return { ...n, started_at_ms: aggStart, ended_at_ms: aggEnd };
+    });
+  }, [expandedSubgraph, innerNodeLayouts, visibleNodes, nodes]);
+
   // ── Click handlers ────────────────────────────────────────────────────────
 
   const handleNodeClick = useCallback(
@@ -206,7 +226,7 @@ export function GraphVisualizationPanel({
         <svg
           width={svgW}
           height={svgH}
-          style={{ display: "block", color: token.colorText, cursor: expandedSubgraph ? "zoom-out" : "default" }}
+          style={{ display: "block", color: token.colorText }}
           onClick={() => { if (expandedSubgraph) handleZoomOut(); }}
         >
           <defs>
@@ -269,14 +289,15 @@ export function GraphVisualizationPanel({
               taskCountByNode={taskCountByNode}
               onNodeClick={handleNodeClick}
               onHoverChange={handleHoverChange}
+              onZoomOut={handleZoomOut}
             />
           )}
         </svg>
 
         {/* Timeline axis */}
-        {hoveredNode && !selectedNode && visibleNodes.some((n) => n.started_at_ms) && (
+        {hoveredNode && !selectedNode && timelineNodes.some((n) => n.started_at_ms > 0) && (
           <TimelineAxis
-            nodes={visibleNodes}
+            nodes={timelineNodes}
             hoveredNodeId={hoveredNode.node_execution_id}
             svgW={Math.max(svgW, 200)}
           />

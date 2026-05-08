@@ -32,9 +32,10 @@ export function TimelineAxis({ nodes, hoveredNodeId, svgW }: TimelineAxisProps) 
   const LABEL_Y = 56;
   const PAD = 40;
 
-  const t0 = Math.min(...nodes.map((n) => n.started_at_ms));
+  const t0 = Math.min(...nodes.filter((n) => n.started_at_ms > 0).map((n) => n.started_at_ms));
+  if (!isFinite(t0)) return null;
   const now = Date.now();
-  const tMax = Math.max(...nodes.map((n) => n.ended_at_ms ?? now));
+  const tMax = Math.max(...nodes.filter((n) => n.started_at_ms > 0).map((n) => n.ended_at_ms ?? now));
   const totalDuration = Math.max(tMax - t0, 1);
   const usableW = Math.max(svgW - 2 * PAD, 1);
 
@@ -50,7 +51,7 @@ export function TimelineAxis({ nodes, hoveredNodeId, svgW }: TimelineAxisProps) 
 
   return (
     <svg width={svgW} height={AXIS_H} style={{ display: "block", marginTop: 2 }}>
-      {nodes.map((node) => {
+      {nodes.filter((n) => n.started_at_ms > 0).map((node) => {
         const isHovered = node.node_execution_id === hoveredNodeId;
         const x1 = toX(node.started_at_ms);
         const x2 = toX(node.ended_at_ms ?? now);

@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type React from "react";
-import { cancelQuery, createAckHandlers, openSseStream, openTokenStream } from "../../api";
+import { ackQuery, openSseStream, openTokenStream } from "../../api";
 import type { PendingTokenPatch, PerfTestConfig, ThreadSession } from "../../components/StreamingPerfTestPanel/types";
 import {
   createSessionClosureState,
@@ -67,7 +67,7 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
       const state = createSessionClosureState(config.tokenCount);
 
       const helpers = createSessionHelpers(state, {
-        thread_id, cleanups, timeouts, userToken, config, closeSession,
+        thread_id, cleanups, timeouts, userToken, config, patch, closeSession,
       });
 
       const { onQueryStatus, onIngestComplete, onStarted, onCompleted } =
@@ -84,8 +84,35 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
 
       console.info("[perf] opening stream thread_id=%s", thread_id);
 
+      // Gated ACK: hold the query ACK until the token stream subscription is
+      // confirmed.  The backend starts ingest immediately after ACK, so we must
+      // ensure the token channel is subscribed before any token_batch events are
+      // published — otherwise early batches are published before the WS
+      // subscription opens and are permanently lost (no history recovery).
+      let _ackQueryReceived = false;
+      let _ackConfirmed = false;
+      let _ackInFlight = false;
+      let _tokenStreamReady = false;
+
+      const _tryAck = () => {
+        if (_ackConfirmed || _ackInFlight || !_ackQueryReceived || !_tokenStreamReady) return;
+        _ackInFlight = true;
+        ackQuery(thread_id, userToken)
+          .catch((err) => console.warn("[perf] ACK failed thread_id=%s", thread_id, err))
+          .finally(() => { _ackInFlight = false; });
+      };
+
+      const onQueryReceived = () => { _ackQueryReceived = true; _tryAck(); };
+      const onQueryAckConfirmed = () => { _ackConfirmed = true; };
+      const onTokenStreamSubscribed = () => {
+        _tokenStreamReady = true;
+        console.info("[perf] token stream subscribed — releasing ACK gate thread_id=%s", thread_id);
+        _tryAck();
+      };
+
       const closeSse = openSseStream(thread_id, userToken, {
-        ...createAckHandlers(thread_id, userToken, "perf"),
+        onQueryReceived,
+        onQueryAckConfirmed,
         onQueryStatus,
         onIngestComplete,
         onStarted,
@@ -97,43 +124,16 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
         onCancelled,
         onClose,
       });
-      const closeToken = openTokenStream(thread_id, userToken, { onTokenBatch });
+      const closeToken = openTokenStream(thread_id, userToken, { onTokenBatch, onSubscribed: onTokenStreamSubscribed });
       const cleanup = () => { closeSse(); closeToken(); };
 
-      // Register cleanup for freezeAll and the last-resort safety timeout.
+      // Register cleanup for freezeAll; armSafetyTimeout handles the last-resort timer.
       // helpers.dequeue() removes both when a terminal event fires.
       state.esCleanup = cleanup;
       cleanups.current.set(thread_id, cleanup);
-      // Add 5 s buffer beyond the backend timeout so the safety timer fires
-      // only after the backend has had time to complete and Centrifugo has
-      // delivered the final stream_stopped event.
-      const sessionTimeoutMs = (config.timeoutSecs + 5) * 1000;
-      const tid = setTimeout(() => {
-        if (!state.sessionClosed) {
-          state.sessionClosed = true;
-          helpers.dequeue();
-          const logLevel = state.tokensReceived === 0 ? "error" : "warn";
-          console[logLevel](
-            "[perf] safety-timeout fired: mode=%s status=%s tokens=%d stream_id=%s",
-            config.testMode, state.sessionStatus, state.tokensReceived, state.stream_id,
-          );
-          if (state.tokensReceived === 0) {
-            console.error(
-              "[perf] ZERO-TOKEN TIMEOUT — session never advanced past status=%s. " +
-              "Possible causes: (1) ingesting phase event dropped by Centrifugo, " +
-              "(2) session not dispatched in fanout batch, " +
-              "(3) WebSocket delivery gap with no history re-delivery. stream_id=%s",
-              state.sessionStatus, state.stream_id,
-            );
-          }
-          if (config.testMode === "throughput" && state.tokensReceived < config.tokenCount) {
-            helpers.probeBackend("safety_timeout");
-          }
-          closeSession(thread_id, state.stream_id, "timeout");
-        }
-        cancelQuery(thread_id, "timeout").catch(() => {});
-      }, sessionTimeoutMs);
-      timeouts.current.set(thread_id, tid);
+      // 5 s buffer beyond the backend timeout so the safety timer fires only after
+      // the backend has had time to complete and Centrifugo has delivered events.
+      helpers.armSafetyTimeout((config.timeoutSecs + 5) * 1_000);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [patch, setSessions, closeSession, cleanups, timeouts, config.timeoutSecs, config.tokenCount, config.testMode, freezeAllRef, totalTokensRef, userToken],

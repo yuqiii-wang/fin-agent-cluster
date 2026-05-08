@@ -36,6 +36,8 @@ export function StreamingOutput({
 
   return (
     <div
+      data-testid="streaming-output"
+      data-streaming-running={isRunning ? "true" : "false"}
       style={{
         background: token.colorFillQuaternary,
         border: `1px solid ${token.colorBorderSecondary}`,
@@ -63,6 +65,7 @@ export function StreamingOutput({
         )}
       </Flex>
       <Paragraph
+        data-testid="streaming-output-text"
         style={{
           fontSize: 12,
           fontFamily: "'Courier New', monospace",

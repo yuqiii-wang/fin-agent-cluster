@@ -2,7 +2,7 @@
   "engine": {
     "type": "redis",
     "redis": {
-      "address": "redis-token-1:6379"
+      "address": "redis-1:6379"
     }
   },
   "client": {
@@ -52,7 +52,7 @@
       "name": "token_consumer",
       "type": "redis_stream",
       "redis_stream": {
-        "address": ["redis-token-1:6379"],
+        "address": ["redis-1:6379"],
         "streams": ["fin:llm:tokens"],
         "consumer_group": "centrifugo-token-1-token",
         "num_workers": 32

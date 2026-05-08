@@ -16,11 +16,13 @@
  */
 
 import { useState } from "react";
-import { Button, Flex, Typography } from "antd";
+import { Button, Flex, Switch, Typography } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import type { TaskInfo } from "../../../types";
 import { StreamingOutput } from "./StreamingOutput";
+import { JsonOutput } from "./JsonOutput";
 import { useTaskStream } from "../../../services/streaming/core/useTaskStream";
+import { enableTaskStream } from "../../../api";
 
 const { Text } = Typography;
 
@@ -45,6 +47,7 @@ interface TaskStreamViewerProps {
  */
 export function TaskStreamViewer({ task, completedStream, tokenCount }: TaskStreamViewerProps) {
   const [open, setOpen] = useState(false);
+  const [jsonViewEnabled, setJsonViewEnabled] = useState(false);
   const isRunning = task.status === "running";
 
   // Subscribe only while the panel is open AND the task is still running.
@@ -55,12 +58,28 @@ export function TaskStreamViewer({ task, completedStream, tokenCount }: TaskStre
 
   // Task completed with stored output — static completed view, no subscription.
   if (!isRunning && completedStream) {
+    const hasOutput = task.output != null && Object.keys(task.output).length > 0;
     return (
-      <StreamingOutput
-        stream={completedStream}
-        isRunning={false}
-        tokenCount={tokenCount}
-      />
+      <div>
+        <StreamingOutput
+          stream={completedStream}
+          isRunning={false}
+          tokenCount={tokenCount}
+        />
+        <Flex align="center" gap={6} style={{ marginTop: 6 }}>
+          <Switch
+            size="small"
+            checked={jsonViewEnabled}
+            onChange={setJsonViewEnabled}
+          />
+          <Text type="secondary" style={{ fontSize: 11 }}>JSON View</Text>
+        </Flex>
+        {jsonViewEnabled && hasOutput && (
+          <div style={{ marginTop: 8 }}>
+            <JsonOutput data={task.output} />
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -71,7 +90,18 @@ export function TaskStreamViewer({ task, completedStream, tokenCount }: TaskStre
       <Button
         size="small"
         type={open ? "primary" : "default"}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          const newOpen = !open;
+          setOpen(newOpen);
+          if (newOpen && isRunning) {
+            enableTaskStream(task.thread_id, task.task_id).catch((err) => {
+              console.error(
+                "[TaskStreamViewer] enableTaskStream failed task_id=%s thread_id=%s",
+                task.task_id, task.thread_id, err,
+              );
+            });
+          }
+        }}
         disabled={!isRunning}
         style={{ marginBottom: open ? 6 : 0 }}
       >
@@ -87,12 +117,30 @@ export function TaskStreamViewer({ task, completedStream, tokenCount }: TaskStre
             </Text>
           </Flex>
         ) : (
-          <StreamingOutput
-            stream={streamText}
-            isRunning={phase === "streaming"}
-            tokenCount={displayCount}
-            lifecycleLabel={phase === "done" || phase === "error" ? "Completed" : "Streaming…"}
-          />
+          <div>
+            <StreamingOutput
+              stream={streamText}
+              isRunning={phase === "streaming"}
+              tokenCount={displayCount}
+              lifecycleLabel={phase === "done" || phase === "error" ? "Completed" : "Streaming…"}
+            />
+            {(phase === "done" || phase === "error") && streamText.length > 0 && (
+              <Flex align="center" gap={6} style={{ marginTop: 6 }}>
+                <Switch
+                  size="small"
+                  checked={jsonViewEnabled}
+                  onChange={setJsonViewEnabled}
+                />
+                <Text type="secondary" style={{ fontSize: 11 }}>JSON View</Text>
+              </Flex>
+            )}
+            {jsonViewEnabled && (phase === "done" || phase === "error") &&
+              task.output != null && Object.keys(task.output).length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <JsonOutput data={task.output} />
+              </div>
+            )}
+          </div>
         )
       )}
     </div>

@@ -313,7 +313,7 @@ export function openSseStream(
 export function openTokenStream(
   threadId: string,
   userToken: string,
-  handlers: Pick<StreamHandlers, "onToken" | "onTokenBatch">,
+  handlers: Pick<StreamHandlers, "onToken" | "onTokenBatch" | "onSubscribed">,
   options: { recoverHistory?: boolean } = {},
 ): () => void {
   let cleanup: (() => void) | null = null;
@@ -343,7 +343,7 @@ export function openTokenStream(
         channel,
         recoverHistory,
         (data) => dispatchToken(data, handlers),
-        undefined,
+        handlers.onSubscribed,
         (msg) => console.warn("[token-stream] fatal error threadId=%s: %s", threadId, msg),
         undefined,
         "token-stream",

@@ -77,9 +77,11 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
       // On resume, a node that ran before re-runs with a new node_execution_id.
       // Replace the stale entry regardless of status so the DAG stays clean
       // and purge its associated tasks (they will be re-emitted).
-      // For synthetic outer nodes, keep them — they are in a different scope.
+      // Also replace synthetic non-Subgraph nodes (outer typical nodes like mock_analysis/
+      // mock_report pre-created from topology) — they must be swapped for the real node.
+      // Synthetic Subgraph containers are kept; their status is derived from inner nodes.
       const staleIdx = state.nodes.findIndex(
-        (n) => !n.is_synthetic && n.node_name === event.node_name,
+        (n) => n.node_name === event.node_name && !(n.is_synthetic && n.node_type === "Subgraph"),
       );
       let updatedNodes: GraphNode[];
       let updatedTasks: GraphTask[];
@@ -140,6 +142,7 @@ function applyEvent(state: GraphState, event: GraphEvent): GraphState {
       if (state.tasks.some((t) => t.task_id === event.task_id)) return state;
       const newTask: GraphTask = {
         task_id: event.task_id,
+        thread_id: event.thread_id,
         node_name: event.node_name,
         task_name: event.task_name,
         status: "running",

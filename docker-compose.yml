@@ -47,37 +47,21 @@ services:
       timeout: 5s
       retries: 10
 
-  redis-token-0:
+  redis-0:
     image: redis:8.6.2-trixie
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-3456}:6379"
     volumes:
-      - redis_token_0_data:/data
+      - redis_0_data:/data
 
-  redis-token-1:
+  redis-1:
     image: redis:8.6.2-trixie
     restart: unless-stopped
     ports:
       - "${REDIS_PORT_1:-3457}:6379"
     volumes:
-      - redis_token_1_data:/data
-
-  redis-sse-0:
-    image: redis:8.6.2-trixie
-    restart: unless-stopped
-    ports:
-      - "${REDIS_SSE_PORT:-3459}:6379"
-    volumes:
-      - redis_sse_0_data:/data
-
-  redis-sse-1:
-    image: redis:8.6.2-trixie
-    restart: unless-stopped
-    ports:
-      - "${REDIS_SSE_PORT_1:-3460}:6379"
-    volumes:
-      - redis_sse_1_data:/data
+      - redis_1_data:/data
 
   kong-migrations:
     image: kong/kong-gateway:3.12.0.5-20260415-rhel-fips
@@ -220,7 +204,7 @@ services:
     ports:
       - "${CENTRIFUGO_0_PORT:-8101}:8000"
     depends_on:
-      - redis-token-0
+      - redis-0
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
       interval: 10s
@@ -239,7 +223,7 @@ services:
     ports:
       - "${CENTRIFUGO_1_PORT:-8102}:8000"
     depends_on:
-      - redis-token-1
+      - redis-1
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
       interval: 10s
@@ -262,7 +246,7 @@ services:
     ports:
       - "${CENTRIFUGO_SSE_PORT:-8103}:8000"
     depends_on:
-      - redis-sse-0
+      - redis-0
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
       interval: 10s
@@ -281,7 +265,7 @@ services:
     ports:
       - "${CENTRIFUGO_SSE_PORT_1:-8104}:8000"
     depends_on:
-      - redis-sse-1
+      - redis-1
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/health"]
       interval: 10s
@@ -343,10 +327,8 @@ services:
 volumes:
   postgres_primary_data:
   postgres_replica_data:
-  redis_token_0_data:
-  redis_token_1_data:
-  redis_sse_0_data:
-  redis_sse_1_data:
+  redis_0_data:
+  redis_1_data:
   prometheus_data:
   grafana_data:
   loki_data:

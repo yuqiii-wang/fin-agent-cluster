@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     DATABASE_REDIS_URL: str = "redis://127.0.0.1:3456"
     # Ordered list of Redis node URLs for hash-based shard routing.
     # Comma-separated when provided via environment variable, e.g.:
-    #   DATABASE_REDIS_NODES=redis://redis-token-0:6379,redis://redis-token-1:6379
+    #   DATABASE_REDIS_NODES=redis://redis-0:6379,redis://redis-1:6379
     # When empty, the router falls back to DATABASE_REDIS_URL as a single node.
     DATABASE_REDIS_NODES: list[str] = []
     DB_CONNECT_TIMEOUT_SECONDS: int = 8
@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     # ── Centrifugo real-time messaging ────────────────────────────────────────
     # Internal HTTP API URLs of the two Centrifugo nodes (WSL2 → Docker via mapped ports).
     # Comma-separated when provided via environment variable.
-    # Ordering MUST match DATABASE_REDIS_NODES: index 0 = centrifugo-token-0 → redis-token-0.
+    # Ordering MUST match DATABASE_REDIS_NODES: index 0 = centrifugo-token-0 → redis-0.
     # These nodes are ONLY used for LLM token streaming (Redis Stream consumers).
     CENTRIFUGO_NODES: list[str] = [
         "http://127.0.0.1:8101",

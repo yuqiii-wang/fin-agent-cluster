@@ -17,7 +17,7 @@ export interface ThreadSession {
    *   running     — actively streaming (fallback / legacy)
    *   completed / failed / cancelled / timeout — terminal states
    */
-  status: "connecting" | "received" | "preparing" | "ingesting" | "digesting" | "running" | "completed" | "failed" | "cancelled" | "timeout";
+  status: "connecting" | "received" | "preparing" | "ingesting" | "digesting" | "running" | "completed" | "failed" | "cancelled" | "timeout" | "lost";
   tokens: number;
   start_ms: number;
   /** Wall-clock ms when the last token was received. */
@@ -30,6 +30,12 @@ export interface ThreadSession {
   test_mode: "single" | "throughput" | "concurrency";
   /** Error message captured when the stream transitions to `failed` status. */
   error?: string;
+  /**
+   * Human-readable reason why the session was force-closed by the safety timeout.
+   * Set before the session transitions to "timeout" so the Status column tooltip
+   * can surface the exact cause (zero-token, delivery-incomplete, lifecycle-stuck).
+   */
+  close_reason?: string;
   /** Ingest task phase — tracks how many tokens have been written to the perf stream. */
   ingest_produced?: number;
   /** Current state of the ingest phase. */
@@ -72,7 +78,7 @@ export interface ThreadSession {
 
 /** Terminal session statuses — lifecycle has ended and all metrics should be frozen. */
 export const TERMINAL_STATUSES: ReadonlySet<ThreadSession["status"]> = new Set([
-  "completed", "failed", "cancelled", "timeout",
+  "completed", "failed", "cancelled", "timeout", "lost",
 ]);
 
 /** User-configurable parameters for a perf-test run. */

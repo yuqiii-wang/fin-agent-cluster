@@ -2,7 +2,8 @@
   "engine": {
     "type": "redis",
     "redis": {
-      "address": "redis-sse-1:6379"
+      "address": "redis-1:6379",
+      "db": 3
     }
   },
   "client": {

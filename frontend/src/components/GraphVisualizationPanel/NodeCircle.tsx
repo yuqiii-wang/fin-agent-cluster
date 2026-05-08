@@ -27,7 +27,7 @@ export function NodeCircle({ layout, taskCount, isSelected, isFaded, isExpanded,
       data-node-name={node.node_name}
       data-status={node.status}
       data-node-type={node.node_type ?? "Typical"}
-      onClick={() => onClick(node, cx)}
+      onClick={(e) => { e.stopPropagation(); onClick(node, cx); }}
       onMouseEnter={() => onHoverChange(node)}
       onMouseLeave={() => onHoverChange(null)}
       style={{

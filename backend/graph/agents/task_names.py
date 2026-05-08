@@ -68,5 +68,5 @@ STATIC_KEYS: frozenset[str] = frozenset({
 LLM_STREAM_KEYS: frozenset[str] = frozenset()
 """No traditional LLM stream names — streaming uses the Celery path."""
 
-PERF_TOKEN_KEYS: frozenset[str] = STREAM_KEYS
-"""Names that emit token_batch events."""
+PERF_TOKEN_KEYS: frozenset[str] = STREAM_KEYS | frozenset({MOCK_ANALYSIS_PREVIEW, MOCK_REPORT_PREVIEW})
+"""Names that emit token_batch events (always-on stream or opt-in buffered preview)."""

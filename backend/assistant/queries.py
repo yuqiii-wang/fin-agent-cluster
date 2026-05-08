@@ -9,6 +9,7 @@ Endpoints:
     POST /users/query/{thread_id}/resume                  resume cancelled/failed query
     POST /users/query/{thread_id}/nodes/{node_id}/cancel  cancel a node + its tasks
     POST /users/query/{thread_id}/tasks/{task_id}/cancel  cancel a specific task
+    POST /users/query/{thread_id}/tasks/{task_id}/enable-stream  enable opt-in token streaming
     POST /users/query/{thread_id}/perf-stable             signal stable TPS
     GET  /users/query/{thread_id}                         poll query status
     GET  /users/query/{thread_id}/tasks                   list agent sub-tasks
@@ -60,6 +61,25 @@ async def cancel_task_route(
 ) -> dict:
     """Send a cancel signal to a specific task by its governance UUID."""
     return await cancel_task_by_uuid(thread_id, task_id, node_id=node_id)
+
+
+@router.post("/query/{thread_id}/tasks/{task_id}/enable-stream", status_code=200)
+async def enable_task_stream_route(thread_id: str, task_id: str) -> dict:
+    """Enable live Centrifugo streaming for a buffered opt-in streaming task.
+
+    Sets the Redis live flag so the running analysis/report task immediately
+    begins forwarding buffered and future tokens to Centrifugo.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        task_id:   Task invocation UUID to enable streaming for.
+
+    Returns:
+        Echo of thread_id, task_id, and streaming status.
+    """
+    from backend.db.redis.session.task_preview import enable_task_stream  # noqa: PLC0415
+    await enable_task_stream(thread_id, task_id)
+    return {"thread_id": thread_id, "task_id": task_id, "streaming": True}
 
 
 @router.post("/query/{thread_id}/resume", response_model=QueryResponse)

@@ -140,9 +140,9 @@ async def run_graph_async(
         # This signals to the frontend that the request is being processed.
         await set_query_phase(thread_id, "preparing")
         await emit_query_status(thread_id, "preparing")
-        # Emit static graph topology so the frontend can pre-populate
-        # subgraph container nodes before any node events arrive.
-        await emit_graph_topology(thread_id)
+        # Emit query-filtered graph topology so the frontend can pre-populate
+        # the single routed graph container node before any node events arrive.
+        await emit_graph_topology(thread_id, query)
 
         graph = get_compiled_graph()
         config = {
@@ -250,7 +250,6 @@ async def run_resume_async(thread_id: str) -> None:
     try:
         await set_query_phase(thread_id, "preparing")
         await emit_query_status(thread_id, "preparing")
-        await emit_graph_topology(thread_id)
 
         graph = get_compiled_graph()
         config = {
@@ -259,6 +258,12 @@ async def run_resume_async(thread_id: str) -> None:
                 "checkpoint_ns": "",
             }
         }
+        # Load the query from the saved checkpoint state so the topology event
+        # reflects the same branch that was originally routed.
+        saved_state = await graph.aget_state(config)
+        resume_query: str = (saved_state.values or {}).get("query", "") if saved_state else ""
+        await emit_graph_topology(thread_id, resume_query)
+
         # input=None tells LangGraph to resume from the last saved checkpoint.
         final_state = await _invoke_with_auto_approve(graph, None, config)
 

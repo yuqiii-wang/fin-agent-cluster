@@ -14,7 +14,8 @@
  * 10. No output                              → "No output available"
  */
 
-import { Flex, Typography } from "antd";
+import { useState } from "react";
+import { Flex, Switch, Typography } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import type { TaskInfo, TaskTypeMeta } from "../../types";
 import { isLlmTask, isPerfTokenTask } from "./helpers";
@@ -54,6 +55,8 @@ interface Props {
  * - JSON output    → JsonOutput
  */
 export function OutputViewer({ task, stream, provider, taskMeta, tokenCount }: Props) {
+  const [jsonViewEnabled, setJsonViewEnabled] = useState(false);
+
   if (task.status === "pending") {
     return (
       <Flex align="center" gap={6}>
@@ -82,15 +85,36 @@ export function OutputViewer({ task, stream, provider, taskMeta, tokenCount }: P
   //     the Centrifugo subscription; use StreamingTaskOutput to display it.
   //   • stream prop undefined → no external subscription; use TaskStreamViewer so
   //     the user can open/close an on-demand Centrifugo session.
+  const isRunning = task.status === "running";
+  const hasOutput = task.output != null && Object.keys(task.output).length > 0;
+
   if (isPerfSilent) {
     if (stream !== undefined) {
+      const hasStream = (displayStream?.length ?? 0) > 0;
       return (
-        <StreamingTaskOutput
-          stream={displayStream}
-          isRunning={task.status === "running"}
-          tokenCount={tokenCount}
-          status={task.status}
-        />
+        <div>
+          <StreamingTaskOutput
+            stream={displayStream}
+            isRunning={isRunning}
+            tokenCount={tokenCount}
+            status={task.status}
+          />
+          {hasStream && (
+            <Flex align="center" gap={6} style={{ marginTop: 6 }}>
+              <Switch
+                size="small"
+                checked={jsonViewEnabled}
+                onChange={setJsonViewEnabled}
+              />
+              <Text type="secondary" style={{ fontSize: 11 }}>JSON View</Text>
+            </Flex>
+          )}
+          {jsonViewEnabled && !isRunning && hasOutput && (
+            <div style={{ marginTop: 8 }}>
+              <JsonOutput data={task.output} />
+            </div>
+          )}
+        </div>
       );
     }
     return (
@@ -106,24 +130,36 @@ export function OutputViewer({ task, stream, provider, taskMeta, tokenCount }: P
 
   if (displayStream) {
     return (
-      <StreamingOutput
-        stream={displayStream}
-        isRunning={task.status === "running"}
-        tokenCount={tokenCount}
-      />
+      <div>
+        <StreamingOutput
+          stream={displayStream}
+          isRunning={isRunning}
+          tokenCount={tokenCount}
+        />
+        <Flex align="center" gap={6} style={{ marginTop: 6 }}>
+          <Switch
+            size="small"
+            checked={jsonViewEnabled}
+            onChange={setJsonViewEnabled}
+          />
+          <Text type="secondary" style={{ fontSize: 11 }}>JSON View</Text>
+        </Flex>
+        {jsonViewEnabled && !isRunning && hasOutput && (
+          <div style={{ marginTop: 8 }}>
+            <JsonOutput data={task.output} />
+          </div>
+        )}
+      </div>
     );
   }
 
-  if (task.status === "running") {
+  if (isRunning) {
     return isLlm ? (
       <LlmWaitingStatus provider={provider} />
     ) : (
       <RunningDescription taskName={task.task_name} />
     );
   }
-
-  const hasOutput =
-    task.output != null && Object.keys(task.output).length > 0;
 
   if (!hasOutput) {
     return (

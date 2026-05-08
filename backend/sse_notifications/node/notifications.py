@@ -72,7 +72,7 @@ async def emit_node_input(
     """
     from backend.graph.utils.execution_log import start_node_execution  # deferred
 
-    from backend.graph.agents.node_types import get_node_type, get_node_subgraph_parent  # deferred
+    from backend.graph.agents.node_types import get_node_type, get_node_graph_parent  # deferred
 
     # DB stores a single FK for the first parent (or None)
     primary_parent = parent_node_execution_ids[0] if parent_node_execution_ids else None
@@ -89,7 +89,7 @@ async def emit_node_input(
         parent_node_execution_id=primary_parent,
     )
     node_type = get_node_type(node_name)
-    subgraph_parent = get_node_subgraph_parent(node_name)
+    subgraph_parent = get_node_graph_parent(node_name)
     await publish_node_lifecycle(
         thread_id,
         {
@@ -221,27 +221,27 @@ async def emit_node_status(
     )
 
 
-async def emit_graph_topology(thread_id: str) -> None:
-    """Emit a ``graph_topology_init`` SSE event with the complete static topology.
+async def emit_graph_topology(thread_id: str, query: str) -> None:
+    """Emit a ``graph_topology_init`` SSE event with the query-filtered topology.
 
     Called once at the start of each graph run so the frontend can pre-populate
-    subgraph container nodes (which never emit ``node_input`` / ``node_output``
-    events themselves) and know which inner nodes belong to which subgraph.
+    the single routed graph container node before any node events arrive.
 
     Args:
         thread_id: LangGraph thread UUID.
+        query:     Raw query text used to select the routed graph branch.
     """
     from backend.graph.topology import get_graph_topology  # deferred
 
-    topology = get_graph_topology()
+    topology = get_graph_topology(query)
     await publish_node_lifecycle(
         thread_id,
         {
             "event": "graph_topology_init",
             "outer_nodes": [n.model_dump() for n in topology.outer_nodes],
             "subgraphs": {
-                name: {"nodes": [n.model_dump() for n in sg.nodes]}
-                for name, sg in topology.subgraphs.items()
+                name: {"nodes": [n.model_dump() for n in g.nodes]}
+                for name, g in topology.subgraphs.items()
             },
         },
     )

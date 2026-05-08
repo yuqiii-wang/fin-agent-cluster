@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { ackQuery, resumeQuery, submitPerfQuery } from "../../api";
+import { ackQuery, enableTaskStream, resumeQuery, submitPerfQuery } from "../../api";
 import { openSseStream, openTokenStream } from "../../api/stream";
 import { sendDoneAck } from "../streaming/core";
 import { useGraphStore } from "../../components/GraphVisualizationPanel/useGraphStore";
@@ -115,7 +115,13 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
       tokenCountBufferRef.current = {};
       setTokenStreams((prev) => {
         const next = { ...prev };
-        for (const [id, text] of Object.entries(streamBuf)) next[id] = (next[id] ?? "") + text;
+        for (const [id, text] of Object.entries(streamBuf)) {
+          const wasEmpty = !prev[id];
+          next[id] = (next[id] ?? "") + text;
+          if (wasEmpty) {
+            console.error("[single:flush] first token flush to React state task_id=%s chars=%d", id, text.length);
+          }
+        }
         if (batch) for (const [id, text] of Object.entries(batch.streams)) next[id] = text;
         return next;
       });
@@ -192,10 +198,16 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
           console.log(
             `[sse:task_started] task=${d["task_name"]} node=${d["node_name"]} task_id=${d["task_id"]} thread=${thread_id}`,
           );
+          const taskId = d["task_id"] as string;
+          // Auto-enable opt-in streaming tasks so tokens flow without user interaction.
+          enableTaskStream(thread_id, taskId).catch((err) => {
+            console.error("[single] enableTaskStream failed task_id=%s thread=%s", taskId, thread_id, err);
+          });
           const { event: _e, task_id: _t, node_name: _n, task_name: _k, provider: _p, ...rest } = d;
           dispatch({
             type: "task_started",
-            task_id: d["task_id"] as string,
+            task_id: taskId,
+            thread_id,
             node_name: d["node_name"] as string,
             task_name: d["task_name"] as string,
             input: rest as Record<string, unknown>,
@@ -280,8 +292,12 @@ export function useSingleTestSession(userToken: string): UseSingleTestSessionRet
         const taskId = d.task_id;
         const tok = d.data ?? "";
         if (!tok) return;
+        const isFirst = !tokenStreamBufferRef.current[taskId];
         tokenStreamBufferRef.current[taskId] = (tokenStreamBufferRef.current[taskId] ?? "") + tok;
         tokenCountBufferRef.current[taskId] = (tokenCountBufferRef.current[taskId] ?? 0) + 1;
+        if (isFirst) {
+          console.error("[single:token] first token received task_id=%s thread=%s", taskId, thread_id);
+        }
       },
       onTokenBatch,
     });

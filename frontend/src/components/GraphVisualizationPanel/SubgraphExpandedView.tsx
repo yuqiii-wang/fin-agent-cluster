@@ -31,6 +31,8 @@ interface SubgraphExpandedViewProps {
   taskCountByNode: Map<string, number>;
   onNodeClick: (node: GraphNode, cx: number) => void;
   onHoverChange: (node: GraphNode | null) => void;
+  /** Called when the user clicks any non-node area inside the subgraph. */
+  onZoomOut?: () => void;
 }
 
 const MIN_PAD = 20;
@@ -47,6 +49,7 @@ export function SubgraphExpandedView({
   taskCountByNode,
   onNodeClick,
   onHoverChange,
+  onZoomOut,
 }: SubgraphExpandedViewProps) {
   const { token } = theme.useToken();
   const animRef = useRef<SVGGElement>(null);
@@ -77,9 +80,8 @@ export function SubgraphExpandedView({
   return (
     <g
       transform={`translate(${translateX}, ${translateY})`}
-      onClick={(e) => e.stopPropagation()}
     >
-      {/* Background card behind inner nodes */}
+      {/* Background card — clicking any non-node area collapses the subgraph */}
       <rect
         x={0}
         y={0}
@@ -91,6 +93,8 @@ export function SubgraphExpandedView({
         strokeWidth={1}
         strokeDasharray="6 4"
         opacity={0.92}
+        style={{ cursor: "zoom-out" }}
+        onClick={(e) => { e.stopPropagation(); onZoomOut?.(); }}
       />
 
       {/* Animated content: edges + nodes, scales from container center */}

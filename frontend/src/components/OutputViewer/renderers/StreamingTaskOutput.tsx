@@ -60,7 +60,7 @@ export function StreamingTaskOutput({
 
   if (!hasStream && isRunning) {
     return (
-      <Flex align="center" gap={6}>
+      <Flex align="center" gap={6} data-testid="streaming-awaiting">
         <LoadingOutlined style={{ fontSize: 11 }} />
         <Text type="secondary" style={{ fontSize: 12, fontStyle: "italic" }}>
           Awaiting streaming…

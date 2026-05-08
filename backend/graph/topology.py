@@ -1,26 +1,27 @@
 """Static graph topology descriptor.
 
-Provides the complete two-level topology of the outer LangGraph and all
-inner subgraph structures so the frontend can:
+Provides the query-filtered topology of the outer LangGraph and the relevant
+inner graph so the frontend can:
 
-* Pre-populate the outer view with pending nodes (including subgraph containers)
+* Pre-populate the outer view with pending nodes (including graph containers)
   before any SSE node events arrive.
-* Know which inner nodes belong to which subgraph for zoom-in rendering.
-* Render name-based edges in the outer view even for subgraph containers that
+* Know which inner nodes belong to which graph for zoom-in rendering.
+* Render name-based edges in the outer view even for graph containers that
   never emit ``node_input`` / ``node_output`` SSE events.
 
-The topology is entirely static and derived from :mod:`backend.graph.builder`
-and :mod:`backend.graph.agents.node_types`.
+The topology is query-driven: only the graph branch that ``_route_query``
+will execute is included, so the frontend sees exactly one routed graph.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel
 
+from backend.graph.agents.mock_perf import PERF_TEST_TRIGGER
+from backend.graph.agents.mock_single import MOCK_SINGLE_TRIGGER
 from backend.graph.agents.node_types import (
     NODE_TYPE_SUBGRAPH,
     NODE_TYPE_TYPICAL,
-    get_subgraph_members,
 )
 
 
@@ -38,84 +39,91 @@ class TopologyNode(BaseModel):
     node_type: str
 
 
-class SubgraphTopology(BaseModel):
-    """Inner topology for one subgraph container.
+class InnerSubgraphTopology(BaseModel):
+    """Inner topology for one graph container.
 
     Attributes:
-        nodes: All inner nodes with their intra-subgraph parent relationships.
+        nodes: All inner nodes with their intra-graph parent relationships.
     """
 
     nodes: list[TopologyNode]
 
 
 class GraphTopology(BaseModel):
-    """Complete two-level graph topology.
+    """Query-filtered two-level graph topology.
 
     Attributes:
-        outer_nodes: Top-level nodes including subgraph containers and outer
-                     typical nodes, with static parent/child relationships.
-        subgraphs:   Inner topologies keyed by subgraph container node name.
+        outer_nodes: Top-level nodes for the routed branch only.
+        subgraphs:   Inner topologies keyed by graph container node name.
     """
 
     outer_nodes: list[TopologyNode]
-    subgraphs: dict[str, SubgraphTopology]
+    subgraphs: dict[str, InnerSubgraphTopology]
 
 
-def get_graph_topology() -> GraphTopology:
-    """Return the complete static topology of the outer graph and all subgraphs.
+def get_graph_topology(query: str) -> GraphTopology:
+    """Return the query-filtered topology for the routed graph branch.
 
-    Outer edges mirror :func:`~backend.graph.builder.build_graph`::
+    Only the branch that ``_route_query`` will execute is returned, so the
+    frontend pre-populates exactly one graph container node.
 
-        START → mock_perf_subgraph | mock_single_subgraph | fin_analyst_subgraph
-        mock_single_subgraph → mock_analysis → mock_report → END
-        mock_perf_subgraph   → END
-        fin_analyst_subgraph → END
+    Routing mirrors :func:`~backend.graph.builder._route_query`:
+
+    * PERF_TEST_TRIGGER  → ``mock_perf_graph``
+    * MOCK_SINGLE_TRIGGER → ``mock_single_graph`` + ``mock_analysis`` + ``mock_report``
+    * all others          → ``fin_analyst_graph``
+
+    Args:
+        query: Raw query text (case-insensitive prefix match used for routing).
 
     Returns:
-        :class:`GraphTopology` with outer and inner node descriptors.
+        :class:`GraphTopology` with outer and inner node descriptors for the
+        routed branch only.
     """
-    outer_nodes: list[TopologyNode] = [
-        TopologyNode(node_name="mock_perf_subgraph",   parent_node_names=[],                       node_type=NODE_TYPE_SUBGRAPH),
-        TopologyNode(node_name="mock_single_subgraph", parent_node_names=[],                       node_type=NODE_TYPE_SUBGRAPH),
-        TopologyNode(node_name="fin_analyst_subgraph", parent_node_names=[],                       node_type=NODE_TYPE_SUBGRAPH),
-        TopologyNode(node_name="mock_analysis",         parent_node_names=["mock_single_subgraph"], node_type=NODE_TYPE_TYPICAL),
-        TopologyNode(node_name="mock_report",           parent_node_names=["mock_analysis"],        node_type=NODE_TYPE_TYPICAL),
-    ]
+    normalised = query.strip().upper()
 
-    # Inner topology for mock_perf_subgraph:
-    #   perf-test path:   START → perf_runner → END
-    mock_perf_inner = SubgraphTopology(nodes=[
-        TopologyNode(node_name="perf_runner", parent_node_names=[], node_type=NODE_TYPE_TYPICAL),
-    ])
+    if normalised.startswith(PERF_TEST_TRIGGER):
+        outer_nodes: list[TopologyNode] = [
+            TopologyNode(node_name="mock_perf_graph", parent_node_names=[], node_type=NODE_TYPE_SUBGRAPH),
+        ]
+        subgraphs: dict[str, InnerSubgraphTopology] = {
+            "mock_perf_graph": InnerSubgraphTopology(nodes=[
+                TopologyNode(node_name="perf_runner", parent_node_names=[], node_type=NODE_TYPE_TYPICAL),
+            ]),
+        }
 
-    # Inner topology for mock_single_subgraph:
-    #   prep path: START → query → [mock_news, mock_stats] → merge → END
-    mock_single_inner = SubgraphTopology(nodes=[
-        TopologyNode(node_name="query",      parent_node_names=[],                        node_type=NODE_TYPE_TYPICAL),
-        TopologyNode(node_name="mock_news",  parent_node_names=["query"],                 node_type=NODE_TYPE_TYPICAL),
-        TopologyNode(node_name="mock_stats", parent_node_names=["query"],                 node_type=NODE_TYPE_TYPICAL),
-        TopologyNode(node_name="merge",      parent_node_names=["mock_news", "mock_stats"], node_type=NODE_TYPE_TYPICAL),
-    ])
+    elif normalised.startswith(MOCK_SINGLE_TRIGGER):
+        outer_nodes = [
+            TopologyNode(node_name="mock_single_graph", parent_node_names=[],                      node_type=NODE_TYPE_SUBGRAPH),
+            TopologyNode(node_name="mock_analysis",      parent_node_names=["mock_single_graph"],   node_type=NODE_TYPE_TYPICAL),
+            TopologyNode(node_name="mock_report",        parent_node_names=["mock_analysis"],       node_type=NODE_TYPE_TYPICAL),
+        ]
+        subgraphs = {
+            "mock_single_graph": InnerSubgraphTopology(nodes=[
+                TopologyNode(node_name="query",      parent_node_names=[],                          node_type=NODE_TYPE_TYPICAL),
+                TopologyNode(node_name="mock_news",  parent_node_names=["query"],                   node_type=NODE_TYPE_TYPICAL),
+                TopologyNode(node_name="mock_stats", parent_node_names=["query"],                   node_type=NODE_TYPE_TYPICAL),
+                TopologyNode(node_name="merge",      parent_node_names=["mock_news", "mock_stats"], node_type=NODE_TYPE_TYPICAL),
+            ]),
+        }
 
-    # Inner topology for fin_analyst_subgraph:
-    #   START → fin_analyst_runner → END
-    fin_analyst_inner = SubgraphTopology(nodes=[
-        TopologyNode(node_name="fin_analyst_runner", parent_node_names=[], node_type=NODE_TYPE_TYPICAL),
-    ])
+    else:
+        outer_nodes = [
+            TopologyNode(node_name="fin_analyst_graph", parent_node_names=[], node_type=NODE_TYPE_SUBGRAPH),
+        ]
+        subgraphs = {
+            "fin_analyst_graph": InnerSubgraphTopology(nodes=[
+                TopologyNode(node_name="fin_analyst_runner", parent_node_names=[], node_type=NODE_TYPE_TYPICAL),
+            ]),
+        }
 
-    return GraphTopology(
-        outer_nodes=outer_nodes,
-        subgraphs={
-            "mock_perf_subgraph":   mock_perf_inner,
-            "mock_single_subgraph": mock_single_inner,
-            "fin_analyst_subgraph": fin_analyst_inner,
-        },
-    )
+    return GraphTopology(outer_nodes=outer_nodes, subgraphs=subgraphs)
 
 
 __all__ = [
     "TopologyNode",
-    "SubgraphTopology",
+    "InnerSubgraphTopology",
     "GraphTopology",
     "get_graph_topology",
 ]
+

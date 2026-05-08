@@ -25,7 +25,7 @@ services:
     write_timeout: 30000      # 30 s
     read_timeout: 30000       # 30 s
 
-  # Centrifugo token shard 0 -- WebSocket LLM token streaming backed by redis-token-0.
+  # Centrifugo token shard 0 -- WebSocket LLM token streaming backed by redis-0.
   - name: centrifugo-token-0
     host: centrifugo-token-0-upstream
     port: 80
@@ -34,7 +34,7 @@ services:
     write_timeout: 3600000    # 60 min -- WebSocket connections are long-lived
     read_timeout: 3600000     # 60 min
 
-  # Centrifugo token shard 1 -- WebSocket LLM token streaming backed by redis-token-1.
+  # Centrifugo token shard 1 -- WebSocket LLM token streaming backed by redis-1.
   - name: centrifugo-token-1
     host: centrifugo-token-1-upstream
     port: 80

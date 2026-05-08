@@ -100,7 +100,7 @@ export function buildColumns(
   testMode: "throughput" | "concurrency" = "throughput",
   timeoutSecs: number = 60,
   token?: GlobalToken,
-  tokenPerSec: number = 500,
+  tokenPerSec: number = 100,
   expandedTokenLogId?: string | null,
   onToggleTokenLog?: (thread_id: string) => void,
   expandedIdentityId?: string | null,
@@ -154,12 +154,30 @@ export function buildColumns(
           cancelled:  { badgeStatus: "warning",    tagColor: "warning",    label: "Cancelled"   },
 
           timeout:    { badgeStatus: "warning",    tagColor: "volcano",    label: "Timeout"     },
+          lost:       { badgeStatus: "error",      tagColor: "magenta",    label: "Lost"        },
         };
         const { tagColor, label } = map[status] ?? { badgeStatus: "default", tagColor: "default", label: status };
         const badge = <Tag color={tagColor}>{label}</Tag>;
         if (status === "failed" && record.error) {
           return (
             <Tooltip title={record.error} color="red">
+              {badge}
+            </Tooltip>
+          );
+        }
+        if (status === "timeout") {
+          const tooltipTitle =
+            record.close_reason ??
+            "Session exceeded the configured timeout without completing the full lifecycle. Check browser console and backend logs for details.";
+          return (
+            <Tooltip title={tooltipTitle} color="volcano">
+              {badge}
+            </Tooltip>
+          );
+        }
+        if (status === "lost") {
+          return (
+            <Tooltip title="Backend reported completed but no tokens were delivered after 5s. Tokens were lost in transit — check Centrifugo consumer lag on fin:llm:tokens." color="magenta">
               {badge}
             </Tooltip>
           );
