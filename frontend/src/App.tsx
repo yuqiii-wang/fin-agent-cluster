@@ -1,70 +1,158 @@
-import { useEffect, useState } from "react";
-import { Button, Layout, Tag, Typography } from "antd";
-import { HistoryOutlined } from "@ant-design/icons";
-import { HistoryPanel } from "./components/HistoryPanel";
-import { StreamingPerfTestPanel } from "./components/StreamingPerfTestPanel";
-import { fetchActiveThread, fetchHistory } from "./api";
-import { useGuestAuth } from "./hooks/useGuestAuth";
-import { useStyles } from "./App.styles";
-import type { ThreadSummary } from "./types";
+/**
+ * App — root layout.
+ *
+ * Left panel: thread history list.
+ * Main area: QueryForm or ThreadView depending on selection.
+ */
 
-const { Header, Content } = Layout;
-const { Title } = Typography;
+import React, { useState } from 'react';
+import { Button, ConfigProvider, Layout, theme, Typography } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
+import QueryForm from './components/QueryForm';
+import ThreadView from './components/ThreadView';
+import type { QueryResponse, SseInfo } from './types';
 
-export default function App() {
-  const styles = useStyles();
-  const { token: userToken, username, loading: authLoading } = useGuestAuth();
+const { Header, Sider, Content } = Layout;
+const { Text } = Typography;
 
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyItems, setHistoryItems] = useState<ThreadSummary[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
+interface ThreadEntry {
+  response: QueryResponse;
+  sseInfo: SseInfo | null;
+  llmInfo: SseInfo | null;
+}
 
-  useEffect(() => {
-    if (authLoading || !userToken) return;
-    fetchHistory(userToken).then(setHistoryItems).catch(console.error);
-    fetchActiveThread(userToken).catch(console.error);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, userToken]);
+const App: React.FC = () => {
+  const [threads, setThreads] = useState<ThreadEntry[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(true);
+
+  function handleSubmit(result: QueryResponse) {
+    const entry: ThreadEntry = {
+      response: result,
+      sseInfo: result.sse ?? null,
+      llmInfo: result.llm ?? null,
+    };
+    setThreads((prev) => [entry, ...prev]);
+    setActiveId(result.thread_id);
+    setShowForm(false);
+  }
+
+  const activeEntry = threads.find((t) => t.response.thread_id === activeId);
 
   return (
-    <>
-      <Layout style={styles.layout}>
-        <Header style={styles.header}>
-          <div style={styles.headerLeft}>
-            <Button
-              icon={<HistoryOutlined />}
-              loading={historyLoading}
-              onClick={() => {
-                setHistoryOpen(true);
-                if (userToken) {
-                  setHistoryLoading(true);
-                  fetchHistory(userToken)
-                    .then(setHistoryItems)
-                    .catch(console.error)
-                    .finally(() => setHistoryLoading(false));
-                }
-              }}
-            />
-            <Title level={4} style={styles.title}>
-              Stream Runner
-            </Title>
-            {username && <Tag color="blue" style={styles.tag}>{username}</Tag>}
-          </div>
+    <ConfigProvider
+      theme={{
+        algorithm: theme.darkAlgorithm,
+        token: {
+          colorPrimary: '#1677ff',
+          borderRadius: 6,
+        },
+      }}
+    >
+      <Layout style={{ minHeight: '100vh' }}>
+        <Header
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+            padding: '0 20px',
+            background: '#141414',
+            borderBottom: '1px solid #1f1f1f',
+          }}
+        >
+          <Text strong style={{ color: '#fff', fontSize: 16 }}>
+            Fin Agent
+          </Text>
         </Header>
 
-        <Content style={styles.content}>
-          {!authLoading && userToken && (
-            <StreamingPerfTestPanel userToken={userToken} />
-          )}
-        </Content>
-      </Layout>
+        <Layout>
+          <Sider
+            width={240}
+            style={{
+              background: '#0a0a0a',
+              borderRight: '1px solid #1f1f1f',
+              overflowY: 'auto',
+            }}
+          >
+            <div style={{ padding: '12px 8px' }}>
+              <Button
+                type="dashed"
+                icon={<PlusOutlined />}
+                block
+                onClick={() => {
+                  setActiveId(null);
+                  setShowForm(true);
+                }}
+                style={{ marginBottom: 12 }}
+              >
+                New Query
+              </Button>
 
-      <HistoryPanel
-        open={historyOpen}
-        items={historyItems}
-        onClose={() => setHistoryOpen(false)}
-        onRecover={(_thread) => { setHistoryOpen(false); }}
-      />
-    </>
+              <div>
+                {threads.map((entry) => {
+                  const isActive = entry.response.thread_id === activeId;
+                  return (
+                    <div
+                      key={entry.response.thread_id}
+                      style={{
+                        cursor: 'pointer',
+                        borderRadius: 6,
+                        padding: '6px 8px',
+                        marginBottom: 4,
+                        background: isActive ? 'rgba(22,119,255,0.15)' : 'transparent',
+                      }}
+                      onClick={() => {
+                        setActiveId(entry.response.thread_id);
+                        setShowForm(false);
+                      }}
+                    >
+                      <div>
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            color: isActive ? '#1677ff' : '#bfbfbf',
+                            display: 'block',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: 200,
+                          }}
+                        >
+                          {entry.response.query ?? entry.response.thread_id}
+                        </Text>
+                        <Text style={{ fontSize: 10, color: '#595959' }}>
+                          {entry.response.status}
+                        </Text>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </Sider>
+
+          <Content
+            style={{
+              padding: 24,
+              overflowY: 'auto',
+              background: '#111',
+            }}
+          >
+            {showForm || !activeEntry ? (
+              <QueryForm onSubmit={handleSubmit} />
+            ) : (
+              <ThreadView
+                key={activeEntry.response.thread_id}
+                threadId={activeEntry.response.thread_id}
+                sseInfo={activeEntry.sseInfo}
+                llmInfo={activeEntry.llmInfo}
+              />
+            )}
+          </Content>
+        </Layout>
+      </Layout>
+    </ConfigProvider>
   );
-}
+};
+
+export default App;

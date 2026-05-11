@@ -1,8 +1,6 @@
-"""users.auth — shim re-exporting from backend.auth.guest.
+"""backend.users.auth — re-exports the guest auth helper for API routers."""
 
-Guest user management has moved to :mod:`backend.auth.guest`.
-This module is kept for backward-compatible imports.
-"""
+from __future__ import annotations
 
 from backend.auth.guest import ensure_guest
 

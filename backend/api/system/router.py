@@ -25,7 +25,7 @@ class InstanceHealth(BaseModel):
     """Health status of a single FastAPI instance."""
 
     url: str
-    kind: str  # "runner" | "assistant"
+    kind: str  # "runner"
     healthy: bool
 
 
@@ -44,7 +44,7 @@ async def _check_instance(client: httpx.AsyncClient, url: str, kind: str) -> Ins
     Args:
         client: Shared async HTTP client.
         url:    Full URL including scheme and port, e.g. ``http://127.0.0.1:8432``.
-        kind:   Instance role label (``"runner"`` or ``"assistant"``).
+        kind:   Instance role label (``"runner"``).
 
     Returns:
         :class:`InstanceHealth` with ``healthy=True`` when the probe returns
@@ -60,7 +60,7 @@ async def _check_instance(client: httpx.AsyncClient, url: str, kind: str) -> Ins
 
 @router.get("/health", response_model=SystemHealthResponse)
 async def system_health() -> SystemHealthResponse:
-    """Probe all configured FastAPI runner and assistant instances.
+    """Probe all configured FastAPI runner instances.
 
     Returns aggregate health so the frontend can wait until every instance
     is up before auto-triggering the E2E test.
@@ -71,15 +71,10 @@ async def system_health() -> SystemHealthResponse:
         f"http://127.0.0.1:{settings.FASTAPI_PORT + i}"
         for i in range(settings.RUNNER_INSTANCE_COUNT)
     ]
-    assistant_urls = [
-        f"http://127.0.0.1:{settings.FASTAPI_ASSISTANT_PORT + i}"
-        for i in range(settings.ASSISTANT_INSTANCE_COUNT)
-    ]
 
     async with httpx.AsyncClient() as client:
         tasks = [
             *[_check_instance(client, url, "runner") for url in runner_urls],
-            *[_check_instance(client, url, "assistant") for url in assistant_urls],
         ]
         results: list[InstanceHealth] = await asyncio.gather(*tasks)
 

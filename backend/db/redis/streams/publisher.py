@@ -1,72 +1,135 @@
-"""Redis Streams token publisher.
+"""backend.db.redis.streams.publisher — Centrifugo Redis-Stream token publisher.
 
-Provides :func:`stream_token` which publishes high-frequency LLM token events
-to ``fin:llm:tokens`` (shard-routed by thread_id).  Centrifugo's native Redis
-Stream consumer picks up entries and delivers them to WebSocket clients,
-keeping FastAPI completely out of the token delivery path.
+Each LLM token (or batch of tokens) is written to the ``fin:llm:tokens`` Redis
+Stream on the shard that owns the thread.  Centrifugo's built-in Redis Stream
+consumer picks it up and forwards the publication to the ``thread:{thread_id}``
+WebSocket channel in real-time.
 
-Each stream entry uses two fields as required by Centrifugo v6's async consumer:
-- ``method``: ``"publish"`` — tells the consumer which API command to execute.
-- ``payload``: JSON-serialised publish request ``{"channel": "thread:{thread_id}",
-  "data": <event>}`` — the body of the publish command.
+Shard routing
+-------------
+``SHA-256(thread_id) % len(DATABASE_REDIS_NODES)`` — identical to the formula
+used by :func:`~backend.centrifugo_mq.client.get_shard_index` so the Redis node
+selected here always matches the Centrifugo token-stream node that subscribes
+to it.
+
+Wire format (one Redis Stream entry per Centrifugo publication)::
+
+    XADD fin:llm:tokens * method publish payload '{"channel":"thread:<id>","data":{...}}'
+
+Public API
+----------
+:func:`stream_token`       — publish a single message (e.g. ``stream_end``).
+:func:`stream_token_batch` — publish many messages in one Redis pipeline round-trip.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
 
-from backend.streaming.streams import STREAM_TOKEN, xadd_sharded
-
 logger = logging.getLogger(__name__)
 
-# Per-thread counter so we only log the first XADD to fin:llm:tokens per thread.
-# This is a module-level dict keyed by thread_id — only used for debug auditing.
-_xadd_logged: set[str] = set()
+# Redis Stream key — same name on every shard; routing is per-Redis-server.
+_STREAM_NAME = "fin:llm:tokens"
+
+# Module-level set to detect the first publish per thread (for INFO log).
+_seen_threads: set[str] = set()
 
 
-def stream_key(thread_id: str) -> str:
-    """Return the legacy Redis Stream key name for *thread_id*.
+def _shard_index(thread_id: str) -> int:
+    """Deterministic Redis shard index for *thread_id*.
 
-    No longer written to — kept so that :func:`cleanup_thread_session` can
-    issue a safe no-op DEL without changes.
-
-    Args:
-        thread_id: LangGraph UUID thread identifier.
-
-    Returns:
-        Stream key string, e.g. ``tokens:<uuid>``.
+    Mirrors the SHA-256 modulo routing used by Centrifugo token-stream nodes.
     """
-    return f"tokens:{thread_id}"
+    from backend.config import get_settings
+    n = len(get_settings().DATABASE_REDIS_NODES) or 1
+    return int(hashlib.sha256(thread_id.encode()).hexdigest(), 16) % n
+
+
+def _encode_entry(channel: str, data: dict[str, Any]) -> dict[str, str]:
+    """Return a single Redis Stream entry dict in Centrifugo publish format."""
+    return {
+        "method": "publish",
+        "payload": json.dumps({"channel": channel, "data": data}, ensure_ascii=False),
+    }
 
 
 async def stream_token(thread_id: str, payload: dict[str, Any]) -> None:
-    """XADD a token event to ``fin:llm:tokens`` on the correct Redis shard.
+    """Publish a single message to the Centrifugo Redis Stream.
 
-    Centrifugo's native Redis consumer reads this entry and delivers it to
-    all WebSocket subscribers on channel ``thread:{thread_id}``.
-
-    The stream entry uses the two-field format required by Centrifugo v6:
-    ``method=publish`` and ``payload=<publish request JSON>``.
+    Suitable for low-frequency events such as ``stream_end``.  For bulk token
+    delivery prefer :func:`stream_token_batch` to amortise round-trip overhead.
 
     Args:
-        thread_id: LangGraph thread ID (determines shard + channel name).
-        payload:   Token event dict — must include ``"event": "token"``.
+        thread_id: LangGraph thread UUID — determines the Redis shard.
+        payload:   Arbitrary dict that becomes ``data`` in the Centrifugo
+                   publication (e.g. ``{"event": "stream_end", ...}``).
     """
-    payload_value = json.dumps({"channel": f"thread:{thread_id}", "data": payload})
-    entry = {"method": "publish", "payload": payload_value}
-    if thread_id not in _xadd_logged:
-        _xadd_logged.add(thread_id)
+    from backend.db.redis import get_client
+
+    shard = _shard_index(thread_id)
+    client = await get_client(shard)
+    channel = f"thread:{thread_id}"
+    entry = _encode_entry(channel, payload)
+
+    first = thread_id not in _seen_threads
+    if first:
+        _seen_threads.add(thread_id)
+
+    await client.xadd(_STREAM_NAME, entry)
+
+    if first:
         logger.info(
             "[stream_token] first xadd thread_id=%s stream=%s entry_keys=%s",
-            thread_id, STREAM_TOKEN, list(entry.keys()),
+            thread_id, _STREAM_NAME, list(entry.keys()),
         )
-    await xadd_sharded(thread_id, STREAM_TOKEN, entry)
 
 
-__all__ = [
-    "stream_key",
-    "stream_token",
-]
+async def stream_token_batch(thread_id: str, payloads: list[dict[str, Any]]) -> None:
+    """Publish *payloads* to the Centrifugo Redis Stream in a single pipeline.
 
+    All entries share the same shard and channel derived from *thread_id*.
+    Using a pipeline reduces per-batch round-trips to one, regardless of how
+    many tokens are in the batch.
+
+    Args:
+        thread_id: LangGraph thread UUID — determines the Redis shard.
+        payloads:  Ordered list of message dicts; each becomes one Redis Stream
+                   entry and one Centrifugo publication.  Sequence integrity is
+                   guaranteed by the ``seq`` field embedded in each payload by
+                   the caller.
+    """
+    if not payloads:
+        return
+
+    from backend.db.redis import get_client
+
+    shard = _shard_index(thread_id)
+    client = await get_client(shard)
+    channel = f"thread:{thread_id}"
+
+    first = thread_id not in _seen_threads
+    if first:
+        _seen_threads.add(thread_id)
+
+    pipe = client.pipeline(transaction=False)
+    for payload in payloads:
+        pipe.xadd(_STREAM_NAME, _encode_entry(channel, payload))
+    await pipe.execute()
+
+    if first:
+        entry = _encode_entry(channel, payloads[0])
+        logger.info(
+            "[stream_token] first xadd thread_id=%s stream=%s entry_keys=%s",
+            thread_id, _STREAM_NAME, list(entry.keys()),
+        )
+
+    logger.debug(
+        "[stream_token_batch] thread_id=%s shard=%d published=%d",
+        thread_id, shard, len(payloads),
+    )
+
+
+__all__ = ["stream_token", "stream_token_batch"]

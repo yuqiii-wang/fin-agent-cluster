@@ -23,15 +23,19 @@ Check in fin quant trading domain for best practices and existing solutions befo
 * In docs dir, there is a debugs dir, write debug docs for any non-trivial debugging process.
 * In langgraph, horizontally early/before and later/after means within the same version the nodes are position in the close to root node (early/before) or close to leaf nodes (later/after); vertically early/before and later/after means across versions, the earlier version is early/before and the later version is later/after.
 * Do NOT use test/mock names if the code is for more generic use.
+* Config setup can be found from docker_compose.yml and backend/config.py, do not hardcode any config in the code, but to add in config files and read from config in the code.
 
 ### Backend and Frontend Communications
 
-* There are two main flows: streaming flow with celery + redis streams, and non-streaming flow with request/response or SSE; do NOT mix the two flows, implement new features in one flow or the other based on the nature of the feature, but do not mix both flows in the same feature.
-* main fast-api gathers celery worker results and pg notifies client application via SSE; do not send notifications directly from celery workers, but always go through main fast-api to send notifications to client application, to ensure all notifications are sent in a consistent manner and to avoid racing conditions or missed notifications.
 * In every large component, need to mkdir a sub-dir called `errors` to store error code and description capturing likely exceptions or racing or any thing suspected. The error codes will be used in logs and return to UI to help locate error. And in migration or code cleanup, or if some error code is no longer used, just delete/migrate it, do not keep dead code.
+* Ensure all SSE has ack mechanism that for event notification, UI having received the event will send ack to backend, and backend will send back ack to UI. Backend fast api with the same graph thread id listens for the ack and proceed with the flow.
+* Always be careful about racing conditions in the flows, and implement proper locking or queuing mechanism to ensure safety without hardcoded time lag.
+* `ui` nginx is used only to host static frontend files, and KONG API is used for all API calls from frontend to backend, do not use `ui` nginx for any API calls, but to use KONG API for all API calls.
+* For HTTP request/response flow, use HTTP2, for bidirectional streaming flow (SSE notification and LLM streaming) between frontend and backend, use centrifugo.
 
 ### Backend
 
+* For backend development, use FastAPI + langChain/LangGraph with Python.
 * Must use `pydantic` models for all data validation and serialization.
 * Must use type hints for all functions and methods.
 * For every new module/package/dir, must include a `__init__.py` file to make it a package with `__all__` that makes it easy to import.
@@ -58,21 +62,16 @@ About DB and SQL:
 ### Frontend
 
 * For frontend development, use React with TypeScript.
-* For backend development, use FastAPI + langChain/LangGraph with Python.
 * Try to use existing libraries and tools to accomplish tasks, rather than building from scratch.
 * Favor small code change in brevity over large code changes.
+* Use `"@langchain/react";`
 * Use `antd` CLI for all antd related queries and operations, do not search antd APIs from memory or the web.
 * Do NOT hardcode any UI element in the frontend, all UI elements should be generated from backend APIs, including but not limited to: form fields, buttons, dropdown options, etc.
-* `cd frontend && npm run dev` to start frontend to launch browser to debug UI.
 * Run playwright test in git bash for debugging.
 * Show spinner between UI action and backend SSE ack response.
-
-### Skill Checkup
-
-The e2e-flow skill covers the end-to-end request/response pipeline, you can reference it to understand the architecture and conventions of the project. If you observe any diffs from the e2e-flow skill, update the skill with the new code and logic.
-For diagram, draw mermaid.
 
 ### Debug
 
 * logs are in backend/logs, check logs for debugging and understanding the flow of the project.
-* Ignore timeout or cancel since they are triggered by requested timeout or manual cancel
+* Test against https 3000 for frontend by playwright.
+* For backend, by `/home/yuqi/miniconda3/bin/python /mnt/e/fin-trading-cluster/run.py` to launch the whole backend.

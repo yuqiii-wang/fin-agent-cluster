@@ -1,12 +1,14 @@
 CREATE SCHEMA IF NOT EXISTS fin_agents;
 
--- PostgreSQL does not support CREATE TYPE IF NOT EXISTS; use DO block for idempotency.
-DO $$ BEGIN
-    CREATE TYPE fin_agents.query_status AS ENUM ('received', 'pending', 'running', 'completed', 'failed', 'cancelled', 'paused');
-EXCEPTION WHEN duplicate_object THEN
-    -- Add 'paused' to the existing enum if it does not already exist.
-    ALTER TYPE fin_agents.query_status ADD VALUE IF NOT EXISTS 'paused';
-END $$;
+-- Drop and recreate ENUMs so schema changes (added/removed values) are always applied.
+DROP TYPE IF EXISTS fin_agents.query_status CASCADE;
+CREATE TYPE fin_agents.query_status AS ENUM ('connecting', 'received', 'running', 'completed', 'failed', 'cancelled');
+
+DROP TYPE IF EXISTS fin_agents.work_status CASCADE;
+CREATE TYPE fin_agents.work_status AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled', 'wrong');
+
+DROP TYPE IF EXISTS fin_agents.node_types CASCADE;
+CREATE TYPE fin_agents.node_types AS ENUM ('Typical', 'Reference', 'Subgraph');
 
 
 CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
@@ -15,7 +17,7 @@ CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
     user_id TEXT,
     query TEXT NOT NULL,
     answer TEXT,
-    status fin_agents.query_status NOT NULL DEFAULT 'pending',
+    status fin_agents.query_status NOT NULL DEFAULT 'connecting',
     is_ack      BOOLEAN NOT NULL DEFAULT FALSE,
     extra JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -24,15 +26,16 @@ CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
 );
 
 CREATE INDEX IF NOT EXISTS fin_agents_user_queries_user_id_idx ON fin_agents.user_queries (user_id);
-CREATE INDEX IF NOT EXISTS fin_agents_user_queries_status_idx ON fin_agents.user_queries (status);
 CREATE INDEX IF NOT EXISTS fin_agents_user_queries_created_at_idx ON fin_agents.user_queries (created_at DESC);
 
--- Dedup guard: prevent concurrent submissions of the same query by the same user.
--- A duplicate INSERT from a second FastAPI instance raises UniqueViolation which the
--- application converts to a NACK (status='cancelled') returning the existing thread_id.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_user_queries_dedup
-    ON fin_agents.user_queries (user_id, md5(query))
-    WHERE status IN ('received', 'pending', 'running');
+
+
+-- Dedup guard — same-second resubmission guard.
+-- Blocks the same user from resubmitting the identical query within the same
+-- calendar second, even after a previous attempt completed or failed.
+-- Uses an immutable expression so it works as a unique index predicate.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_queries_time_guard
+    ON fin_agents.user_queries (user_id, md5(query), date_trunc('second', created_at AT TIME ZONE 'UTC'));
 
 CREATE TABLE IF NOT EXISTS fin_agents.checkpoints (
     thread_id TEXT NOT NULL,
@@ -75,50 +78,27 @@ CREATE INDEX IF NOT EXISTS checkpoints_thread_id_idx ON fin_agents.checkpoints (
 CREATE INDEX IF NOT EXISTS checkpoint_blobs_thread_id_idx ON fin_agents.checkpoint_blobs (thread_id);
 CREATE INDEX IF NOT EXISTS checkpoint_writes_thread_id_idx ON fin_agents.checkpoint_writes (thread_id);
 
-CREATE TABLE IF NOT EXISTS fin_agents.node_executions (
-    id BIGSERIAL PRIMARY KEY,
-    thread_id TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
-    -- Self-referencing FK: set for inner subgraph nodes whose parent is an outer
-    -- subgraph node execution.  NULL for top-level graph nodes.
-    parent_node_execution_id BIGINT REFERENCES fin_agents.node_executions (id) ON DELETE CASCADE,
-    node_name TEXT NOT NULL,
-    -- Governance UUID linking this row to the Redis governance registry.
-    -- Used to scope cancel/status signals to a specific node execution.
-    node_uuid TEXT,
-    -- Execution status — updated as the node progresses; inherits parent
-    -- thread status when not explicitly overridden.
-    status fin_agents.query_status NOT NULL DEFAULT 'running',
-    input JSONB NOT NULL DEFAULT '{}',
-    output JSONB NOT NULL DEFAULT '{}',
-    started_at TIMESTAMPTZ NOT NULL,
-    elapsed_ms INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS fin_agents_node_executions_thread_id_idx ON fin_agents.node_executions (thread_id);
-CREATE INDEX IF NOT EXISTS fin_agents_node_executions_node_name_idx ON fin_agents.node_executions (node_name);
-CREATE INDEX IF NOT EXISTS fin_agents_node_executions_parent_idx ON fin_agents.node_executions (parent_node_execution_id)
-    WHERE parent_node_execution_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS fin_agents_node_executions_node_uuid_idx ON fin_agents.node_executions (node_uuid)
-    WHERE node_uuid IS NOT NULL;
-
-
 CREATE TABLE IF NOT EXISTS fin_agents.nodes (
     node_id          TEXT NOT NULL PRIMARY KEY,
-    thread_id        TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
-    node_name        TEXT NOT NULL,
-    type             TEXT CHECK 
-                    (type IN ('Typical', 'Reference', 'Subgraph')) NOT NULL DEFAULT 'Typical',
-    -- For Reference nodes: points to the target node_id within the same thread.
+    thread_id TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
+    type             fin_agents.node_types NOT NULL DEFAULT 'Typical',
+    -- Self-referencing FK: set for inner subgraph nodes whose parent is an outer
+    -- subgraph node.  NULL for top-level graph nodes.
+    parent_node_id  TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE CASCADE,
+    -- For Reference nodes: the target node_id within the same thread.
     -- NULL for Typical and Subgraph nodes.
     referenced_node_id TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE SET NULL,
-    last_status        fin_agents.query_status,
-    last_node_execution_id BIGINT REFERENCES fin_agents.node_executions (id) ON DELETE SET NULL,
-    last_executed_at   TIMESTAMPTZ,
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    node_name TEXT NOT NULL,
+    status    fin_agents.work_status NOT NULL DEFAULT 'pending',
+    input JSONB NOT NULL DEFAULT '{}',
+    output JSONB NOT NULL DEFAULT '{}',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    elapsed_ms INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS fin_agents_nodes_thread_id_idx ON fin_agents.nodes (thread_id);
+CREATE INDEX IF NOT EXISTS fin_agents_nodes_node_name_idx ON fin_agents.nodes (node_name);
 CREATE INDEX IF NOT EXISTS fin_agents_nodes_node_name_thread_id_idx ON fin_agents.nodes (node_name, thread_id);
 CREATE INDEX IF NOT EXISTS fin_agents_nodes_referenced_node_id_idx ON fin_agents.nodes (referenced_node_id)
     WHERE referenced_node_id IS NOT NULL;
@@ -129,16 +109,16 @@ CREATE INDEX IF NOT EXISTS fin_agents_nodes_referenced_node_id_idx ON fin_agents
 CREATE TABLE IF NOT EXISTS fin_agents.tasks (
     task_id TEXT NOT NULL PRIMARY KEY,
     thread_id TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
-    node_execution_id BIGINT REFERENCES fin_agents.node_executions (id) ON DELETE CASCADE,
+    node_id TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE CASCADE,
     node_name TEXT NOT NULL,
     task_name  TEXT NOT NULL,
-    status    fin_agents.query_status NOT NULL DEFAULT 'pending',
+    status    fin_agents.work_status NOT NULL DEFAULT 'pending',
     input     JSONB NOT NULL DEFAULT '{}',
     output    JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_execution_id_idx ON fin_agents.tasks (node_execution_id);
+CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_id_idx ON fin_agents.tasks (node_id);
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_thread_id_idx ON fin_agents.tasks (thread_id);
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_name_idx ON fin_agents.tasks (node_name);
 
@@ -156,11 +136,11 @@ CREATE TABLE IF NOT EXISTS fin_agents.llm_responses (
     model             TEXT NOT NULL DEFAULT '',
     task_name          TEXT,
     node_name         TEXT,
-    prompt_tokens     INT NOT NULL DEFAULT 0,
+    input_tokens     INT NOT NULL DEFAULT 0,
     prompts           TEXT,
     thinking          TEXT,
     answer            TEXT,
-    completion_tokens INT NOT NULL DEFAULT 0,
+    output_tokens    INT NOT NULL DEFAULT 0,
     total_tokens      INT NOT NULL DEFAULT 0,
     latency_ms        INT NOT NULL DEFAULT 0
 );

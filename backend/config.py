@@ -8,28 +8,6 @@ _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 class Settings(BaseSettings):
-    # ── LLM provider selection ──────────────────────────────────
-    LLM_PROVIDER: str = "ark"  # ark | gemini | ollama
-
-    # ── Volcano Engine ARK / Doubao ─────────────────────────────
-    ARK_API_KEY: str = ""
-    ARK_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
-    ARK_MODEL: str = "doubao-seed-2-0-mini-260215"
-
-    # ── Google Gemini ───────────────────────────────────────────
-    GOOGLE_GEMINI_API_KEY: Optional[str] = None
-    GOOGLE_GEMINI_MODEL: str = "gemini-2.5-flash"
-
-    # ── Google Embedding ────────────────────────────────────────
-    EMBEDDING_PROVIDER: str = "google"  # google | ollama
-    GOOGLE_EMBEDDING_MODEL: str = "models/text-embedding-004"
-    GOOGLE_EMBEDDING_DIMENSIONS: int = 768  # native text-embedding-004 output dim
-
-    # ── Local Ollama ────────────────────────────────────────────
-    OLLAMA_SERVER_URL: str = "http://127.0.0.1:11434"
-    OLLAMA_MODEL: str = "qwen3.5-27b"
-    OLLAMA_EMBED_MODEL: str = "qwen3-0.6b-emb"
-
     # ── Database / API keys ─────────────────────────────────────
     DATABASE_PG_URL: str
     # Read replica URL.  When set, SELECT queries are routed here; writes
@@ -43,67 +21,59 @@ class Settings(BaseSettings):
     # When empty, the router falls back to DATABASE_REDIS_URL as a single node.
     DATABASE_REDIS_NODES: list[str] = []
     DB_CONNECT_TIMEOUT_SECONDS: int = 8
-    ALPHAVANTAGE_API_KEY: Optional[str] = None
-    FMP_API_KEY: Optional[str] = None
-    FMP_BASE_URL: str = "https://financialmodelingprep.com/stable"
     # Stats data provider: mock | yfinance | fmp
     # mock    — in-process mock data, no external calls (default)
     # yfinance — free Yahoo Finance via the yfinance library
     # fmp      — Financial Modeling Prep REST API (requires FMP_API_KEY)
     STATS_PROVIDER: str = "mock"
     FASTAPI_PORT: int = 8432
-    # Number of runner FastAPI instances (must match run.py --runner-instances and Kong targets).
+    # Number of main thread FastAPI instances (must match run.py --runner-instances and nginx-api.conf targets).
     RUNNER_INSTANCE_COUNT: int = 4
-    # Base port for assistant FastAPI instances (non-LangGraph).
-    # Runner instances start at FASTAPI_PORT; assistants at FASTAPI_ASSISTANT_PORT.
-    FASTAPI_ASSISTANT_PORT: int = 8436
-    # Number of assistant FastAPI instances (must match run.py --assistant-instances and Kong targets).
-    ASSISTANT_INSTANCE_COUNT: int = 2
+    # Port this specific main thread instance is bound to.
+    # Set per-instance by run.py via the MAIN_THREAD_PORT environment variable.
+    MAIN_THREAD_PORT: int = 8432
+
+    # ── Thread ownership lock (Redis) ─────────────────────────────────────────
+    # TTL (seconds) for the per-thread Redis ownership lock.
+    # Must exceed the longest expected graph run so the lock is not lost mid-run.
+    THREAD_LOCK_TTL_SECONDS: int = 60
+    # How often (seconds) the lock-renewal background task extends the TTL.
+    # Must be strictly less than THREAD_LOCK_TTL_SECONDS to avoid expiry gaps.
+    THREAD_LOCK_RENEW_INTERVAL_SECONDS: int = 25
+    # Timeout (seconds) for the TCP liveness check against another main thread.
+    MAIN_THREAD_HEALTH_CHECK_TIMEOUT_SECONDS: float = 2.0
     # Outbound HTTP proxy for all external calls (LLM, market-data, news, embeddings).
     # Example: HTTP_PROXY=http://127.0.0.1:7890
     # Leave unset to connect directly.
     HTTP_PROXY: Optional[str] = None
 
-    # ── Kong AI Gateway ──────────────────────────────────────────
-    # Set to Kong's proxy URL when LLM_PROVIDER=kong_ai.
-    # Kong's ai-proxy plugin then manages model routing and API-key injection.
-    # Example: KONG_AI_PROXY_URL=http://localhost:8000/llm
-    KONG_AI_PROXY_URL: Optional[str] = None
-
-    # Internal URL of the Kong API gateway used for perf-test SSE consumption.
-    # Use the HTTP/1.1 port (8888) — no TLS required for internal connections.
-    KONG_API_URL: str = "http://127.0.0.1:8888"
-
-    # ── Web search provider selection ────────────────────────────
-    # Choices: auto | ddgs | bing | google | volc
-    # auto = try bing → google → ddgs in order (first configured one wins)
-    WEB_SEARCH_PROVIDER: str = "auto"
-
-    # Bing News Search API v7 (Azure Cognitive Services)
-    BING_SEARCH_API_KEY: Optional[str] = None
-    BING_SEARCH_ENDPOINT: str = "https://api.bing.microsoft.com/v7.0/news/search"
-
-    # Google Custom Search API
-    GOOGLE_CSE_API_KEY: Optional[str] = None
-    GOOGLE_CSE_CX: Optional[str] = None  # Custom Search Engine ID
-
-    # Volcano Engine web search
-    VOLCENGINE_ACCESS_KEY_ID: Optional[str] = None
-    VOLCENGINE_SECRET_ACCESS_KEY: Optional[str] = None
-    VOLC_SEARCH_HOST: str = "open.volcengineapi.com"
-    VOLC_SEARCH_REGION: str = "cn-north-1"
-    VOLC_SEARCH_SERVICE: str = "search_platform"
+    # ── API Gateway ──────────────────────────────────────────────
+    # Internal HTTP URL of nginx-api (plain HTTP, no TLS required for
+    # container-internal calls from the backend or health-check scripts).
+    API_GATEWAY_URL: str = "http://127.0.0.1:8888"
 
     # ── Redis Streams (MQ / buffer layer) ────────────────────────────────────
     # Soft cap on each stream's entry count (XADD MAXLEN ~).
     # Sized for high-concurrency: 100 sessions × ~10 XADD/sec = 1,000/sec per
-    # shard; 100,000 entries gives ~100 s of buffer before eviction under load.
-    STREAM_MAX_LEN: int = 100000
+    # shard; 1,000,000 entries gives ~100 s of buffer before eviction under load.
+    STREAM_MAX_LEN: int = 1000000
+
+    # ── Graph Runner (dedicated asyncio process) ──────────────────────────────
+    # Redis Stream key where FastAPI enqueues new graph runs.
+    GRAPH_QUEUE_STREAM: str = "fin:graphs:queue"
+    # Redis key prefix for per-thread cancel flags (SET key 1 EX ttl).
+    GRAPH_CANCEL_KEY_PREFIX: str = "fin:cancel:"
+    # TTL (seconds) for cancel flags — must exceed the longest graph run.
+    GRAPH_CANCEL_TTL_SECONDS: int = 600
+    # Consumer group name for the graph runner stream.
+    GRAPH_QUEUE_GROUP: str = "graph-runners"
+    # How long (ms) the runner blocks on XREADGROUP before re-checking shutdown.
+    GRAPH_QUEUE_BLOCK_MS: int = 1000
 
     # ── Centrifugo real-time messaging ────────────────────────────────────────
     # Internal HTTP API URLs of the two Centrifugo nodes (WSL2 → Docker via mapped ports).
     # Comma-separated when provided via environment variable.
-    # Ordering MUST match DATABASE_REDIS_NODES: index 0 = centrifugo-token-0 → redis-0.
+    # Ordering MUST match DATABASE_REDIS_NODES: index 0 = centrifugo-llm-0 → redis-0.
     # These nodes are ONLY used for LLM token streaming (Redis Stream consumers).
     CENTRIFUGO_NODES: list[str] = [
         "http://127.0.0.1:8101",
@@ -112,7 +82,7 @@ class Settings(BaseSettings):
     # Internal HTTP API URLs of the dedicated SSE Centrifugo nodes (centrifugo-sse-0/1).
     # All lifecycle events (started, completed, done, query_*, node_*, stream_*) are
     # published here via FastAPI HTTP API.  Thread sharded by SHA-256 % len.
-    # Token events stay in centrifugo-token-0/1.
+    # Token events stay in centrifugo-llm-0/1.
     CENTRIFUGO_SSE_NODES: list[str] = [
         "http://127.0.0.1:8103",
         "http://127.0.0.1:8104",
@@ -121,19 +91,17 @@ class Settings(BaseSettings):
     CENTRIFUGO_SECRET: str = "centrifugo-dev-secret-key"
     # API key for Centrifugo server-side HTTP API calls (publish, etc.).
     CENTRIFUGO_API_KEY: str = "centrifugo-api-key"
+    # Shared secret used to authenticate inbound Centrifugo RPC proxy calls.
+    # Must match the ``static_http_headers.X-Centrifugo-Proxy-Key`` value in
+    # centrifugo-sse-0/1 config.json.
+    CENTRIFUGO_RPC_PROXY_KEY: str = "centrifugo-rpc-proxy-key"
     # Public WebSocket base URL used by the frontend to connect.
-    # Dev: wss://localhost:8443 (Kong HTTPS/HTTP2 port). Prod: wss://your-domain.
-    CENTRIFUGO_PUBLIC_BASE: str = "wss://localhost:8443"
-
-    # ── Assistant status verifier ─────────────────────────────────────────────
-    # How often (seconds) the assistant background verifier checks for unACKed
-    # query-status phases and re-publishes them via Centrifugo.
-    STATUS_VERIFIER_INTERVAL_SECS: int = 30
-    # How far back (seconds) the verifier looks when querying for active queries.
-    # Should be >= the longest expected query duration to avoid missing stale phases.
-    STATUS_VERIFIER_LOOKBACK_SECS: int = 3600
-
-    model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8", "extra": "ignore"}
+    # Points to the nginx-ui TLS port (22332) which speaks HTTP/1.1 (no http2
+    # directive), so the browser negotiates HTTP/1.1 and the standard WebSocket
+    # Upgrade mechanism works.  nginx proxies each /centrifugo-{tier}-{shard}/
+    # location directly to the corresponding Centrifugo container over plain
+    # HTTP/1.1 WebSocket.
+    CENTRIFUGO_PUBLIC_BASE: str = "wss://localhost:22332"
 
     from pydantic import field_validator as _fv
 
@@ -169,6 +137,8 @@ class Settings(BaseSettings):
                 return []
             return [node.strip() for node in stripped.split(",") if node.strip()]
         return v
+
+    model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 @lru_cache

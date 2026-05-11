@@ -3,11 +3,10 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  # Scrape Kong metrics from the Admin API /metrics endpoint.
-  # The prometheus plugin (global) exposes per-route counters, latency
-  # histograms, bandwidth, and upstream health — all OSS, no Enterprise needed.
-  - job_name: kong
+  # Scrape nginx-api metrics via the nginx-prometheus-exporter sidecar.
+  # Exposes connection counts, request rates, and upstream health.
+  - job_name: nginx-api
     static_configs:
       - targets:
-          - kong:8001   # Kong Admin API — reachable inside the compose network
+          - nginx-api-exporter:9113
     metrics_path: /metrics

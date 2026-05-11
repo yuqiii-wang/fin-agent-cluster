@@ -8,6 +8,7 @@
 
 # Options for sql/setup_db_schema.sh:
 #   --drop              Drop all application schemas (fin_agents, fin_markets, fin_strategies, fin_users) with CASCADE before re-creating them.
+#                       Also forces a full pg_basebackup resync of the postgres-replica container.
 #   --yes, -y         Skip confirmation prompt when using --drop.
 #  bash setup/db_schema.sh --drop --yes
 
@@ -20,5 +21,5 @@ setup_db_schema() {
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     set -e
-    setup_db_schema "$@"
+    setup_db_schema --drop --yes "$@"
 fi

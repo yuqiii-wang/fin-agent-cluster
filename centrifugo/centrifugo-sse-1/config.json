@@ -37,12 +37,30 @@
       "https://127.0.0.1:8443"
     ]
   },
+  "proxies": [
+    {
+      "name": "ack-rpc-proxy",
+      "endpoint": "http://nginx-api:8000/api/v1/centrifugo/rpc",
+      "timeout": "2s",
+      "http": {
+        "static_headers": {
+          "X-Centrifugo-Proxy-Key": "centrifugo-rpc-proxy-key"
+        }
+      }
+    }
+  ],
+  "rpc": {
+    "without_namespace": {
+      "proxy_enabled": true,
+      "proxy_name": "ack-rpc-proxy"
+    }
+  },
   "channel": {
     "namespaces": [
       {
         "name": "thread",
         "history_size": 2000,
-        "history_ttl": "600s",
+        "history_ttl": "24h",
         "force_recovery": true
       }
     ]

@@ -38,18 +38,14 @@ const fileLogger: Logger = {
 };
 
 export default defineConfig(({ mode }) => {
-  // Load .env / .env.local so VITE_KONG_URL is visible at config time.
+  // Load .env / .env.local so VITE_API_URL is visible at config time.
   const env = loadEnv(mode, process.cwd(), "");
-  // directMode: VITE_KONG_URL is set → browser talks directly to Kong 8443.
-  //   REST:  browser → Kong :8443 (HTTPS/HTTP2, absolute URL, CORS allowed)
-  //   WS:    browser → Kong :8443 (WSS direct, no Vite proxy hop)
-  //   Effect: all 6-fetch / HTTP1.1 limits are bypassed entirely.
+  // directMode: VITE_API_URL is set → browser talks directly to nginx-api :8443.
+  //   REST:  browser → nginx-api :8443 (HTTPS/HTTP2, absolute URL, CORS allowed)
   //
-  // proxyMode (default, VITE_KONG_URL empty):
-  //   REST:  browser → Vite :3000 (relative /api/*) → Kong :8443 (HTTPS/HTTP2)
-  //   WS:    browser → Vite :3000 (WSS) → Kong :8888 (WS, HTTP/1.1 hop)
-  //   Effect: system proxy (:7890) is bypassed; WS has one HTTP/1.1 hop.
-  const directMode = !!env.VITE_KONG_URL;
+  // proxyMode (default, VITE_API_URL empty):
+  //   REST:  browser → Vite :3000 (relative /api/*) → nginx-api :8443 (HTTPS/HTTP2)
+  const directMode = !!env.VITE_API_URL;
 
   return {
   customLogger: fileLogger,
@@ -85,40 +81,6 @@ export default defineConfig(({ mode }) => {
               fileLogger.error(`[proxy ✗] ${(req as { url?: string }).url ?? ""}: ${err.message}`);
             });
           },
-        },
-        // Centrifugo WebSocket paths — proxied server-side so the browser never
-        // opens a direct connection (bypasses system proxy at :7890).
-        // WebSocket targets Kong HTTP port 8888 (HTTP/1.1) because node-http-proxy
-        // cannot reliably forward WS upgrades through a TLS target (https://).
-        // TLS end-to-end: browser → Vite (WSS) → Kong (plain WS).
-        //
-        // In directMode these entries are absent: stream.ts uses the backend-returned
-        // wss://localhost:8443 URL directly — fully WSS, no HTTP/1.1 hop.
-        // centrifugo-sse-0/1: SSE lifecycle events (shard-routed by thread_id SHA-256 % 2)
-        "/centrifugo-sse-0": {
-          target: "http://127.0.0.1:8888",
-          changeOrigin: true,
-          ws: true,
-          agent: false,
-        },
-        "/centrifugo-sse-1": {
-          target: "http://127.0.0.1:8888",
-          changeOrigin: true,
-          ws: true,
-          agent: false,
-        },
-        // centrifugo-token-0/1: LLM token streaming only
-        "/centrifugo-token-0": {
-          target: "http://127.0.0.1:8888",
-          changeOrigin: true,
-          ws: true,
-          agent: false,
-        },
-        "/centrifugo-token-1": {
-          target: "http://127.0.0.1:8888",
-          changeOrigin: true,
-          ws: true,
-          agent: false,
         },
       }),
     },

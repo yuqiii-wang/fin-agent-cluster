@@ -144,9 +144,33 @@ async def ensure_setup() -> None:
         await lock_client.aclose()
 
 
+def get_pool_checkpointer() -> AsyncPostgresSaver:
+    """Return an ``AsyncPostgresSaver`` backed by the shared checkpointer pool.
+
+    The pool must already be open (call :func:`~backend.db.postgres.pool.open_pools`
+    during lifespan) and :func:`ensure_setup` must have been called before the
+    first LangGraph invocation.
+
+    Returns
+    -------
+    AsyncPostgresSaver
+        A ready-to-use saver that borrows connections from the shared
+        ``AsyncConnectionPool`` rather than opening a new TCP connection per call.
+    """
+    from backend.db.postgres.pool import get_checkpointer_pool
+
+    pool = get_checkpointer_pool()
+    return AsyncPostgresSaver(pool)
+
+
 @asynccontextmanager
 async def checkpointer() -> AsyncGenerator[AsyncPostgresSaver, None]:
-    """Async context manager that yields a ready-to-use AsyncPostgresSaver."""
+    """Async context manager that yields a ready-to-use AsyncPostgresSaver.
+
+    .. deprecated::
+        Prefer :func:`get_pool_checkpointer` which reuses the shared
+        ``AsyncConnectionPool`` instead of opening a new TCP connection.
+    """
     settings = get_settings()
     conn = await AsyncConnection.connect(
         settings.DATABASE_PG_URL,

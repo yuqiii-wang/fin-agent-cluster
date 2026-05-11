@@ -20,12 +20,6 @@ psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres <<-EOSQL
         END IF;
     END
     \$\$;
-
-    -- Kong requires its own database; create it here so kong-migrations can
-    -- start as soon as postgres-primary is healthy, before setup_db_schema runs.
-    SELECT 'CREATE DATABASE kong' WHERE NOT EXISTS (
-        SELECT FROM pg_database WHERE datname = 'kong'
-    )\gexec
 EOSQL
 
 # Append replication settings to postgresql.conf.

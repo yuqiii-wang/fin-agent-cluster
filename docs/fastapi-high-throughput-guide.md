@@ -1306,36 +1306,6 @@ lookups are chained.
 
 ---
 
-### 14.4 Fix 4 — Pre-warm `get_llm()` in FastAPI lifespan
-
-**Root cause**: `get_llm()` is decorated with `@lru_cache`.  The first call
-initialises the LangChain chat model (reads API keys, creates HTTP client
-objects, negotiates TLS for cloud providers).  This happens synchronously
-on the first query after startup, adding 50–200 ms to that query's TTFT.
-
-**Fix**: call `get_llm()` once in the FastAPI lifespan after the provider is
-determined so the cache is populated before any query arrives.
-
-```python
-# backend/main.py — lifespan
-from backend.llm.factory import get_llm
-try:
-    get_llm()
-    logger.info("[startup] LLM client pre-warmed provider=%s", get_active_provider())
-except Exception as exc:
-    logger.warning("[startup] LLM pre-warm failed (non-fatal): %s", exc)
-```
-
-The `get_llm()` call is non-fatal: if the provider is unreachable at startup,
-the error is logged and the first real query will pay the init cost and may then
-fail with an appropriate LLM error.
-
-**Files**: `backend/main.py` only.
-
-**Savings**: 50–200 ms on the first query after server start (one-time cost, moved off critical path).
-
----
-
 ### 14.5 Fix 5 — Parallelize `start_node_execution` + `build_chain`
 
 **Root cause**: in `query_optimizer/node.py`, `build_chain()` and

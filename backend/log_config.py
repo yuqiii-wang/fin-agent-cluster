@@ -4,14 +4,15 @@ Logger hierarchy and file routing
 ----------------------------------
 Component              Logger prefix                        Output file
 ────────────────────   ──────────────────────────────────   ─────────────────────
- FastAPI routes         backend.api                          logs/api.log
-Centrifugo client      backend.centrifugo                   logs/centrifugo.log
+FastAPI routes         backend.api                          logs/api.log
+Centrifugo client      backend.centrifugo_mq                logs/centrifugo.log
 Database / PostgreSQL  backend.db.postgres                  logs/db.log
 Database / Redis       backend.db.redis                     logs/db.log
-LangGraph + agents     backend.graph                        logs/graph.log
+Main thread            backend.main_thread                  logs/graph.log
+LangGraph + agents     backend.langgraph                    logs/graph.log
 LLM providers          backend.llm                          logs/llm.log
 Market / news data     backend.resources                    logs/resources.log
-Redis Streams / MQ     backend.streaming                    logs/streaming.log
+Redis Streams / MQ     backend.celery_task                  logs/streaming.log
 Celery workers         celery                               logs/streaming.log
 User auth              backend.users                        logs/users.log
 Uvicorn HTTP access    uvicorn.access                       console only
@@ -62,30 +63,25 @@ _LEVEL_COLOURS: dict[str, str] = {
 # Short component label derived from logger namespace.
 # Checked longest-first so the most-specific prefix wins.
 _COMPONENT_LABELS: list[tuple[str, str]] = [
-    ("backend.graph.agents.decision_maker",         "Agent/Decision"),
-    ("backend.graph.agents.market_data",             "Agent/Market"),
-    ("backend.graph.agents.query_optimizer",         "Agent/QueryOpt"),
-    ("backend.graph.agents.mock_perf",               "Mock/Perf"),
-    ("backend.graph.agents.mock_single",             "Mock/Single"),
-    ("backend.graph.agents",                         "Graph/Agents"),
-    ("backend.graph.utils",                          "Graph/Utils"),
-    ("backend.graph",                                "Graph"),
-    ("backend.centrifugo",                           "Centrifugo"),
+    ("backend.langgraph.nodes",                      "Graph/Nodes"),
+    ("backend.langgraph.tasks",                      "Graph/Tasks"),
+    ("backend.langgraph.lifecycle",                  "Graph/Lifecycle"),
+    ("backend.langgraph",                            "LangGraph"),
+    ("backend.main_thread",                          "MainThread"),
+    ("backend.centrifugo_mq.sse_notification",       "Centrifugo/SSE"),
+    ("backend.centrifugo_mq.llm_tokens",             "Centrifugo/LLM"),
+    ("backend.centrifugo_mq",                        "Centrifugo"),
     ("backend.db.postgres",                          "DB/Postgres"),
     ("backend.db.redis",                             "DB/Redis"),
     ("backend.db",                                   "DB"),
     ("backend.llm.providers",                        "LLM/Providers"),
     ("backend.llm",                                  "LLM"),
-    ("backend.resources.news",                         "Resources/News"),
-    ("backend.resources.stats",                        "Resources/Stats"),
-    ("backend.resources",                              "Resources"),
-    ("backend.sse_notifications.agent_tasks",        "SSE/Tasks"),
-    ("backend.sse_notifications.mock_perf",         "SSE/MockPerf"),
-    ("backend.sse_notifications.mock_single",       "SSE/MockSingle"),
-    ("backend.sse_notifications.node_io",            "SSE/NodeIO"),
+    ("backend.resources.news",                       "Resources/News"),
+    ("backend.resources.stats",                      "Resources/Stats"),
+    ("backend.resources",                            "Resources"),
     ("backend.sse_notifications",                    "SSE/Notify"),
-    ("backend.streaming.workers",                    "Stream/Workers"),
-    ("backend.streaming",                            "Streaming"),
+    ("backend.celery_task.workers",                  "Stream/Workers"),
+    ("backend.celery_task",                          "Streaming"),
     ("backend.api",                                  "API"),
     ("backend.users",                                "Users"),
     ("backend",                                      "Backend"),
@@ -199,6 +195,26 @@ class JsonFileFormatter(logging.Formatter):
 
 
 # ---------------------------------------------------------------------------
+# Resilient file handler
+# ---------------------------------------------------------------------------
+
+
+class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """RotatingFileHandler that re-creates the parent directory if deleted at runtime.
+
+    The default handler raises ``FileNotFoundError`` in ``shouldRollover`` when
+    the log directory is removed after process start (e.g. by ``setup.sh``
+    running ``rm -rf logs/``).  This subclass recreates the directory before
+    every ``_open()`` call so the handler self-heals without crashing.
+    """
+
+    def _open(self) -> "IO[str]":
+        """Open the log file, creating the parent directory if necessary."""
+        Path(self.baseFilename).parent.mkdir(parents=True, exist_ok=True)
+        return super()._open()
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -244,7 +260,7 @@ def get_logging_config() -> dict[str, Any]:
             Handler config dict.
         """
         return {
-            "class": "logging.handlers.RotatingFileHandler",
+            "class": "backend.log_config._SafeRotatingFileHandler",
             "formatter": "file",
             "filename": f"{log_dir}/{filename}",
             "maxBytes": 10 * 1024 * 1024,  # 10 MB per file
@@ -281,9 +297,7 @@ def get_logging_config() -> dict[str, Any]:
 
         # ── Filters ────────────────────────────────────────────────────────
         "filters": {
-            "celery_task_summary": {
-                "()": "backend.streaming.log_filters.CeleryTaskSummaryFilter",
-            },
+
             "health_check_throttle": {
                 "()": "backend.api.log_filters.HealthCheckThrottleFilter",
             },
@@ -305,7 +319,6 @@ def get_logging_config() -> dict[str, Any]:
             "centrifugo_file":          {**_file("centrifugo.log"),          "level": "DEBUG"},
             "db_file":                 {**_file("db.log"),                 "level": "DEBUG"},
             "graph_file":              {**_file("graph.log"),              "level": "DEBUG"},
-            "perf_test_file":          {**_file("perf_test.log"),          "level": "DEBUG"},
             "llm_file":                {**_file("llm.log"),                "level": "DEBUG"},
             "resources_file":          {**_file("resources.log"),          "level": "DEBUG"},
             "sse_notifications_file":  {**_file("sse_notifications.log"),  "level": "DEBUG"},
@@ -317,13 +330,13 @@ def get_logging_config() -> dict[str, Any]:
                 "formatter": "uvicorn_default",
                 "stream": "ext://sys.stderr",
             },
-            # Dedicated console handler for Celery — throttles task noise
+            # Dedicated console handler for Celery — filter attached programmatically
+            # by celery_engine._configure_worker_logging after configure_logging() runs.
             "celery_console": {
                 "class": "logging.StreamHandler",
                 "formatter": "console",
                 "stream": "ext://sys.stdout",
                 "level": "DEBUG",
-                "filters": ["celery_task_summary"],
             },
             "uvicorn_access_h": {
                 "class": "logging.StreamHandler",
@@ -341,7 +354,7 @@ def get_logging_config() -> dict[str, Any]:
                 "level": "DEBUG",
                 "propagate": False,
             },
-            "backend.centrifugo": {
+            "backend.centrifugo_mq": {
                 "handlers": ["console", "centrifugo_file", "app_file"],
                 "level": "DEBUG",
                 "propagate": False,
@@ -357,14 +370,12 @@ def get_logging_config() -> dict[str, Any]:
                 "level": "DEBUG",
                 "propagate": False,
             },
-            "backend.graph.agents.perf_test": {
-                # Separate file so perf-test traces can be grepped without
-                # wading through the full graph log.
-                "handlers": ["console", "perf_test_file", "graph_file", "app_file"],
+            "backend.main_thread": {
+                "handlers": ["console", "graph_file", "app_file"],
                 "level": "DEBUG",
                 "propagate": False,
             },
-            "backend.graph": {
+            "backend.langgraph": {
                 "handlers": ["console", "graph_file", "app_file"],
                 "level": "DEBUG",
                 "propagate": False,
@@ -386,15 +397,15 @@ def get_logging_config() -> dict[str, Any]:
                 "level": "INFO",
                 "propagate": False,
             },
-            "backend.streaming": {
+            "backend.celery_task": {
                 "handlers": ["console", "streaming_file", "app_file"],
                 "level": "DEBUG",
                 "propagate": False,
             },
-            "backend.streaming.workers": {
+            "backend.celery_task.workers": {
                 # Explicit entry so Celery prefork worker sub-processes route
-                # fanout and throughput task logs directly to streaming.log
-                # without relying on propagation through backend.streaming.
+                # task logs directly to streaming.log
+                # without relying on propagation through backend.celery_task.
                 "handlers": ["console", "streaming_file", "app_file"],
                 "level": "DEBUG",
                 "propagate": False,

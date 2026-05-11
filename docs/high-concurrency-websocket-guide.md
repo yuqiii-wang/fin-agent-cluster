@@ -12,8 +12,7 @@ FastAPI + LangGraph + Centrifugo fintech service.
 ```
 Browser
   │
-  ├─ HTTP  ──→ Kong :8888  ──→ FastAPI-assistant :8436/:8437  (token bootstrap, lifecycle)
-  │                        ──→ FastAPI-runner    :8432-:8435  (query submit, ACK)
+  ├─ HTTP  ──→ Kong :8888  ──→ FastAPI-runner    :8432-:8435  (all HTTP endpoints)
   │
   ├─ WS    ──→ Kong :8888  ──→ Centrifugo-0 :8000  (shard 0 — redis-0)
   │                        ──→ Centrifugo-1 :8000  (shard 1 — redis-1)
@@ -58,10 +57,10 @@ no need to wait for the WebSocket event.
 ### Step 2 — Frontend fetches Centrifugo JWT tokens
 
 ```
-Browser → GET /api/v1/centrifugo/token?thread_id=<uuid>   (X-User-Token: <jwt>)
+Browser → GET /api/v1/centrifugo/llm-token?thread_id=<uuid>   (X-User-Token: <jwt>)
         → Kong :8888
-        → route-centrifugo-token  (rate-limit: 6000/min)
-        → fastapi-assistant-upstream (FastAPI :8436/:8437)
+        → route-centrifugo-llm  (rate-limit: 6000/min)
+        → runner-upstream (FastAPI :8432-:8435)
         → backend/api/centrifugo.py :: get_centrifugo_token()
 ```
 
@@ -208,7 +207,7 @@ run_graph_async(thread_id, query)
 
 **Celery task `run_fanout_batch`** (`backend/streaming/workers/fanout.py`):
 ```python
-@celery_app.task(queue="stream:ingest", acks_late=True)
+@celery_engine.task(queue="stream:ingest", acks_late=True)
 def run_fanout_batch(run_id, stream_configs, timeout_secs, ...):
     asyncio.run(_fanout_async(run_id, stream_configs, timeout_secs))
 
@@ -322,7 +321,7 @@ Browser receives event="done"
 
 ```
 Kong :8888
-├─ GET  /api/v1/centrifugo/token        → fastapi-assistant  (rate: 6000/min)
+├─ GET  /api/v1/centrifugo/llm-token        → fastapi-runner  (rate: 6000/min)
 ├─ WS   /centrifugo-0/*   strip_path   → centrifugo-0:8000   (ws, timeout 1h)
 └─ WS   /centrifugo-1/*   strip_path   → centrifugo-1:8000   (ws, timeout 1h)
 ```
@@ -334,7 +333,6 @@ Full Kong upstream map:
 | `centrifugo-0` | `centrifugo-0:8000` | `ws` | 3 600 000 ms |
 | `centrifugo-1` | `centrifugo-1:8000` | `ws` | 3 600 000 ms |
 | `fastapi-runner` | `:8432–:8435` round-robin | `http` | 30 000 ms |
-| `fastapi-assistant` | `:8436–:8437` round-robin | `http` | 30 000 ms |
 
 Kong only handles **WebSocket upgrade** and **HTTP token bootstrap**.  It does
 not proxy the Centrifugo internal publish API — that uses Docker internal DNS
@@ -697,7 +695,7 @@ async function main() {
 
   await Promise.all(threads.map(async ({ thread_id }) => {
     const { ws_url, connection_token, subscription_token, channel } =
-      await fetch(`${BASE}/centrifugo/token?thread_id=${thread_id}`, {
+      await fetch(`${BASE}/centrifugo/llm-token?thread_id=${thread_id}`, {
         headers: { "X-User-Token": userToken },
       }).then((r) => r.json());
 
@@ -742,7 +740,7 @@ export default function () {
   const token = http.post(`${BASE}/users/guest-login`).json("token");
   const { thread_id } = http.post(`${BASE}/users/query`, ...).json();
   const { ws_url, connection_token, channel } = http.get(
-    `${BASE}/centrifugo/token?thread_id=${thread_id}`,
+    `${BASE}/centrifugo/llm-token?thread_id=${thread_id}`,
     { headers: { "X-User-Token": token } }
   ).json();
 

@@ -21,9 +21,9 @@ ollama serve
 # UI Start
 netstat -ano 2>/dev/null | awk '/:11434.*LISTENING/{print $5}' | tr -d '\r' | xargs -r -I{} taskkill //F //PID {} >/dev/null 2>&1 || true
 if [ "$PROD_MODE" = true ]; then
-  # The UI is served from nginx on port 22332; API calls go to Kong on 8443.
-  # CORS for http://localhost:22332 is already allowed in Kong's global CORS plugin.
-  cd frontend && VITE_KONG_URL=https://localhost:8443 npm run build
+  # The UI is served from nginx on port 22332; API calls go to nginx-api on 8443.
+  # CORS for https://localhost:22332 is allowed in nginx-api.conf.
+  cd frontend && VITE_API_URL=https://localhost:8443 npm run build
 else
   cd frontend && npm run dev
 fi

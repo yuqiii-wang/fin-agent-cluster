@@ -18,19 +18,21 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+find . \( -type f -name "*.pyc" -o -type d -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
+rm -rf "$SCRIPT_DIR/logs"
+mkdir -p "$SCRIPT_DIR/logs"
+
 # ---------------------------------------------------------------------------
 # Source all setup modules
 # ---------------------------------------------------------------------------
 source "$SCRIPT_DIR/setup/tls.sh"
-source "$SCRIPT_DIR/setup/kong_config.sh"
 source "$SCRIPT_DIR/setup/postgres_volumes.sh"
 source "$SCRIPT_DIR/setup/docker_services.sh"
 source "$SCRIPT_DIR/setup/db_schema.sh"
 source "$SCRIPT_DIR/setup/ollama_models.sh"
 
 setup_tls              "$@"
-setup_kong_config      "$@"
 setup_postgres_volumes "$@"
 setup_docker_services  "$@"
 setup_db_schema        "$@"
-setup_ollama_models    "$@"
+# setup_ollama_models    "$@"

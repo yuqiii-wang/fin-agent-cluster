@@ -21,7 +21,7 @@ from backend.db.postgres.engine import (
     get_session_factory,
 )
 from backend.db.postgres.connection import raw_conn
-from backend.db.postgres.checkpointer import checkpointer, ensure_setup
+from backend.db.postgres.checkpointer import checkpointer, ensure_setup, get_pool_checkpointer
 from backend.db.postgres.init_ import init_db
 from backend.db.postgres.pool import (
     open_pools,
@@ -30,7 +30,7 @@ from backend.db.postgres.pool import (
     get_raw_pool,
     get_raw_read_pool,
 )
-from backend.db.postgres.types import QueryStatus, query_status_sa_type
+from backend.db.postgres.types import QueryStatus, query_status_sa_type, WorkStatus, work_status_sa_type, NodeType, node_type_sa_type
 
 __all__ = [
     "Base",
@@ -41,6 +41,7 @@ __all__ = [
     "raw_conn",
     "checkpointer",
     "ensure_setup",
+    "get_pool_checkpointer",
     "init_db",
     "open_pools",
     "close_pools",
@@ -49,4 +50,8 @@ __all__ = [
     "get_raw_read_pool",
     "QueryStatus",
     "query_status_sa_type",
+    "WorkStatus",
+    "work_status_sa_type",
+    "NodeType",
+    "node_type_sa_type",
 ]

@@ -11,8 +11,13 @@ export default defineConfig({
     video: "retain-on-failure",
     screenshot: "only-on-failure",
     // Bypass the system proxy so localhost traffic reaches the dev server directly.
+    // --ignore-certificate-errors is required so that the native WebSocket API
+    // (used by the Centrifuge client) can connect to wss://localhost:22332 which
+    // serves a self-signed certificate.  ignoreHTTPSErrors only suppresses cert
+    // errors for HTTP requests intercepted by the CDP Network domain; it does NOT
+    // cover WebSocket connections opened by in-page JavaScript.
     launchOptions: {
-      args: ["--no-proxy-server"],
+      args: ["--no-proxy-server", "--ignore-certificate-errors"],
     },
   },
   projects: [

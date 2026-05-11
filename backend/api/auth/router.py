@@ -5,8 +5,8 @@ Mounted at ``/auth`` under the parent API router.  Full paths:
     POST /api/v1/auth/guest                             — create / validate a guest session
     GET  /api/v1/auth/me/history                        — list this user's thread history
     GET  /api/v1/auth/me/active                         — most recent non-completed thread
-    GET  /api/v1/auth/centrifugo/token?thread_id=       — token-stream Centrifugo JWTs (centrifugo-token-0/1)
-    GET  /api/v1/auth/centrifugo/sse-token?thread_id=   — SSE lifecycle Centrifugo JWTs (centrifugo-sse)
+    GET  /api/v1/auth/centrifugo/llm-token?thread_id=       — token-stream Centrifugo JWTs (centrifugo-llm-0/1)
+    GET  /api/v1/auth/centrifugo/sse-notification?thread_id=   — SSE lifecycle Centrifugo JWTs (centrifugo-sse)
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ from sqlalchemy import desc, select
 
 from backend.auth.guest import ensure_guest
 from backend.auth.jwt import make_connection_token, make_subscription_token
-from backend.auth.schemas import CentrifugoSseTokenResponse, CentrifugoTokenResponse
-from backend.centrifugo.client import get_shard_index, get_sse_shard_index
+from backend.auth.schemas import CentrifugoSseNotificationResponse, CentrifugoLlmTokenResponse
+from backend.centrifugo_mq.client import get_shard_index, get_sse_shard_index
 from backend.config import get_settings
-from backend.db.postgres.engine import get_session_factory
+from backend.db.postgres.engine import get_read_session_factory, get_session_factory
 from backend.users.models import UserQuery
 from backend.users.schemas import GuestAuthResponse, ThreadSummary
 
@@ -84,7 +84,7 @@ async def get_history(
     """
     user, _ = await ensure_guest(x_user_token)
 
-    factory = get_session_factory()
+    factory = get_read_session_factory()
     async with factory() as session:
         result = await session.execute(
             select(UserQuery)
@@ -157,11 +157,11 @@ async def get_active_thread(
 # ── Centrifugo token bootstrap ────────────────────────────────────────────────
 
 
-@router.get("/centrifugo/token", response_model=CentrifugoTokenResponse)
+@router.get("/centrifugo/llm-token", response_model=CentrifugoLlmTokenResponse)
 async def get_centrifugo_token(
     thread_id: str,
     x_user_token: Annotated[str, Header(alias="X-User-Token")],
-) -> CentrifugoTokenResponse:
+) -> CentrifugoLlmTokenResponse:
     """Return Centrifugo connection and subscription tokens for *thread_id*.
 
     The frontend uses these tokens to establish a WebSocket connection to the
@@ -173,7 +173,7 @@ async def get_centrifugo_token(
         x_user_token:  Guest-auth bearer token from ``localStorage``.
 
     Returns:
-        ``CentrifugoTokenResponse`` with ``ws_url``, ``connection_token``,
+        ``CentrifugoLlmTokenResponse`` with ``ws_url``, ``connection_token``,
         ``subscription_token``, ``shard_index``, and ``channel``.
 
     Raises:
@@ -189,7 +189,7 @@ async def get_centrifugo_token(
     shard = get_shard_index(thread_id)
     channel = f"thread:{thread_id}"
 
-    ws_url = f"{settings.CENTRIFUGO_PUBLIC_BASE}/centrifugo-token-{shard}/connection/websocket"
+    ws_url = f"{settings.CENTRIFUGO_PUBLIC_BASE}/centrifugo-llm-{shard}/connection/websocket"
     connection_token = make_connection_token(user_id, secret)
     subscription_token = make_subscription_token(user_id, channel, secret)
 
@@ -199,7 +199,7 @@ async def get_centrifugo_token(
         thread_id,
         shard,
     )
-    return CentrifugoTokenResponse(
+    return CentrifugoLlmTokenResponse(
         ws_url=ws_url,
         connection_token=connection_token,
         subscription_token=subscription_token,
@@ -208,24 +208,24 @@ async def get_centrifugo_token(
     )
 
 
-@router.get("/centrifugo/sse-token", response_model=CentrifugoSseTokenResponse)
+@router.get("/centrifugo/sse-notification", response_model=CentrifugoSseNotificationResponse)
 async def get_centrifugo_sse_token(
     thread_id: str,
     x_user_token: Annotated[str, Header(alias="X-User-Token")],
-) -> CentrifugoSseTokenResponse:
+) -> CentrifugoSseNotificationResponse:
     """Return Centrifugo connection and subscription tokens for the SSE lifecycle node.
 
     The frontend uses these tokens to connect to ``centrifugo-sse`` and subscribe
     to the ``thread:{thread_id}`` channel for all lifecycle events (started,
     completed, done, query_*, node_*, stream_*).  Token events use a separate
-    endpoint (``/centrifugo/token``) that routes to the sharded centrifugo-token-0/1.
+    endpoint (``/centrifugo/llm-token``) that routes to the sharded centrifugo-llm-0/1.
 
     Args:
         thread_id:     LangGraph thread UUID to subscribe to.
         x_user_token:  Guest-auth bearer token from ``localStorage``.
 
     Returns:
-        ``CentrifugoSseTokenResponse`` with ``ws_url``, ``connection_token``,
+        ``CentrifugoSseNotificationResponse`` with ``ws_url``, ``connection_token``,
         ``subscription_token``, and ``channel``.
 
     Raises:
@@ -251,7 +251,7 @@ async def get_centrifugo_sse_token(
         thread_id,
         shard,
     )
-    return CentrifugoSseTokenResponse(
+    return CentrifugoSseNotificationResponse(
         ws_url=ws_url,
         connection_token=connection_token,
         subscription_token=subscription_token,

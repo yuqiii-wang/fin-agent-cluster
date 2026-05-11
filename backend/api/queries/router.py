@@ -1,164 +1,171 @@
-"""FastAPI router for user query endpoints.
+"""backend.api.queries.router — user query history and lookup endpoints.
 
-Mounted at ``/users`` under the parent API router, so full paths are:
+Non-streaming, plain HTTP endpoints for querying thread records.
+These complement the streaming SSE flow in ``backend.api.threads``.
 
-    POST /api/v1/users/query
-    POST /api/v1/users/query/{thread_id}/ack
-    POST /api/v1/users/query/{thread_id}/cancel
-    POST /api/v1/users/query/{thread_id}/resume
-    POST /api/v1/users/query/{thread_id}/nodes/{node_id}/cancel
-    POST /api/v1/users/query/{thread_id}/tasks/{task_id}/cancel
-    POST /api/v1/users/query/{thread_id}/perf-stable?stream_id={stream_id}
-    GET  /api/v1/users/query/{thread_id}
-    GET  /api/v1/users/query/{thread_id}/tasks
-    GET  /api/v1/users/query/{thread_id}/nodes
-
-Business logic lives in :mod:`backend.users.queries`.
+Routes
+------
+    GET  /api/v1/queries                      — paginated query history for the caller
+    GET  /api/v1/queries/active               — most recent in-progress thread
+    GET  /api/v1/queries/{thread_id}          — single thread status
+    DELETE /api/v1/queries/{thread_id}        — cancel and remove a thread
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+import logging
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Header, Query
 
-from backend.users.auth import ensure_guest
-from backend.users.queries import (
-    ack_query,
-    cancel_node,
-    cancel_query,
-    cancel_task_by_uuid,
-    get_node_executions,
-    get_query_status,
-    get_query_tasks,
-    resume_query,
-    submit_query,
-)
-from backend.users.schemas import (
-    NodeExecutionInfo,
-    QueryRequest,
-    QueryResponse,
-    SessionStatus,
-)
-from backend.db.redis.session.perf_stable_signal import set_perf_stable
+from backend.auth.guest import ensure_guest
+from backend.users.queries import cancel_query, get_query_status, submit_query
+from backend.users.schemas import QueryRequest, QueryResponse, ThreadSummary
 
-router = APIRouter(prefix="/users", tags=["users"])
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/queries", tags=["queries"])
 
 
-@router.post("/query", response_model=QueryResponse)
-async def run_query(
-    request: QueryRequest,
+@router.post("", response_model=QueryResponse, status_code=201)
+async def submit_query_endpoint(
+    body: QueryRequest,
     x_user_token: Annotated[str, Header(alias="X-User-Token")],
 ) -> QueryResponse:
-    """Accept a financial analysis query and await client ACK before processing."""
-    user, _ = await ensure_guest(x_user_token)
-    return await submit_query(request, user)
+    """Submit a new analysis query and return its initial status.
 
+    Creates a row in ``fin_agents.user_queries`` with ``status='received'``.
+    The graph run begins after the frontend ACKs via
+    ``POST /threads/{thread_id}/ack``.
 
-@router.post("/query/{thread_id}/ack", response_model=QueryResponse)
-async def ack_query_route(
-    thread_id: str,
-    x_user_token: Annotated[str, Header(alias="X-User-Token")],
-) -> QueryResponse:
-    """Acknowledge a received query, starting LangGraph execution."""
-    await ensure_guest(x_user_token)
-    return await ack_query(thread_id)
+    Args:
+        body:         JSON payload with ``query`` string.
+        x_user_token: Guest bearer token from ``localStorage``.
 
-
-@router.post("/query/{thread_id}/cancel", response_model=QueryResponse)
-async def cancel_query_route(
-    thread_id: str,
-    reason: str = "user",
-) -> QueryResponse:
-    """Cancel a running or received query (thread-level)."""
-    return await cancel_query(thread_id, reason)
-
-
-@router.post("/query/{thread_id}/nodes/{node_id}/cancel")
-async def cancel_node_route(thread_id: str, node_id: str) -> dict:
-    """Cancel a specific node execution and all tasks running under it."""
-    return await cancel_node(thread_id, node_id)
-
-
-@router.post("/query/{thread_id}/resume", response_model=QueryResponse)
-async def resume_query_route(thread_id: str) -> QueryResponse:
-    """Resume a cancelled or failed query from its last LangGraph checkpoint.
-
-    Dispatches to ``run_resume_async`` which passes ``input=None`` so LangGraph
-    loads the last pre-node checkpoint and re-runs the interrupted node from scratch.
+    Returns:
+        :class:`QueryResponse` with ``status='received'`` and the new ``thread_id``.
     """
-    return await resume_query(thread_id)
+    user, _ = await ensure_guest(x_user_token)
+    return await submit_query(body, user)
 
 
-@router.post("/query/{thread_id}/tasks/{task_id}/cancel")
-async def cancel_task_route(
-    thread_id: str,
-    task_id: str,
-    node_id: str = "",
-) -> dict:
-    """Send a cancel signal to a specific task by its governance UUID."""
-    return await cancel_task_by_uuid(thread_id, task_id, node_id=node_id)
+@router.get("/list", response_model=list[ThreadSummary])
+async def list_queries(
+    x_user_token: Annotated[str, Header(alias="X-User-Token")],
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> list[ThreadSummary]:
+    """Return the authenticated user's query history, newest first.
+
+    Args:
+        x_user_token: Guest bearer token from ``localStorage``.
+        limit:        Max records to return (1–100, default 20).
+        offset:       Pagination offset (default 0).
+
+    Returns:
+        List of :class:`ThreadSummary` ordered by ``created_at DESC``.
+    """
+    from sqlalchemy import desc, select
+    from backend.db.postgres.engine import get_read_session_factory
+    from backend.users.models import UserQuery
+
+    user, _ = await ensure_guest(x_user_token)
+    factory = get_read_session_factory()
+    async with factory() as session:
+        result = await session.execute(
+            select(UserQuery)
+            .where(UserQuery.user_id == str(user.id))
+            .order_by(desc(UserQuery.created_at))
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = result.scalars().all()
+
+    return [
+        ThreadSummary(
+            thread_id=r.thread_id,
+            query=r.query,
+            status=r.status,
+            created_at=r.created_at,
+            completed_at=r.completed_at,
+            answer=r.answer,
+        )
+        for r in rows
+    ]
 
 
-@router.post("/query/{thread_id}/tasks/{task_id}/enable-stream", status_code=200)
-async def enable_task_stream_route(thread_id: str, task_id: str) -> dict:
-    """Enable live Centrifugo streaming for a buffered opt-in streaming task.
+@router.get("/active", response_model=Optional[ThreadSummary])
+async def get_active_query(
+    x_user_token: Annotated[str, Header(alias="X-User-Token")],
+) -> Optional[ThreadSummary]:
+    """Return the user's most recent in-progress query thread, or ``null``.
 
-    When called, sets a Redis flag so the running analysis/report task
-    immediately begins forwarding buffered and future tokens to Centrifugo.
-    The user can trigger this by clicking the task panel in the graph inspector.
+    Args:
+        x_user_token: Guest bearer token from ``localStorage``.
+
+    Returns:
+        :class:`ThreadSummary` for the running thread, or ``null``.
+    """
+    from sqlalchemy import desc, select
+    from backend.db.postgres.engine import get_session_factory
+    from backend.users.models import UserQuery
+
+    user, _ = await ensure_guest(x_user_token)
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await session.execute(
+            select(UserQuery)
+            .where(
+                UserQuery.user_id == str(user.id),
+                UserQuery.status.in_(["received", "running"]),
+            )
+            .order_by(desc(UserQuery.created_at))
+            .limit(1)
+        )
+        row = result.scalar_one_or_none()
+
+    if not row:
+        return None
+
+    return ThreadSummary(
+        thread_id=row.thread_id,
+        query=row.query,
+        status=row.status,
+        created_at=row.created_at,
+        completed_at=row.completed_at,
+        answer=row.answer,
+    )
+
+
+@router.get("/{thread_id}", response_model=QueryResponse)
+async def get_query(thread_id: str) -> QueryResponse:
+    """Return the full status of a single query thread.
 
     Args:
         thread_id: LangGraph thread UUID.
-        task_id:   Task invocation UUID to enable streaming for.
 
     Returns:
-        Echo of thread_id, task_id, and streaming status.
+        :class:`QueryResponse` with the latest DB state.
     """
-    from backend.db.redis.session.task_preview import enable_task_stream  # noqa: PLC0415
-    await enable_task_stream(thread_id, task_id)
-    return {"thread_id": thread_id, "task_id": task_id, "streaming": True}
-
-
-@router.post("/query/{thread_id}/perf-stable", status_code=204)
-async def perf_stable_route(
-    thread_id: str,
-    stream_id: Annotated[str, Query(description="Celery ingest run UUID (leaf-level governance ID)")],
-    x_user_token: Annotated[str, Header(alias="X-User-Token")],
-) -> None:
-    """Signal that the concurrency stream identified by *stream_id* has reached stable TPS.
-
-    Called by the frontend when per-stream TPS history satisfies the
-    group-stability condition.  Sets a Redis flag that causes the running
-    stream_ingest Celery worker to stop gracefully and emit ``stream_complete``
-    (not ``stream_stopped``), marking the session as completed rather than
-    timed out.
-
-    The ``stream_id`` query parameter scopes the signal to the specific Celery
-    ingest run so concurrent streams on the same ``thread_id`` never
-    cross-pollinate stable signals.
-
-    Args:
-        thread_id: LangGraph thread UUID (top-level scope; used for routing).
-        stream_id: Celery ingest run UUID (leaf-level scope; the signal key).
-    """
-    await ensure_guest(x_user_token)
-    await set_perf_stable(stream_id, thread_id)
-
-
-@router.get("/query/{thread_id}", response_model=QueryResponse)
-async def get_query_status_route(thread_id: str) -> QueryResponse:
-    """Get the current status of a submitted query."""
     return await get_query_status(thread_id)
 
 
-@router.get("/query/{thread_id}/tasks", response_model=SessionStatus)
-async def get_query_tasks_route(thread_id: str) -> SessionStatus:
-    """Return the query record and all its agent sub-tasks."""
-    return await get_query_tasks(thread_id)
+@router.delete("/{thread_id}", response_model=QueryResponse)
+async def cancel_and_remove_query(
+    thread_id: str,
+    x_user_token: Annotated[str, Header(alias="X-User-Token")],
+) -> QueryResponse:
+    """Cancel a running thread on behalf of the authenticated user.
+
+    Args:
+        thread_id:    LangGraph thread UUID.
+        x_user_token: Guest bearer token (used to validate ownership).
+
+    Returns:
+        Updated :class:`QueryResponse` with ``status='cancelled'``.
+    """
+    await ensure_guest(x_user_token)
+    return await cancel_query(thread_id, reason="user")
 
 
-@router.get("/query/{thread_id}/nodes", response_model=list[NodeExecutionInfo])
-async def get_node_executions_route(thread_id: str) -> list[NodeExecutionInfo]:
-    """Return node-level input/output snapshots for a thread."""
-    return await get_node_executions(thread_id)
+__all__ = ["router"]

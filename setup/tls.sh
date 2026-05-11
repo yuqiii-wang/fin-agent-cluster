@@ -31,15 +31,14 @@ setup_tls() {
         -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
     echo "[tls] Certificate written to $cert_file"
 
-    # If Kong is already running, force-recreate it so it loads the new cert.
-    # Kong reads SSL cert/key files only at nginx worker spawn — a running
-    # container keeps the old cert until restarted.  The bind-mount
-    # (./certs:/certs:ro) ensures the container always sees the latest files,
-    # but the process must be cycled to pick them up.
-    if docker compose ps --status running kong 2>/dev/null | grep -q "kong"; then
-        echo "[tls] Kong is running — restarting to load new certificate..."
-        docker compose up -d --force-recreate kong
-        echo "[tls] Kong restarted."
+    # If nginx-api is already running, force-recreate it so it loads the new cert.
+    # nginx reads SSL cert/key files only at worker spawn.  The bind-mount
+    # (./certs:/etc/nginx/certs:ro) ensures the container always sees the latest
+    # files, but the process must be cycled to pick them up.
+    if docker compose ps --status running nginx-api 2>/dev/null | grep -q "nginx-api"; then
+        echo "[tls] nginx-api is running — restarting to load new certificate..."
+        docker compose up -d --force-recreate nginx-api
+        echo "[tls] nginx-api restarted."
     fi
 }
 

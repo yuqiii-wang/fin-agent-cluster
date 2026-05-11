@@ -65,8 +65,8 @@ async def open_pools() -> None:
     if _raw_pool is None:
         _raw_pool = AsyncConnectionPool(
             conninfo=write_url,
-            min_size=2,
-            max_size=10,
+            min_size=10,
+            max_size=100,
             open=False,
             kwargs={
                 "autocommit": True,

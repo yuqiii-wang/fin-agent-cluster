@@ -13,7 +13,6 @@ async def init_db() -> None:
     """
     # Ensure all ORM models are registered on Base.metadata before create_all.
     import backend.users.models  # noqa: F401
-    import backend.graph.models  # noqa: F401
 
     engine = get_engine()
     async with engine.begin() as conn:

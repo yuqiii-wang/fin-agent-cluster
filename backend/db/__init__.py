@@ -11,7 +11,7 @@ Public surface::
 """
 
 from backend.db.postgres.init_ import init_db
-from backend.db.postgres.checkpointer import checkpointer
+from backend.db.postgres.checkpointer import checkpointer, get_pool_checkpointer
 from backend.db.postgres.engine import get_session_factory, get_read_session_factory
 from backend.db.postgres.connection import raw_conn
 from backend.db.redis.streams.publisher import stream_token
@@ -19,6 +19,7 @@ from backend.db.redis.streams.publisher import stream_token
 __all__ = [
     "init_db",
     "checkpointer",
+    "get_pool_checkpointer",
     "get_session_factory",
     "get_read_session_factory",
     "raw_conn",

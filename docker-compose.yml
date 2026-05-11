@@ -63,126 +63,53 @@ services:
     volumes:
       - redis_1_data:/data
 
-  kong-migrations:
-    image: kong/kong-gateway:3.12.0.5-20260415-rhel-fips
-    command: kong migrations bootstrap
-    environment:
-      KONG_DATABASE: postgres
-      KONG_PG_HOST: postgres-primary
-      KONG_PG_PORT: "5432"
-      KONG_PG_USER: ${POSTGRES_USER:-admin}
-      KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-P@ssw0rd123}
-      KONG_PG_DATABASE: ${KONG_DB:-kong}
-    depends_on:
-      postgres-primary:
-        condition: service_healthy
-    restart: "no"
-
-  kong-config-import:
-    image: kong/kong-gateway:3.12.0.5-20260415-rhel-fips
-    command: kong config db_import /etc/kong/kong.yml
-    environment:
-      KONG_DATABASE: postgres
-      KONG_PG_HOST: postgres-primary
-      KONG_PG_PORT: "5432"
-      KONG_PG_USER: ${POSTGRES_USER:-admin}
-      KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-P@ssw0rd123}
-      KONG_PG_DATABASE: ${KONG_DB:-kong}
-    volumes:
-      - ./kong-api-gateway/kong.yml:/etc/kong/kong.yml:ro
-    depends_on:
-      kong-migrations:
-        condition: service_completed_successfully
-    restart: "no"
-
-  kong:
-    image: kong/kong-gateway:3.12.0.5-20260415-rhel-fips
+  # nginx-api — API gateway replacing Kong.
+  # :8000  plain HTTP  — internal (nginx-ui /_backend_health, Prometheus exporter)
+  # :8443  HTTPS/HTTP2 — browser REST traffic
+  # Sticky routing by thread UUID via consistent-hashing; see nginx-api.conf.
+  nginx-api:
+    image: nginx:alpine
     restart: unless-stopped
     extra_hosts:
       # Resolve host.docker.internal on Linux (automatic on Docker Desktop only).
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./logs:/logs                       # bind-mount so file-log plugin writes to host ./logs/kong.log
-      # TLS cert for HTTPS/HTTP2 proxy listener (port 8443).
-      # Bind-mount keeps host files live inside the container, but Kong reads
-      # SSL cert/key only at nginx worker spawn.  setup/tls.sh --force-tls
-      # regenerates the cert AND restarts Kong automatically via
-      # `docker compose up -d --force-recreate kong`.
-      - ./certs:/certs:ro
-    depends_on:
-      kong-config-import:
-        condition: service_completed_successfully
-    environment:
-      KONG_DATABASE: postgres
-      KONG_PG_HOST: postgres-primary
-      KONG_PG_PORT: "5432"
-      KONG_PG_USER: ${POSTGRES_USER:-admin}
-      KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-P@ssw0rd123}
-      KONG_PG_DATABASE: ${KONG_DB:-kong}
-      KONG_PROXY_ACCESS_LOG: /dev/stdout
-      KONG_ADMIN_ACCESS_LOG: /dev/stdout
-      KONG_PROXY_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
-      KONG_ADMIN_GUI_LISTEN: "0.0.0.0:8002"
-      # Port 8000 (→ host 8888): HTTP/1.1 — internal backend calls (KONG_API_URL).
-      # Port 8443 (→ host 8443): HTTPS + HTTP/2 — browser traffic (REST, WS, SSE).
-      KONG_PROXY_LISTEN: "0.0.0.0:8000, 0.0.0.0:8443 ssl http2"
-      KONG_SSL_CERT: /certs/localhost.crt
-      KONG_SSL_CERT_KEY: /certs/localhost.key
-      # Tell Kong Manager which external URLs to use from the browser
-      KONG_ADMIN_GUI_URL: "http://localhost:${KONG_MANAGER_PORT:-8886}"
-      KONG_ADMIN_GUI_API_URL: "http://localhost:${KONG_ADMIN_PORT:-8887}"
-      KONG_PG_POOL_SIZE: "5"
-      KONG_PG_BACKLOG: "10"
-      KONG_NGINX_WORKER_PROCESSES: "8"   # one worker per CPU core
-      KONG_MEM_CACHE_SIZE: "256m"
-      KONG_DB_UPDATE_FREQUENCY: "10"
-      KONG_LOG_LEVEL: debug
-      KONG_NGINX_PROXY_ERROR_LOG: /dev/stderr debug
-      # DNS resolver tuning — prevents 8-second cold-start delays and 1.2-second
-      # TTL-expiry spikes seen in Kong access logs under high concurrency.
-      # 127.0.0.11 is Docker's built-in DNS that resolves host.docker.internal
-      # from /etc/hosts instantly.  Stale-TTL lets Kong keep serving the cached
-      # IP while re-resolving in the background (no thundering-herd blocking).
-      KONG_DNS_RESOLVER: "127.0.0.11"
-      KONG_DNS_STALE_TTL: "3600"       # serve stale entry for up to 1 h during re-resolve
-      KONG_DNS_NOT_FOUND_TTL: "0"      # don't cache NXDOMAIN responses
-      KONG_DNS_ERROR_TTL: "0"          # don't cache resolver errors
-      KONG_DNS_NO_SYNC: "off"          # serial re-resolve avoids concurrent DNS stampede
-      # Upstream keepalive pool size per nginx worker.
-      # With 8 workers, effective total = 8 × 256 = 2048 idle connections to FastAPI.
-      # Sized for heavy perf-test workloads: 100+ concurrent streams each submitting
-      # queries means many short-lived POST /users/query connections in rapid succession.
-      # A large pool avoids TCP teardown/re-establish overhead on those bursts.
-      KONG_NGINX_UPSTREAM_KEEPALIVE: "256"
+      - ./gateway/nginx-api.conf:/etc/nginx/conf.d/nginx-api.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      - ./logs:/var/log/nginx
     ports:
-      - "${KONG_PROXY_PORT:-8888}:8000"
-      - "${KONG_PROXY_TLS_PORT:-8443}:8443"
-      - "${KONG_ADMIN_PORT:-8887}:8001"
-      - "${KONG_MANAGER_PORT:-8886}:8002"
+      - "${NGINX_API_HTTP_PORT:-8888}:8000"
+      - "${NGINX_API_TLS_PORT:-8443}:8443"
     healthcheck:
-      test: ["CMD", "kong", "health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/nginx-health"]
       interval: 10s
-      timeout: 10s
-      retries: 12
+      timeout: 5s
+      retries: 5
+
+  # nginx-prometheus-exporter — scrapes nginx-api /_nginx_status and exposes
+  # Prometheus metrics on :9113.  Replaces the Kong prometheus plugin.
+  nginx-api-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    restart: unless-stopped
+    command:
+      - --nginx.scrape-uri=http://nginx-api:8000/_nginx_status
+    depends_on:
+      nginx-api:
+        condition: service_healthy
 
   # Static UI server — serves the production build of the React frontend.
-  # Exposed directly on port 22332 (HTTPS); Kong is NOT in the path for UI assets.
-  # Build with:  cd frontend && VITE_KONG_URL=https://localhost:8443 npm run build
+  # Exposed directly on port 22332 (HTTPS); nginx-api handles all API calls.
+  # Build with:  cd frontend && VITE_API_URL=https://localhost:8443 npm run build
   # Access via:  https://localhost:22332/
   ui:
     image: nginx:alpine
     restart: unless-stopped
-    # Wait for Kong to be healthy before serving the UI so that browser
-    # WebSocket upgrades through nginx → Kong succeed on the very first
-    # page load (avoids 502 / transport errors during Kong startup).
     depends_on:
-      kong:
+      nginx-api:
         condition: service_healthy
     volumes:
       - ./frontend/dist:/usr/share/nginx/html:ro
-      - ./nginx-ui.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./gateway/nginx-ui.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/etc/nginx/certs:ro
     ports:
       - "${UI_PORT:-22332}:443"
@@ -192,12 +119,12 @@ services:
       timeout: 5s
       retries: 5
 
-  centrifugo-token-0:
+  centrifugo-llm-0:
     image: centrifugo/centrifugo:v6.7.1-amd64
     restart: unless-stopped
     command: centrifugo -c /centrifugo/config.json
     volumes:
-      - ./centrifugo/centrifugo-token-0/config.json:/centrifugo/config.json:ro
+      - ./centrifugo/centrifugo-llm-0/config.json:/centrifugo/config.json:ro
     environment:
       CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY: ${CENTRIFUGO_SECRET:-centrifugo-dev-secret-key}
       CENTRIFUGO_HTTP_API_KEY: ${CENTRIFUGO_API_KEY:-centrifugo-api-key}
@@ -211,12 +138,12 @@ services:
       timeout: 5s
       retries: 5
 
-  centrifugo-token-1:
+  centrifugo-llm-1:
     image: centrifugo/centrifugo:v6.7.1-amd64
     restart: unless-stopped
     command: centrifugo -c /centrifugo/config.json
     volumes:
-      - ./centrifugo/centrifugo-token-1/config.json:/centrifugo/config.json:ro
+      - ./centrifugo/centrifugo-llm-1/config.json:/centrifugo/config.json:ro
     environment:
       CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY: ${CENTRIFUGO_SECRET:-centrifugo-dev-secret-key}
       CENTRIFUGO_HTTP_API_KEY: ${CENTRIFUGO_API_KEY:-centrifugo-api-key}
@@ -233,7 +160,7 @@ services:
   # centrifugo-sse-0/1 — dedicated Centrifugo nodes for lifecycle SSE events.
   # All FastAPI-published events (started, completed, done, query_*, node_*, stream_*) go here.
   # Thread sharding by SHA-256 % 2 ensures each thread always hits the same node.
-  # centrifugo-token-0/1 are reserved exclusively for LLM token streaming.
+  # centrifugo-llm-0/1 are reserved exclusively for LLM token streaming.
   centrifugo-sse-0:
     image: centrifugo/centrifugo:v6.7.1-amd64
     restart: unless-stopped
@@ -286,8 +213,8 @@ services:
     ports:
       - "${PROMETHEUS_PORT:-9988}:9090"
     depends_on:
-      kong:
-        condition: service_healthy
+      nginx-api-exporter:
+        condition: service_started
 
   loki:
     image: grafana/loki:main-9c3bd87

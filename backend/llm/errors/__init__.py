@@ -1,30 +1,19 @@
-"""LLM layer error code registry package.
+"""LLM error code registry.
 
-Re-exports all error code constants and the ``LLM_LAYER_ERRORS`` description dict::
-
-    from backend.llm.errors import (
-        LLM_LAYER_ERRORS,
-        LLM_UNKNOWN_PROVIDER,
-        LLM_PROVIDER_NOT_CONFIGURED,
-        LLM_EMBED_UNKNOWN_PROVIDER,
-        LLM_EMBED_EMPTY_RESPONSE,
-    )
+Error code prefixes
+-------------------
+``LLM_``  — LLM inference and streaming failures.
 """
 
 from __future__ import annotations
 
-from backend.llm.errors.codes import (
-    LLM_LAYER_ERRORS,
-    LLM_UNKNOWN_PROVIDER,
-    LLM_PROVIDER_NOT_CONFIGURED,
-    LLM_EMBED_UNKNOWN_PROVIDER,
-    LLM_EMBED_EMPTY_RESPONSE,
-)
+#: The LLM response did not contain valid JSON after all retry attempts.
+LLM_JSON_INVALID = "LLM_JSON_INVALID"
+
+#: The LLM stream was permanently lost (e.g. connection dropped, all retries exhausted).
+LLM_STREAM_LOST = "LLM_STREAM_LOST"
 
 __all__ = [
-    "LLM_LAYER_ERRORS",
-    "LLM_UNKNOWN_PROVIDER",
-    "LLM_PROVIDER_NOT_CONFIGURED",
-    "LLM_EMBED_UNKNOWN_PROVIDER",
-    "LLM_EMBED_EMPTY_RESPONSE",
+    "LLM_JSON_INVALID",
+    "LLM_STREAM_LOST",
 ]

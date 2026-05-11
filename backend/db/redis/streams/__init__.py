@@ -1,18 +1,11 @@
-"""Redis Streams sub-package -- token publisher.
+"""backend.db.redis.streams — Redis Stream helpers for real-time token delivery."""
 
-Modules
--------
-backend.db.redis.streams.publisher
-    :func:`stream_token` -- publish token event to Centrifugo channel.
-    :func:`stream_key`   -- returns legacy ``tokens:{thread_id}`` key name.
-"""
-
-from backend.db.redis.streams.publisher import (
-    stream_key,
-    stream_token,
-)
+from backend.db.redis.streams.publisher import stream_token, stream_token_batch
+from backend.db.redis.streams.reader import delete_stream_entries, recover_task_tokens
 
 __all__ = [
     "stream_token",
-    "stream_key",
+    "stream_token_batch",
+    "recover_task_tokens",
+    "delete_stream_entries",
 ]

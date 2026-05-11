@@ -22,6 +22,9 @@ API_QUERY_NOT_FOUND = "API_QUERY_NOT_FOUND"
 #: ACK / cancel attempted on a query in a non-actionable status.
 API_QUERY_STATUS_CONFLICT = "API_QUERY_STATUS_CONFLICT"
 
+#: Duplicate query submitted within the same minute (time-guard constraint).
+API_QUERY_DUPLICATE = "API_QUERY_DUPLICATE"
+
 # ── Task control ─────────────────────────────────────────────────────────────
 
 #: task_id path parameter is empty or not a valid UUID string.
@@ -76,6 +79,10 @@ API_ERRORS: dict[str, str] = {
     API_QUERY_STATUS_CONFLICT: (
         "The query cannot be acknowledged or cancelled in its current status. "
         "Check the current status and retry if appropriate."
+    ),
+    API_QUERY_DUPLICATE: (
+        "An identical query was already submitted within the last minute. "
+        "Please wait before submitting the same query again."
     ),
     API_TASK_ID_INVALID: (
         "The task_id path parameter must not be empty."

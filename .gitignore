@@ -103,3 +103,4 @@ logs
 pg-backup
 
 frontend/tests/results
+test-results

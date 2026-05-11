@@ -14,6 +14,10 @@ from sqlalchemy import Enum as SAEnum
 __all__ = [
     "QueryStatus",
     "query_status_sa_type",
+    "WorkStatus",
+    "work_status_sa_type",
+    "NodeType",
+    "node_type_sa_type",
 ]
 
 
@@ -24,13 +28,12 @@ class QueryStatus(StrEnum):
     existing code that checks ``status == "running"`` continues to work.
     """
 
+    CONNECTING = "connecting"
     RECEIVED = "received"
-    PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
-    PAUSED = "paused"
 
 
 # SQLAlchemy column type that maps to the *existing* Postgres enum.
@@ -39,6 +42,50 @@ class QueryStatus(StrEnum):
 query_status_sa_type = SAEnum(
     *[s.value for s in QueryStatus],
     name="query_status",
+    schema="fin_agents",
+    create_type=False,
+)
+
+
+class WorkStatus(StrEnum):
+    """Valid values for ``fin_agents.work_status`` Postgres enum.
+
+    Applies to both ``fin_agents.nodes.status`` and ``fin_agents.tasks.status``.
+    Using ``StrEnum`` means instances compare equal to plain strings, so
+    existing code that checks ``status == "running"`` continues to work.
+    """
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    WRONG = "wrong"
+
+
+work_status_sa_type = SAEnum(
+    *[s.value for s in WorkStatus],
+    name="work_status",
+    schema="fin_agents",
+    create_type=False,
+)
+
+
+class NodeType(StrEnum):
+    """Valid values for ``fin_agents.node_types`` Postgres enum.
+
+    Applies to ``fin_agents.nodes.type``.
+    Using ``StrEnum`` means instances compare equal to plain strings.
+    """
+
+    TYPICAL = "Typical"
+    REFERENCE = "Reference"
+    SUBGRAPH = "Subgraph"
+
+
+node_type_sa_type = SAEnum(
+    *[s.value for s in NodeType],
+    name="node_types",
     schema="fin_agents",
     create_type=False,
 )

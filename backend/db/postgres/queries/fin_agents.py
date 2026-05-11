@@ -42,26 +42,15 @@ class UserQuerySQL:
         LIMIT %s OFFSET %s
     """
 
-
-class NodeExecutionSQL:
-    """Queries against ``fin_agents.node_executions``."""
-
-    INSERT = """
-        INSERT INTO fin_agents.node_executions
-            (thread_id, node_name, node_uuid, parent_node_execution_id, input, output, started_at, elapsed_ms)
-        VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
-    """
-
-    LIST_BY_THREAD = """
-        SELECT *
-        FROM fin_agents.node_executions
-        WHERE thread_id = %s
-        ORDER BY started_at
+    LIST_ACTIVE_THREAD_IDS = """
+        SELECT thread_id
+        FROM fin_agents.user_queries
+        WHERE status NOT IN ('completed', 'failed', 'cancelled')
     """
 
 
 class NodeSQL:
-    """Queries against ``fin_agents.nodes`` (per-thread node identity registry)."""
+    """Queries against ``fin_agents.nodes``."""
 
     GET_BY_ID = """
         SELECT *
@@ -75,22 +64,82 @@ class NodeSQL:
         SELECT *
         FROM fin_agents.nodes
         WHERE thread_id = %s
-        ORDER BY created_at
+        ORDER BY started_at
+    """
+
+    UPSERT = """
+        INSERT INTO fin_agents.nodes
+            (node_id, thread_id, type, parent_node_id, node_name,
+             status, input, started_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, 'running', %s::jsonb, NOW(), NOW())
+        ON CONFLICT (node_id) DO UPDATE
+        SET status     = CASE
+                           WHEN fin_agents.nodes.status IN
+                                ('completed', 'failed', 'cancelled', 'wrong')
+                           THEN fin_agents.nodes.status
+                           ELSE 'running'
+                         END,
+            input      = EXCLUDED.input,
+            updated_at = NOW()
+    """
+
+    UPDATE_STATUS = """
+        UPDATE fin_agents.nodes
+        SET status     = %s,
+            updated_at = NOW()
+        WHERE node_id  = %s
+          AND thread_id = %s
+          AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+    """
+
+    UPDATE_COMPLETED = """
+        UPDATE fin_agents.nodes
+        SET status     = %s,
+            output     = %s::jsonb,
+            elapsed_ms = EXTRACT(EPOCH FROM (NOW() - started_at))::INT * 1000,
+            updated_at = NOW()
+        WHERE node_id  = %s
+          AND thread_id = %s
+          AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+    """
+
+    LIST_ACTIVE_BY_THREAD = """
+        SELECT node_id, node_name, status
+        FROM fin_agents.nodes
+        WHERE thread_id = %s
+          AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+    """
+
+    CANCEL_ALL_ACTIVE_BY_THREAD = """
+        UPDATE fin_agents.nodes
+        SET status     = 'cancelled',
+            updated_at = NOW()
+        WHERE thread_id = %s
+          AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+        RETURNING node_id, node_name
+    """
+
+    CANCEL_BY_ID = """
+        UPDATE fin_agents.nodes
+        SET status     = 'cancelled',
+            updated_at = NOW()
+        WHERE node_id  = %s
+          AND thread_id = %s
+          AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+        RETURNING node_id, node_name
     """
 
     RESOLVE_REFERENCE = """
         WITH RECURSIVE ref_chain AS (
             SELECT node_id, thread_id, node_name, type, referenced_node_id,
-                   last_status, last_node_execution_id, last_executed_at,
-                   created_at, updated_at,
+                   status, started_at, updated_at,
                    0 AS depth
             FROM fin_agents.nodes
             WHERE node_id = %s
               AND thread_id = %s
             UNION ALL
             SELECT n.node_id, n.thread_id, n.node_name, n.type, n.referenced_node_id,
-                   n.last_status, n.last_node_execution_id, n.last_executed_at,
-                   n.created_at, n.updated_at,
+                   n.status, n.started_at, n.updated_at,
                    rc.depth + 1
             FROM fin_agents.nodes n
             JOIN ref_chain rc ON n.node_id = rc.referenced_node_id
@@ -108,11 +157,76 @@ class NodeSQL:
 class TaskSQL:
     """Queries against ``fin_agents.tasks``."""
 
+    INSERT = """
+        INSERT INTO fin_agents.tasks
+            (task_id, thread_id, node_id, node_name, task_name, status, input,
+             created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, 'running', %s::jsonb, NOW(), NOW())
+        ON CONFLICT (task_id) DO NOTHING
+    """
+
+    UPDATE_COMPLETED = """
+        UPDATE fin_agents.tasks
+        SET status     = %s,
+            output     = %s::jsonb,
+            updated_at = NOW()
+        WHERE task_id  = %s
+          AND thread_id = %s
+          AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+    """
+
+    CANCEL_BY_ID = """
+        UPDATE fin_agents.tasks
+        SET status     = 'cancelled',
+            updated_at = NOW()
+        WHERE task_id  = %s
+          AND thread_id = %s
+          AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+        RETURNING task_id
+    """
+
+    CANCEL_ALL_ACTIVE_BY_NODE = """
+        UPDATE fin_agents.tasks
+        SET status     = 'cancelled',
+            updated_at = NOW()
+        WHERE node_id  = %s
+          AND thread_id = %s
+          AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+        RETURNING task_id
+    """
+
+    CANCEL_ALL_ACTIVE_BY_THREAD = """
+        UPDATE fin_agents.tasks
+        SET status     = 'cancelled',
+            updated_at = NOW()
+        WHERE thread_id = %s
+          AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+        RETURNING task_id
+    """
+
+    ALL_TASKS_TERMINAL_FOR_NODE = """
+        SELECT NOT EXISTS (
+            SELECT 1
+            FROM fin_agents.tasks
+            WHERE node_id  = %s
+              AND thread_id = %s
+              AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+        ) AS all_terminal
+    """
+
+    LIST_ACTIVE_BY_NODE = """
+        SELECT task_id, status
+        FROM fin_agents.tasks
+        WHERE node_id  = %s
+          AND thread_id = %s
+          AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+    """
+
     LIST_BY_THREAD = """
         SELECT
-            t.id,
+            t.task_id,
             t.thread_id,
-            t.node_execution_id,
+            t.node_id,
             t.node_name,
             t.task_name,
             t.status,
@@ -127,9 +241,9 @@ class TaskSQL:
 
     GET_BY_IDS = """
         SELECT
-            t.id,
+            t.task_id,
             t.thread_id,
-            t.node_execution_id,
+            t.node_id,
             t.node_name,
             t.task_name,
             t.status,
@@ -138,7 +252,7 @@ class TaskSQL:
             t.created_at,
             t.updated_at
         FROM fin_agents.tasks t
-        WHERE t.id = ANY(%s::bigint[])
+        WHERE t.task_id = ANY(%s)
         ORDER BY t.created_at
     """
 
@@ -159,9 +273,9 @@ class TaskSQL:
     """
 
     GET_IDS_BY_NODE = """
-        SELECT id
+        SELECT task_id
         FROM fin_agents.tasks
         WHERE thread_id = %s
           AND node_name = %s
-        ORDER BY id
+        ORDER BY created_at
     """

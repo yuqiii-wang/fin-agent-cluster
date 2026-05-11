@@ -5,11 +5,11 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
-class CentrifugoTokenResponse(BaseModel):
-    """Response returned by ``GET /auth/centrifugo/token``.
+class CentrifugoLlmTokenResponse(BaseModel):
+    """Response returned by ``GET /auth/centrifugo/llm-token``.
 
     Used for LLM token streaming — connects the frontend to the shard-specific
-    centrifugo-token-0 or centrifugo-token-1 node backed by the matching Redis instance.
+    centrifugo-llm-0 or centrifugo-llm-1 node backed by the matching Redis instance.
     """
 
     ws_url: str
@@ -19,8 +19,8 @@ class CentrifugoTokenResponse(BaseModel):
     channel: str
 
 
-class CentrifugoSseTokenResponse(BaseModel):
-    """Response returned by ``GET /auth/centrifugo/sse-token``.
+class CentrifugoSseNotificationResponse(BaseModel):
+    """Response returned by ``GET /auth/centrifugo/sse-notification``.
 
     Used for SSE lifecycle events — connects the frontend to the correct
     centrifugo-sse-{shard} node.  Shard is determined by SHA-256(thread_id) % 2.
@@ -33,4 +33,4 @@ class CentrifugoSseTokenResponse(BaseModel):
     channel: str
 
 
-__all__ = ["CentrifugoTokenResponse", "CentrifugoSseTokenResponse"]
+__all__ = ["CentrifugoLlmTokenResponse", "CentrifugoSseNotificationResponse"]

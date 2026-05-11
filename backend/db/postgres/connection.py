@@ -49,15 +49,23 @@ async def raw_conn(
     """
     if search_path == _DEFAULT_SEARCH_PATH:
         # Hot path: acquire from the appropriate pool — no TCP overhead.
-        if readonly:
-            from backend.db.postgres.pool import get_raw_read_pool
-            pool = get_raw_read_pool()
-        else:
-            from backend.db.postgres.pool import get_raw_pool
-            pool = get_raw_pool()
-        async with pool.connection() as conn:
-            yield conn
-    else:
+        # Falls back to a direct connection when the pool is not open
+        # (e.g. Celery worker processes that never call open_pools()).
+        pool = None
+        try:
+            if readonly:
+                from backend.db.postgres.pool import get_raw_read_pool
+                pool = get_raw_read_pool()
+            else:
+                from backend.db.postgres.pool import get_raw_pool
+                pool = get_raw_pool()
+        except RuntimeError:
+            pass  # pool not opened — fall through to direct connection
+
+        if pool is not None:
+            async with pool.connection() as conn:
+                yield conn
+            return
         # Cold path: dedicated connection for custom search_path (rare).
         settings = get_settings()
         url = (

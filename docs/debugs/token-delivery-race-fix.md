@@ -9,7 +9,7 @@ and the session eventually closes with status `"timeout"` instead of `"completed
 
 ### Two-channel architecture
 - **centrifugo-sse-{0,1}** — lifecycle events (`started`, `done`, `stream_complete`, …)
-- **centrifugo-token-{0,1}** — token batches (`token_batch`)
+- **centrifugo-llm-{0,1}** — token batches (`token_batch`)
 
 Both subscriptions are opened in parallel from `openSessionStream`.
 Each requires an async HTTP token-fetch before the WebSocket subscription is confirmed.
@@ -20,10 +20,10 @@ Each requires an async HTTP token-fetch before the WebSocket subscription is con
 3. Backend receives ACK → starts graph execution → dispatches Celery ingest task.
 4. Celery ingest writes 100 k tokens to `fin:llm:tokens` in ~1 second (~107 XADD batches).
 5. **Meanwhile**, the token stream `fetchCentrifugoToken` HTTP call + WS subscribe handshake
-   for `centrifugo-token` might still be in flight (~50–200 ms).
+   for `centrifugo-llm` might still be in flight (~50–200 ms).
 6. Centrifugo processes early XADD entries and publishes them to `thread:{threadId}` channel
    **before** the browser subscription is confirmed.
-7. `centrifugo-token` config has `force_recovery: true`, but `openTokenStream` used
+7. `centrifugo-llm` config has `force_recovery: true`, but `openTokenStream` used
    `recoverable: false` with no `since` position — the server has no position to recover
    from, so pre-subscription publications are **permanently lost**.
 8. `tokensReceived = ~99 000 < actualTokensExpected = 100 000` → drain guard activated →
