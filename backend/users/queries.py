@@ -65,7 +65,8 @@ _CANCEL_QUERY_STATUS = """
 
 _LIST_NODES = """
     SELECT node_id, thread_id, node_name, status, type,
-           parent_node_id, input, output, started_at, elapsed_ms, updated_at
+           parent_node_id, parallel_group, input, output,
+           started_at, elapsed_ms, updated_at
     FROM fin_agents.nodes
     WHERE thread_id = %s
     ORDER BY started_at
@@ -78,6 +79,10 @@ _LIST_TASKS = """
     WHERE thread_id = %s
     ORDER BY created_at
 """
+
+# Task names whose output is delivered as a live LLM token stream.
+# Keep in sync with the stream_task worker dispatch list.
+_STREAMING_TASK_NAMES: frozenset[str] = frozenset({"stream_conclusion"})
 
 # Reset the parent subgraph container + all its inner nodes from 'cancelled'
 # to 'pending' so the upcoming upsert_node calls can set them to 'running'.
@@ -98,6 +103,37 @@ _RESET_NODE_TO_PENDING = """
       AND status = 'cancelled'
 """
 
+# ---------------------------------------------------------------------------
+# Cascade-up helpers: check remaining active siblings / nodes / tasks.
+# ---------------------------------------------------------------------------
+
+# Active tasks still running in a given node (used for task → node cascade).
+_ACTIVE_TASK_COUNT_IN_NODE = """
+    SELECT COUNT(*) AS cnt
+    FROM fin_agents.tasks
+    WHERE node_id   = %s
+      AND thread_id = %s
+      AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+"""
+
+# Active inner nodes remaining inside a subgraph (used for inner-node → subgraph cascade).
+_ACTIVE_SIBLING_NODE_COUNT = """
+    SELECT COUNT(*) AS cnt
+    FROM fin_agents.nodes
+    WHERE parent_node_id = %s
+      AND thread_id      = %s
+      AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+"""
+
+# Active top-level nodes remaining in a thread (used for node → thread cascade).
+_ACTIVE_TOP_LEVEL_NODE_COUNT = """
+    SELECT COUNT(*) AS cnt
+    FROM fin_agents.nodes
+    WHERE thread_id      = %s
+      AND parent_node_id IS NULL
+      AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+"""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,6 +151,103 @@ def _row_to_query_response(row: Any) -> QueryResponse:
         created_at=row["created_at"],
         completed_at=row["completed_at"],
     )
+
+
+async def _cascade_up_from_cancelled_node(
+    thread_id: str,
+    node_id: str,
+    parent_node_id: str | None,
+    reason: str,
+) -> None:
+    """Propagate cancellation upward after a node reaches 'cancelled' state.
+
+    Rules (applied once per level, non-recursive for top-level):
+    - Inner node (``parent_node_id`` set): if no active siblings remain inside
+      the parent subgraph, cancel the parent subgraph node and recurse.
+    - Top-level node (``parent_node_id`` is ``None``): if no active top-level
+      nodes remain, cancel the thread (sets Redis cancel flag + DB status).
+
+    Args:
+        thread_id:      LangGraph thread UUID.
+        node_id:        The node that was just cancelled.
+        parent_node_id: Parent subgraph node ID, or ``None`` for top-level nodes.
+        reason:         Propagated cancellation reason label.
+    """
+    from backend.langgraph.lifecycle.threads.nodes import cancel_node as _cancel_node_lc
+    from backend.langgraph.lifecycle import cancel_thread as _cancel_thread_lc
+    from backend.main_thread.cancel_flag import set_cancel_flag
+
+    if parent_node_id:
+        # --- Inner node: check whether all siblings in the subgraph are done ---
+        try:
+            async with raw_conn(readonly=True) as conn:
+                cur = await conn.execute(
+                    _ACTIVE_SIBLING_NODE_COUNT,
+                    (parent_node_id, thread_id),
+                )
+                row = await cur.fetchone()
+            active_siblings = row["cnt"] if row else 0
+        except Exception as exc:
+            logger.error(
+                "[cascade_up] DB error checking siblings parent_node_id=%s: %s",
+                parent_node_id, exc,
+            )
+            return
+
+        if active_siblings > 0:
+            return  # Siblings still running — parent stays alive.
+
+        # All siblings done → cascade up to the parent subgraph node.
+        try:
+            async with raw_conn(readonly=True) as conn:
+                cur = await conn.execute(
+                    "SELECT parent_node_id FROM fin_agents.nodes"
+                    " WHERE node_id = %s AND thread_id = %s",
+                    (parent_node_id, thread_id),
+                )
+                prow = await cur.fetchone()
+            grandparent_id: str | None = prow["parent_node_id"] if prow else None
+        except Exception as exc:
+            logger.error(
+                "[cascade_up] DB error fetching parent info node_id=%s: %s",
+                parent_node_id, exc,
+            )
+            return
+
+        await _cancel_node_lc(thread_id, parent_node_id, reason=reason)
+        await _cascade_up_from_cancelled_node(
+            thread_id, parent_node_id, grandparent_id, reason
+        )
+        return
+
+    # --- Top-level node: check whether all top-level nodes are done ---
+    try:
+        async with raw_conn(readonly=True) as conn:
+            cur = await conn.execute(
+                _ACTIVE_TOP_LEVEL_NODE_COUNT,
+                (thread_id,),
+            )
+            row = await cur.fetchone()
+        active_top_nodes = row["cnt"] if row else 0
+    except Exception as exc:
+        logger.error(
+            "[cascade_up] DB error checking top-level nodes thread_id=%s: %s",
+            thread_id, exc,
+        )
+        return
+
+    if active_top_nodes > 0:
+        return  # Other top-level nodes still running.
+
+    # No active nodes left → cancel the thread.
+    try:
+        await set_cancel_flag(thread_id)
+        await _cancel_thread_lc(thread_id, reason=reason)
+    except Exception as exc:
+        logger.error(
+            "[cascade_up] thread cancel failed thread_id=%s: %s",
+            thread_id, exc,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -308,12 +441,14 @@ async def resume_query(thread_id: str) -> QueryResponse:
 
 
 async def cancel_node(thread_id: str, node_id: str) -> dict:
-    """Cancel a specific node and all its active tasks.
+    """Cancel a specific node and cascade upward if no active siblings/nodes remain.
 
-    For inner subgraph nodes (those with a ``parent_node_id``), the cancel
-    cascades to all active sibling inner nodes and then to the parent subgraph
-    node itself.  This ensures the ``asyncio.gather`` inside the subgraph exits
-    via Celery revocation on all its in-flight legs.
+    Cancels the target node and all its active tasks.  Cascade-up behaviour:
+
+    - Inner subgraph node: if all sibling inner nodes are now terminal,
+      the parent subgraph node is also cancelled and the check repeats.
+    - Top-level node (or promoted-to-top-level from subgraph cascade):
+      if no active top-level nodes remain, the thread is cancelled.
 
     Args:
         thread_id: LangGraph thread UUID.
@@ -324,7 +459,6 @@ async def cancel_node(thread_id: str, node_id: str) -> dict:
     """
     from backend.langgraph.lifecycle.threads.nodes import cancel_node as _cancel
 
-    # Lookup parent to detect inner subgraph nodes.
     async with raw_conn(readonly=True) as conn:
         cur = await conn.execute(
             "SELECT parent_node_id FROM fin_agents.nodes"
@@ -332,32 +466,10 @@ async def cancel_node(thread_id: str, node_id: str) -> dict:
             (node_id, thread_id),
         )
         row = await cur.fetchone()
-
     parent_node_id: str | None = row["parent_node_id"] if row else None
 
-    # Always cancel the target node + its tasks first.
     await _cancel(thread_id, node_id)
-
-    if parent_node_id:
-        # Inner subgraph node: cascade to active siblings and the parent.
-        async with raw_conn(readonly=True) as conn:
-            cur = await conn.execute(
-                """
-                SELECT node_id FROM fin_agents.nodes
-                WHERE parent_node_id = %s
-                  AND thread_id = %s
-                  AND node_id != %s
-                  AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
-                """,
-                (parent_node_id, thread_id, node_id),
-            )
-            sibling_ids = [r["node_id"] for r in await cur.fetchall()]
-
-        for sibling_id in sibling_ids:
-            await _cancel(thread_id, sibling_id)
-
-        # Cancel the parent subgraph container node (and any tasks it owns).
-        await _cancel(thread_id, parent_node_id)
+    await _cascade_up_from_cancelled_node(thread_id, node_id, parent_node_id, reason="user")
 
     return {"thread_id": thread_id, "node_id": node_id, "action": "cancelled"}
 
@@ -368,7 +480,15 @@ async def cancel_task_by_uuid(
     *,
     node_id: str = "",
 ) -> dict:
-    """Cancel a specific task by its governance UUID.
+    """Cancel a specific task and cascade upward if it was the last active task.
+
+    After cancelling the task (output set to ``{}`` by the lifecycle layer),
+    checks whether any other active tasks remain in the owning node:
+
+    - Active tasks remain → stop; node keeps running and can decide whether
+      the cancelled task's missing output is blocking.
+    - No active tasks remain → cancel the node and continue cascade-up via
+      :func:`_cascade_up_from_cancelled_node`.
 
     Args:
         thread_id: LangGraph thread UUID.
@@ -379,7 +499,9 @@ async def cancel_task_by_uuid(
         Dict with ``thread_id``, ``task_id``, and ``action``.
     """
     from backend.langgraph.lifecycle.threads.nodes.tasks import cancel_task as _cancel
+    from backend.langgraph.lifecycle.threads.nodes import cancel_node as _cancel_node_lc
 
+    # Resolve node_id if not provided by the caller.
     if not node_id:
         async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
@@ -389,8 +511,36 @@ async def cancel_task_by_uuid(
             row = await cur.fetchone()
             node_id = row["node_id"] if row else ""
 
-    if node_id:
-        await _cancel(thread_id, node_id, task_id)
+    await _cancel(thread_id, task_id)
+
+    if not node_id:
+        return {"thread_id": thread_id, "task_id": task_id, "action": "cancelled"}
+
+    # Cascade-up: any active tasks still running in the same node?
+    async with raw_conn(readonly=True) as conn:
+        cur = await conn.execute(
+            _ACTIVE_TASK_COUNT_IN_NODE, (node_id, thread_id)
+        )
+        row = await cur.fetchone()
+    active_tasks_remaining = row["cnt"] if row else 0
+
+    if active_tasks_remaining > 0:
+        # Other tasks still live — node keeps running.
+        return {"thread_id": thread_id, "task_id": task_id, "action": "cancelled"}
+
+    # Last active task in the node → cancel the node and propagate upward.
+    async with raw_conn(readonly=True) as conn:
+        cur = await conn.execute(
+            "SELECT parent_node_id FROM fin_agents.nodes"
+            " WHERE node_id = %s AND thread_id = %s",
+            (node_id, thread_id),
+        )
+        row = await cur.fetchone()
+    parent_node_id: str | None = row["parent_node_id"] if row else None
+
+    await _cancel_node_lc(thread_id, node_id, reason="user")
+    await _cascade_up_from_cancelled_node(thread_id, node_id, parent_node_id, reason="user")
+
     return {"thread_id": thread_id, "task_id": task_id, "action": "cancelled"}
 
 
@@ -415,6 +565,7 @@ async def get_node_executions(thread_id: str) -> list[NodeExecutionInfo]:
             status=r["status"],
             type=r["type"],
             parent_node_id=r["parent_node_id"],
+            parallel_group=r["parallel_group"],
             input=r["input"],
             output=r["output"],
             started_at=r["started_at"],
@@ -448,6 +599,7 @@ async def get_query_tasks(thread_id: str) -> SessionStatus:
             node_name=r["node_name"],
             task_name=r["task_name"],
             status=r["status"],
+            is_streaming=r["task_name"] in _STREAMING_TASK_NAMES,
             input=r["input"],
             output=r["output"],
             created_at=r["created_at"],

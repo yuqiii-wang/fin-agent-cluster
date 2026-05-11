@@ -10,6 +10,8 @@
 # Options:
 #   --keep-volumes       Keep existing postgres volumes (skip stale-version check).
 #                        Default: remove any volume whose PG version ≠ 18.
+#   --keep-redis         Keep existing Redis volumes (skip flush).
+#                        Default: remove redis_0_data and redis_1_data volumes.
 #   --force-tls          Regenerate TLS cert even if it already exists.
 #   --skip-db-schema     Skip SQL schema setup (useful when DB is already up to date).
 #   --skip-ollama        Skip Ollama model creation and warm-up.
@@ -33,6 +35,7 @@ source "$SCRIPT_DIR/setup/ollama_models.sh"
 
 setup_tls              "$@"
 setup_postgres_volumes "$@"
+setup_redis_volumes    "$@"
 setup_docker_services  "$@"
 setup_db_schema        "$@"
 # setup_ollama_models    "$@"

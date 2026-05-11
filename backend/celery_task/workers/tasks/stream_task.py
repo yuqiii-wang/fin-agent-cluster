@@ -37,6 +37,34 @@ from backend.celery_task.celery_engine import celery_engine
 
 logger = logging.getLogger(__name__)
 
+def _extract_thinking_answer(text: str) -> tuple[str | None, str]:
+    """Split a ``<think>…</think>`` prefix from the rest of the response.
+
+    Args:
+        text: Raw LLM output, possibly starting with a ``<think>`` block.
+
+    Returns:
+        A two-tuple ``(thinking, answer)`` where *thinking* is the content
+        inside the ``<think>`` tag (or ``None`` when absent) and *answer* is
+        the remaining text after ``</think>`` (or the full text when no
+        ``<think>`` block is present).
+    """
+    stripped = text.strip()
+    parts = stripped.split("<think>", 1)
+    if len(parts) > 1:
+        after_start = parts[1]
+        thinking_parts = after_start.rsplit("</think>", 1)
+        if len(thinking_parts) > 1:
+            thinking = thinking_parts[0].strip() or None
+            answer = thinking_parts[1].strip()
+            return thinking, answer
+    logger.error(
+        "[stream_task] <think> block not found in LLM output; "
+        "storing full response as answer. First 120 chars: %r",
+        stripped[:120],
+    )
+    return None, text
+
 
 async def _run_stream_async(
     thread_id: str,
@@ -131,16 +159,24 @@ async def _run_stream_async(
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
 
+    # ── Extract thinking / answer from the full response ─────────────────
+    # Post-process once: pull out a leading <think>…</think> block so it can
+    # be stored separately in llm_responses.thinking and task output.
+    thinking_text, answer_text = _extract_thinking_answer(full_answer)
+
     # ── Recover from Redis Stream, persist to PG, clean up Redis ─────
     # Read every entry for this task_id from the Redis Stream (paginated),
     # reconstruct each text field by ordering on the embedded `seq` counter,
     # persist to fin_agents.llm_responses, then delete all consumed entries.
-    # Falling back to the in-memory `full_answer` for the answer column guards
+    # Falling back to the in-memory split for the answer/thinking columns guards
     # against the unlikely case where entries were already trimmed by MAXLEN.
     from backend.db.redis.streams.reader import recover_task_tokens, delete_stream_entries
     from backend.db.postgres.connection import raw_conn
 
     text_by_column, entry_ids = await recover_task_tokens(thread_id, task_id)
+    # Use in-memory split as the canonical source — Redis recovery is for
+    # any other text columns (prompts).  The thinking/answer split from the
+    # full in-memory buffer is always complete.
     recovered_answer = text_by_column.get("answer") or full_answer
 
     event_id = str(uuid.uuid4())
@@ -164,8 +200,8 @@ async def _run_stream_async(
                 task_name,
                 node_name,
                 text_by_column.get("prompts"),
-                text_by_column.get("thinking"),
-                recovered_answer,
+                thinking_text,
+                answer_text,
                 total_tokens,
                 total_tokens,
                 latency_ms,
@@ -195,7 +231,7 @@ async def _run_stream_async(
         "[stream_task] completed thread_id=%s task_name=%s tokens=%d latency_ms=%d",
         thread_id, task_name, total_tokens, latency_ms,
     )
-    return {"answer": full_answer, "total_tokens": total_tokens, "latency_ms": latency_ms}
+    return {"thinking": thinking_text, "answer": answer_text, "total_tokens": total_tokens, "latency_ms": latency_ms}
 
 
 # ---------------------------------------------------------------------------

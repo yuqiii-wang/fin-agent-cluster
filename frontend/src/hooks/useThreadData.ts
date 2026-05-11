@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getNodes, getTasks, getThread } from '../api/threads';
+import { TERMINAL_QUERY_STATUSES } from '../constants/lifecycleStatus';
 import type { NodeInfo, QueryResponse, TaskInfo } from '../types';
 
 interface ThreadData {
@@ -12,8 +13,6 @@ interface ThreadData {
   tasks: TaskInfo[];
   refresh: () => void;
 }
-
-const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
 export function useThreadData(threadId: string): ThreadData {
   const [thread, setThread] = useState<QueryResponse | null>(null);
@@ -41,3 +40,5 @@ export function useThreadData(threadId: string): ThreadData {
 
   return { thread, nodes, tasks, refresh };
 }
+
+export { TERMINAL_QUERY_STATUSES as TERMINAL };

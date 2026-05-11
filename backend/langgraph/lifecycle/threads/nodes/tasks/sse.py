@@ -1,0 +1,48 @@
+"""Internal SSE helper for task-level lifecycle events."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+async def emit_task_sse(
+    thread_id: str,
+    task_id: str,
+    task_name: str,
+    node_id: str,
+    node_name: str,
+    status: str,
+    payload: dict[str, Any],
+) -> None:
+    """Publish a ``task_status`` SSE event (fire-and-forget on error)."""
+    try:
+        from backend.centrifugo_mq.sse_notification.thread.node.task import notify
+        from backend.langgraph.models import BaseTaskSseNotification
+        notif = BaseTaskSseNotification(
+            thread_id=thread_id,
+            task_id=task_id,
+            task_name=task_name,
+            node_id=node_id,
+            node_name=node_name,
+            event="task_status",
+            status=status,
+            content=payload,
+        )
+        await notify(
+            thread_id=thread_id,
+            task_id=task_id,
+            event=notif.event,
+            payload=notif.to_notify_payload(),
+            dedup_key=f"task:{task_id}:{status}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[%s] task SSE publish failed task_id=%s status=%s: %s",
+            "LC007", task_id, status, exc,
+        )
+
+
+__all__ = ["emit_task_sse"]

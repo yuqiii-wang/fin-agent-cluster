@@ -60,6 +60,7 @@ from backend.langgraph.lifecycle.threads.nodes import (
 )
 from backend.langgraph.lifecycle.threads.nodes.tasks import (
     cancel_task,
+    cleanup_zombie_tasks,
     complete_task,
     create_task,
     persist_task_result,
@@ -87,4 +88,5 @@ __all__ = [
     "complete_task",
     "persist_task_result",
     "cancel_task",
+    "cleanup_zombie_tasks",
 ]

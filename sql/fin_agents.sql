@@ -89,12 +89,20 @@ CREATE TABLE IF NOT EXISTS fin_agents.nodes (
     -- NULL for Typical and Subgraph nodes.
     referenced_node_id TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE SET NULL,
     node_name TEXT NOT NULL,
+    -- Identifies nodes that execute concurrently within the same parent subgraph.
+    -- Nodes sharing the same parallel_group value run in parallel (fan-out/fan-in).
+    -- NULL for sequential nodes.
+    parallel_group TEXT,
     status    fin_agents.work_status NOT NULL DEFAULT 'pending',
     input JSONB NOT NULL DEFAULT '{}',
     output JSONB NOT NULL DEFAULT '{}',
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     elapsed_ms INTEGER NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Fencing token from the Redis per-thread counter at lock acquisition time.
+    -- Zombie writes (lower token) are rejected by guards in upsert/complete SQL.
+    -- 0 = pre-fencing rows (treated as oldest generation).
+    fencing_token BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS fin_agents_nodes_thread_id_idx ON fin_agents.nodes (thread_id);
@@ -116,7 +124,11 @@ CREATE TABLE IF NOT EXISTS fin_agents.tasks (
     input     JSONB NOT NULL DEFAULT '{}',
     output    JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Fencing token matching the graph run that created this task.
+    -- Used by cleanup_zombie_tasks to mark orphaned tasks as 'wrong'.
+    -- 0 = pre-fencing rows.
+    fencing_token BIGINT NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_id_idx ON fin_agents.tasks (node_id);
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_thread_id_idx ON fin_agents.tasks (thread_id);

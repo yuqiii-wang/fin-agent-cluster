@@ -96,6 +96,12 @@ export function useCentrifugoSse({ sseInfo, onEvent, done }: Options): void {
           ack_key: ackKey,
           thread_id: tid,
         }).catch((err: unknown) => {
+          // code 11 = "connection closed" — Centrifugo disconnected before the
+          // RPC completed (tab close / navigation / subscription tear-down).
+          // This is expected and not actionable; suppress to avoid console noise.
+          if (err && typeof err === 'object' && (err as { code?: number }).code === 11) {
+            return;
+          }
           console.error('[sse-ack] RPC failed event=%s ack_key=%s: %o', ev.event, ackKey, err);
         });
       });

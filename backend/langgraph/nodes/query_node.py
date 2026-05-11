@@ -16,7 +16,6 @@ Responsibilities
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from langgraph.func import task
 
@@ -29,6 +28,14 @@ from backend.langgraph.lifecycle import (
     make_node_id,
     make_task_id,
     upsert_node,
+)
+from backend.langgraph.models import (
+    AnalyzeQueryInput,
+    AnalyzeQueryOutput,
+    BaseNodeInput,
+    BaseNodeOutput,
+    BaseTaskInput,
+    BaseTaskOutput,
 )
 from backend.celery_task.workers.task_delegation import delegate_completion
 
@@ -43,7 +50,9 @@ _NODE_NAME = "query_node"
 
 
 @task
-async def analyze_query(state: GraphState) -> dict[str, Any]:
+async def analyze_query(
+    task_input: BaseTaskInput[AnalyzeQueryInput],
+) -> BaseTaskOutput[AnalyzeQueryOutput]:
     """Extract intent and equity symbols from the user query.
 
     Delegates to the Celery completion worker (``run_completion`` with
@@ -51,32 +60,36 @@ async def analyze_query(state: GraphState) -> dict[str, Any]:
     thread-pool executor until the worker returns.
 
     Args:
-        state: Current :class:`~backend.langgraph.state.GraphState`.
+        task_input: Typed envelope carrying thread/node/task identity and
+            the :class:`AnalyzeQueryInput` content.
 
     Returns:
-        Partial state update: ``{"query_analysis": {...}}``.
+        :class:`BaseTaskOutput` wrapping the :class:`AnalyzeQueryOutput`.
     """
-    thread_id: str = state["thread_id"]
-    node_id = make_node_id(thread_id, _NODE_NAME)
-    task_id = make_task_id()
-
-    payload = {"query": state.get("query", "")}
+    thread_id = task_input.thread_id
+    node_id = task_input.node_id
+    task_id = task_input.task_id
+    payload = task_input.content.model_dump()
 
     await create_task(thread_id, node_id, _NODE_NAME, task_id, "analyze_query", payload)
     try:
-        result = await delegate_completion(thread_id, task_id, node_id, _NODE_NAME, "analyze_query", payload)
+        result = await delegate_completion(
+            thread_id, task_id, node_id, _NODE_NAME, "analyze_query", payload
+        )
     except Exception as exc:
-        # Safety net for TimeoutError and ThreadCancelledError: Celery either
-        # did not run or was revoked before persisting.  complete_task writes
-        # the DB + emits SSE for these cases.  For Celery worker failures,
-        # delegate_completion already fired the task SSE as a background task
-        # and Celery wrote the DB, so complete_task is a DB no-op here.
         await complete_task(
             thread_id, node_id, _NODE_NAME, task_id, "analyze_query",
             failed=True, error=str(exc),
         )
         raise
-    return {"query_analysis": result}
+    output_content = AnalyzeQueryOutput.model_validate(result)
+    return BaseTaskOutput[AnalyzeQueryOutput](
+        thread_id=thread_id,
+        node_id=node_id,
+        task_id=task_id,
+        task_name="analyze_query",
+        content=output_content,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -93,23 +106,38 @@ async def query_node(state: GraphState) -> GraphState:
         state: Current :class:`~backend.langgraph.state.GraphState`.
 
     Returns:
-        Partial state dict with ``query_analysis`` populated.
+        Partial state dict with ``query_analysis`` populated as a serialised
+        :class:`AnalyzeQueryOutput` dict.
     """
     thread_id: str = state["thread_id"]
     node_id = make_node_id(thread_id, _NODE_NAME)
+    task_id = make_task_id()
+
+    node_input = BaseNodeInput[AnalyzeQueryInput](
+        thread_id=thread_id,
+        node_id=node_id,
+        node_name=_NODE_NAME,
+        content=AnalyzeQueryInput(query=state.get("query", "")),
+    )
 
     await upsert_node(
         thread_id=thread_id,
         node_id=node_id,
         node_name=_NODE_NAME,
         node_type=NodeType.TYPICAL,
-        input_data={"query": state.get("query", "")},
+        input_data=node_input.content.model_dump(),
     )
 
-    # Run the @task and await its future.
+    task_input = BaseTaskInput[AnalyzeQueryInput](
+        thread_id=thread_id,
+        node_id=node_id,
+        task_id=task_id,
+        task_name="analyze_query",
+        content=node_input.content,
+    )
+
     try:
-        future = analyze_query(state)
-        result: dict[str, Any] = await future
+        task_output: BaseTaskOutput[AnalyzeQueryOutput] = await analyze_query(task_input)
     except Exception as exc:
         await complete_node(
             thread_id=thread_id,
@@ -120,10 +148,18 @@ async def query_node(state: GraphState) -> GraphState:
         )
         raise
 
+    node_output = BaseNodeOutput[AnalyzeQueryOutput](
+        thread_id=thread_id,
+        node_id=node_id,
+        node_name=_NODE_NAME,
+        content=task_output.content,
+    )
+
     await complete_node(
         thread_id=thread_id,
         node_id=node_id,
         node_name=_NODE_NAME,
-        output_data=result,
+        output_data=node_output.content.model_dump(),
     )
-    return {**state, **result}
+    return {**state, "query_analysis": node_output.content.model_dump()}
+

@@ -22,18 +22,9 @@ import asyncio
 import logging
 from typing import Any
 
-from backend.db.postgres.types import QueryStatus, WorkStatus
+from backend.db.postgres.lifecycle_status import TERMINAL_QUERY_STATUSES, TERMINAL_WORK_STATUSES
 
 logger = logging.getLogger(__name__)
-
-# Terminal work_status values — must match fin_agents.work_status ENUM.
-TERMINAL_WORK_STATUSES: frozenset[str] = frozenset(
-    {WorkStatus.COMPLETED, WorkStatus.FAILED, WorkStatus.CANCELLED, WorkStatus.WRONG}
-)
-# Terminal query_status values — must match fin_agents.query_status ENUM.
-TERMINAL_QUERY_STATUSES: frozenset[str] = frozenset(
-    {QueryStatus.COMPLETED, QueryStatus.FAILED, QueryStatus.CANCELLED}
-)
 
 
 class ThreadRegistry:

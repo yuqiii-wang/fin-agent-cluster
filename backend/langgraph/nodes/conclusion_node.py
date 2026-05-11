@@ -17,7 +17,6 @@ Responsibilities
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from langgraph.func import task
 
@@ -30,6 +29,15 @@ from backend.langgraph.lifecycle import (
     make_node_id,
     make_task_id,
     upsert_node,
+)
+from backend.langgraph.models import (
+    BaseNodeInput,
+    BaseNodeOutput,
+    BaseTaskInput,
+    BaseTaskOutput,
+    MergeResultsOutput,
+    StreamConclusionInput,
+    StreamConclusionOutput,
 )
 from backend.celery_task.workers.task_delegation import delegate_stream
 
@@ -45,7 +53,9 @@ _TASK_NAME = "stream_conclusion"
 
 
 @task
-async def stream_conclusion(state: GraphState) -> dict[str, Any]:
+async def stream_conclusion(
+    task_input: BaseTaskInput[StreamConclusionInput],
+) -> BaseTaskOutput[StreamConclusionOutput]:
     """Stream an LLM conclusion and persist the result.
 
     Tokens flow:
@@ -58,19 +68,16 @@ async def stream_conclusion(state: GraphState) -> dict[str, Any]:
     and the task is marked ``completed``.
 
     Args:
-        state: Current graph state (must include ``merged_research``).
+        task_input: Typed envelope carrying thread/node/task identity and
+            the :class:`StreamConclusionInput` content.
 
     Returns:
-        Partial state: ``{"conclusion": "<full answer text>"}``.
+        :class:`BaseTaskOutput` wrapping the :class:`StreamConclusionOutput`.
     """
-    thread_id: str = state["thread_id"]
-    node_id = make_node_id(thread_id, _NODE_NAME)
-    task_id = make_task_id()
-
-    payload = {
-        "merged_research": state.get("merged_research", {}),
-        "query": state.get("query", ""),
-    }
+    thread_id = task_input.thread_id
+    node_id = task_input.node_id
+    task_id = task_input.task_id
+    payload = task_input.content.model_dump()
 
     await create_task(thread_id, node_id, _NODE_NAME, task_id, _TASK_NAME, payload)
     try:
@@ -81,16 +88,18 @@ async def stream_conclusion(state: GraphState) -> dict[str, Any]:
             node_name=_NODE_NAME,
             payload=payload,
         )
-        # result = {"answer": str, "total_tokens": int, "latency_ms": int}
+        output_content = StreamConclusionOutput.model_validate(result)
         await complete_task(
             thread_id, node_id, _NODE_NAME, task_id, _TASK_NAME,
-            output_data=result,
+            output_data=output_content.model_dump(),
         )
-        logger.info(
-            "[conclusion_node] stream done thread_id=%s tokens=%d latency_ms=%d",
-            thread_id, result.get("total_tokens", 0), result.get("latency_ms", 0),
+        return BaseTaskOutput[StreamConclusionOutput](
+            thread_id=thread_id,
+            node_id=node_id,
+            task_id=task_id,
+            task_name=_TASK_NAME,
+            content=output_content,
         )
-        return {"conclusion": result.get("answer", "")}
     except Exception as exc:
         await complete_task(
             thread_id, node_id, _NODE_NAME, task_id, _TASK_NAME,
@@ -115,18 +124,41 @@ async def conclusion_node(state: GraphState) -> GraphState:
     """
     thread_id: str = state["thread_id"]
     node_id = make_node_id(thread_id, _NODE_NAME)
+    task_id = make_task_id()
+
+    merged_research = MergeResultsOutput.model_validate(
+        state.get("merged_research", {})
+    )
+    conclusion_input = StreamConclusionInput(
+        merged_research=merged_research.model_dump(),
+        query=state.get("query", ""),
+    )
+
+    node_input = BaseNodeInput[StreamConclusionInput](
+        thread_id=thread_id,
+        node_id=node_id,
+        node_name=_NODE_NAME,
+        content=conclusion_input,
+    )
 
     await upsert_node(
         thread_id=thread_id,
         node_id=node_id,
         node_name=_NODE_NAME,
         node_type=NodeType.TYPICAL,
-        input_data={"merged_research": state.get("merged_research", {})},
+        input_data=node_input.content.model_dump(),
+    )
+
+    task_input = BaseTaskInput[StreamConclusionInput](
+        thread_id=thread_id,
+        node_id=node_id,
+        task_id=task_id,
+        task_name=_TASK_NAME,
+        content=conclusion_input,
     )
 
     try:
-        future = stream_conclusion(state)
-        result: dict[str, Any] = await future
+        task_output: BaseTaskOutput[StreamConclusionOutput] = await stream_conclusion(task_input)
     except Exception as exc:
         await complete_node(
             thread_id=thread_id,
@@ -137,10 +169,17 @@ async def conclusion_node(state: GraphState) -> GraphState:
         )
         raise
 
+    node_output = BaseNodeOutput[StreamConclusionOutput](
+        thread_id=thread_id,
+        node_id=node_id,
+        node_name=_NODE_NAME,
+        content=task_output.content,
+    )
+
     await complete_node(
         thread_id=thread_id,
         node_id=node_id,
         node_name=_NODE_NAME,
-        output_data=result,
+        output_data=node_output.content.model_dump(),
     )
-    return {**state, **result}
+    return {**state, "conclusion": node_output.content.answer}

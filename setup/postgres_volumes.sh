@@ -54,7 +54,33 @@ setup_postgres_volumes() {
     done
 }
 
+setup_redis_volumes() {
+    # Remove redis_0_data and redis_1_data volumes so containers start with clean state.
+    local keep=0
+    for arg in "$@"; do
+        case "$arg" in --keep-redis) keep=1 ;; esac
+    done
+
+    if [[ $keep -eq 1 ]]; then
+        echo "[redis_volumes] --keep-redis set — skipping Redis volume flush"
+        return 0
+    fi
+
+    local project="${COMPOSE_PROJECT_NAME:-fin-trading-cluster}"
+
+    for vol in redis_0_data redis_1_data; do
+        local full="${project}_${vol}"
+        if docker volume inspect "$full" >/dev/null 2>&1; then
+            echo "[redis_volumes] Removing volume $full"
+            docker volume rm "$full"
+        else
+            echo "[redis_volumes] Volume $full not found — will be created by docker compose"
+        fi
+    done
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     set -e
     setup_postgres_volumes "$@"
+    setup_redis_volumes "$@"
 fi

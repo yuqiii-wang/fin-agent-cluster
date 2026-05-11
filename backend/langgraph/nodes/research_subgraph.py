@@ -40,6 +40,19 @@ from backend.langgraph.lifecycle import (
     make_task_id,
     upsert_node,
 )
+from backend.langgraph.models import (
+    AnalyzeQueryOutput,
+    BaseNodeInput,
+    BaseNodeOutput,
+    BaseTaskInput,
+    BaseTaskOutput,
+    MergeResultsInput,
+    MergeResultsOutput,
+    ReadNewsInput,
+    ReadNewsOutput,
+    ReadStatsInput,
+    ReadStatsOutput,
+)
 from backend.celery_task.workers.task_delegation import delegate_completion
 
 logger = logging.getLogger(__name__)
@@ -56,36 +69,42 @@ _MERGE_NODE = "merge_node"
 
 
 @task
-async def read_stats(state: GraphState) -> dict[str, Any]:
+async def read_stats(
+    task_input: BaseTaskInput[ReadStatsInput],
+) -> BaseTaskOutput[ReadStatsOutput]:
     """Fetch market statistics for symbols extracted by query_node.
 
     Args:
-        state: Current graph state (must include ``query_analysis``).
+        task_input: Typed envelope carrying thread/node/task identity and
+            the :class:`ReadStatsInput` content.
 
     Returns:
-        Partial state: ``{"stats_data": {...}}``.
+        :class:`BaseTaskOutput` wrapping the :class:`ReadStatsOutput`.
     """
-    thread_id: str = state["thread_id"]
-    node_id = make_node_id(thread_id, _STATS_NODE)
-    task_id = make_task_id()
-    analysis = state.get("query_analysis", {})
-    payload = {
-        "symbols": analysis.get("symbols", ["AAPL"]),
-        "interval": "1d",
-    }
+    thread_id = task_input.thread_id
+    node_id = task_input.node_id
+    task_id = task_input.task_id
+    payload = task_input.content.model_dump()
 
     await create_task(thread_id, node_id, _STATS_NODE, task_id, "read_stats", payload)
     try:
-        result = await delegate_completion(thread_id, task_id, node_id, _STATS_NODE, "read_stats", payload)
+        result = await delegate_completion(
+            thread_id, task_id, node_id, _STATS_NODE, "read_stats", payload
+        )
     except Exception as exc:
-        # Safety net for TimeoutError / ThreadCancelledError only.
-        # Celery worker failures have SSE emitted by delegate_completion.
         await complete_task(
             thread_id, node_id, _STATS_NODE, task_id, "read_stats",
             failed=True, error=str(exc),
         )
         raise
-    return {"stats_data": result}
+    output_content = ReadStatsOutput.model_validate(result)
+    return BaseTaskOutput[ReadStatsOutput](
+        thread_id=thread_id,
+        node_id=node_id,
+        task_id=task_id,
+        task_name="read_stats",
+        content=output_content,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -94,32 +113,42 @@ async def read_stats(state: GraphState) -> dict[str, Any]:
 
 
 @task
-async def read_news(state: GraphState) -> dict[str, Any]:
+async def read_news(
+    task_input: BaseTaskInput[ReadNewsInput],
+) -> BaseTaskOutput[ReadNewsOutput]:
     """Fetch recent news articles for symbols extracted by query_node.
 
     Args:
-        state: Current graph state (must include ``query_analysis``).
+        task_input: Typed envelope carrying thread/node/task identity and
+            the :class:`ReadNewsInput` content.
 
     Returns:
-        Partial state: ``{"news_data": {...}}``.
+        :class:`BaseTaskOutput` wrapping the :class:`ReadNewsOutput`.
     """
-    thread_id: str = state["thread_id"]
-    node_id = make_node_id(thread_id, _NEWS_NODE)
-    task_id = make_task_id()
-    analysis = state.get("query_analysis", {})
-    payload = {"symbols": analysis.get("symbols", ["AAPL"])}
+    thread_id = task_input.thread_id
+    node_id = task_input.node_id
+    task_id = task_input.task_id
+    payload = task_input.content.model_dump()
 
     await create_task(thread_id, node_id, _NEWS_NODE, task_id, "read_news", payload)
     try:
-        result = await delegate_completion(thread_id, task_id, node_id, _NEWS_NODE, "read_news", payload)
+        result = await delegate_completion(
+            thread_id, task_id, node_id, _NEWS_NODE, "read_news", payload
+        )
     except Exception as exc:
-        # Safety net for TimeoutError / ThreadCancelledError only.
         await complete_task(
             thread_id, node_id, _NEWS_NODE, task_id, "read_news",
             failed=True, error=str(exc),
         )
         raise
-    return {"news_data": result}
+    output_content = ReadNewsOutput.model_validate(result)
+    return BaseTaskOutput[ReadNewsOutput](
+        thread_id=thread_id,
+        node_id=node_id,
+        task_id=task_id,
+        task_name="read_news",
+        content=output_content,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -128,34 +157,42 @@ async def read_news(state: GraphState) -> dict[str, Any]:
 
 
 @task
-async def merge_results(state: GraphState) -> dict[str, Any]:
+async def merge_results(
+    task_input: BaseTaskInput[MergeResultsInput],
+) -> BaseTaskOutput[MergeResultsOutput]:
     """Combine stats and news data into a unified research summary.
 
     Args:
-        state: Current graph state (must include ``stats_data`` + ``news_data``).
+        task_input: Typed envelope carrying thread/node/task identity and
+            the :class:`MergeResultsInput` content.
 
     Returns:
-        Partial state: ``{"merged_research": {...}}``.
+        :class:`BaseTaskOutput` wrapping the :class:`MergeResultsOutput`.
     """
-    thread_id: str = state["thread_id"]
-    node_id = make_node_id(thread_id, _MERGE_NODE)
-    task_id = make_task_id()
-    payload = {
-        "stats_data": state.get("stats_data", {}),
-        "news_data": state.get("news_data", {}),
-    }
+    thread_id = task_input.thread_id
+    node_id = task_input.node_id
+    task_id = task_input.task_id
+    payload = task_input.content.model_dump()
 
     await create_task(thread_id, node_id, _MERGE_NODE, task_id, "merge_results", payload)
     try:
-        result = await delegate_completion(thread_id, task_id, node_id, _MERGE_NODE, "merge_results", payload)
+        result = await delegate_completion(
+            thread_id, task_id, node_id, _MERGE_NODE, "merge_results", payload
+        )
     except Exception as exc:
-        # Safety net for TimeoutError / ThreadCancelledError only.
         await complete_task(
             thread_id, node_id, _MERGE_NODE, task_id, "merge_results",
             failed=True, error=str(exc),
         )
         raise
-    return {"merged_research": result}
+    output_content = MergeResultsOutput.model_validate(result)
+    return BaseTaskOutput[MergeResultsOutput](
+        thread_id=thread_id,
+        node_id=node_id,
+        task_id=task_id,
+        task_name="merge_results",
+        content=output_content,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -163,20 +200,42 @@ async def merge_results(state: GraphState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def _run_stats_node(state: GraphState, subgraph_node_id: str) -> dict[str, Any]:
+async def _run_stats_node(
+    state: GraphState,
+    subgraph_node_id: str,
+    analysis: AnalyzeQueryOutput,
+) -> ReadStatsOutput:
     thread_id: str = state["thread_id"]
     node_id = make_node_id(thread_id, _STATS_NODE)
+
+    stats_input = ReadStatsInput(symbols=analysis.symbols, interval="1d")
+    node_input = BaseNodeInput[ReadStatsInput](
+        thread_id=thread_id,
+        node_id=node_id,
+        node_name=_STATS_NODE,
+        content=stats_input,
+    )
+
     await upsert_node(
         thread_id=thread_id,
         node_id=node_id,
         node_name=_STATS_NODE,
         node_type=NodeType.TYPICAL,
         parent_node_id=subgraph_node_id,
-        input_data=state.get("query_analysis", {}),
+        input_data=node_input.content.model_dump(),
+        parallel_group="fetch",
     )
+
+    task_input = BaseTaskInput[ReadStatsInput](
+        thread_id=thread_id,
+        node_id=node_id,
+        task_id=make_task_id(),
+        task_name="read_stats",
+        content=stats_input,
+    )
+
     try:
-        future = read_stats(state)
-        result = await future
+        task_output: BaseTaskOutput[ReadStatsOutput] = await read_stats(task_input)
     except Exception as exc:
         await complete_node(
             thread_id=thread_id,
@@ -186,29 +245,58 @@ async def _run_stats_node(state: GraphState, subgraph_node_id: str) -> dict[str,
             error=str(exc),
         )
         raise
+
+    node_output = BaseNodeOutput[ReadStatsOutput](
+        thread_id=thread_id,
+        node_id=node_id,
+        node_name=_STATS_NODE,
+        content=task_output.content,
+    )
     await complete_node(
         thread_id=thread_id,
         node_id=node_id,
         node_name=_STATS_NODE,
-        output_data=result,
+        output_data=node_output.content.model_dump(),
     )
-    return result
+    return node_output.content
 
 
-async def _run_news_node(state: GraphState, subgraph_node_id: str) -> dict[str, Any]:
+async def _run_news_node(
+    state: GraphState,
+    subgraph_node_id: str,
+    analysis: AnalyzeQueryOutput,
+) -> ReadNewsOutput:
     thread_id: str = state["thread_id"]
     node_id = make_node_id(thread_id, _NEWS_NODE)
+
+    news_input = ReadNewsInput(symbols=analysis.symbols)
+    node_input = BaseNodeInput[ReadNewsInput](
+        thread_id=thread_id,
+        node_id=node_id,
+        node_name=_NEWS_NODE,
+        content=news_input,
+    )
+
     await upsert_node(
         thread_id=thread_id,
         node_id=node_id,
         node_name=_NEWS_NODE,
         node_type=NodeType.TYPICAL,
         parent_node_id=subgraph_node_id,
-        input_data=state.get("query_analysis", {}),
+        input_data=node_input.content.model_dump(),
+        parallel_group="fetch",
     )
+
+    task_input = BaseTaskInput[ReadNewsInput](
+        thread_id=thread_id,
+        node_id=node_id,
+        task_id=make_task_id(),
+        task_name="read_news",
+        content=news_input,
+    )
+
     try:
-        future = read_news(state)
-        result = await future
+        task_output: BaseTaskOutput[ReadNewsOutput] = await read_news(task_input)
     except Exception as exc:
         await complete_node(
             thread_id=thread_id,
@@ -218,13 +306,20 @@ async def _run_news_node(state: GraphState, subgraph_node_id: str) -> dict[str, 
             error=str(exc),
         )
         raise
+
+    node_output = BaseNodeOutput[ReadNewsOutput](
+        thread_id=thread_id,
+        node_id=node_id,
+        node_name=_NEWS_NODE,
+        content=task_output.content,
+    )
     await complete_node(
         thread_id=thread_id,
         node_id=node_id,
         node_name=_NEWS_NODE,
-        output_data=result,
+        output_data=node_output.content.model_dump(),
     )
-    return result
+    return node_output.content
 
 
 # ---------------------------------------------------------------------------
@@ -249,29 +344,35 @@ async def research_subgraph(state: GraphState) -> GraphState:
 
     Returns:
         Updated state with ``stats_data``, ``news_data``, and
-        ``merged_research`` populated.
+        ``merged_research`` populated as serialised content model dicts.
     """
     thread_id: str = state["thread_id"]
     subgraph_node_id = make_node_id(thread_id, _SUBGRAPH_NAME)
 
-    # Register the subgraph container node.
+    analysis = AnalyzeQueryOutput.model_validate(state.get("query_analysis", {}))
+
+    subgraph_input = BaseNodeInput[AnalyzeQueryOutput](
+        thread_id=thread_id,
+        node_id=subgraph_node_id,
+        node_name=_SUBGRAPH_NAME,
+        content=analysis,
+    )
+
     await upsert_node(
         thread_id=thread_id,
         node_id=subgraph_node_id,
         node_name=_SUBGRAPH_NAME,
         node_type=NodeType.SUBGRAPH,
-        input_data=state.get("query_analysis", {}),
+        input_data=subgraph_input.content.model_dump(),
     )
 
     # ── Step 1: stats + news in parallel ──────────────────────────────
     try:
-        stats_result, news_result = await asyncio.gather(
-            _run_stats_node(state, subgraph_node_id),
-            _run_news_node(state, subgraph_node_id),
+        stats_output, news_output = await asyncio.gather(
+            _run_stats_node(state, subgraph_node_id, analysis),
+            _run_news_node(state, subgraph_node_id, analysis),
         )
     except Exception as exc:
-        # stats_node or news_node already marked itself failed.
-        # Propagate failure up to the subgraph container node and stop.
         await complete_node(
             thread_id=thread_id,
             node_id=subgraph_node_id,
@@ -282,65 +383,89 @@ async def research_subgraph(state: GraphState) -> GraphState:
         raise
 
     # ── Step 2: merge (sequential, depends on both above) ─────────────
-    merged_state: GraphState = {**state, **stats_result, **news_result}
     merge_node_id = make_node_id(thread_id, _MERGE_NODE)
+    merge_input = MergeResultsInput(
+        stats_data=stats_output.model_dump(),
+        news_data=news_output.model_dump(),
+    )
+    merge_node_input = BaseNodeInput[MergeResultsInput](
+        thread_id=thread_id,
+        node_id=merge_node_id,
+        node_name=_MERGE_NODE,
+        content=merge_input,
+    )
+
     await upsert_node(
         thread_id=thread_id,
         node_id=merge_node_id,
         node_name=_MERGE_NODE,
         node_type=NodeType.TYPICAL,
         parent_node_id=subgraph_node_id,
-        input_data={
-            "stats_data": merged_state.get("stats_data", {}),
-            "news_data": merged_state.get("news_data", {}),
-        },
+        input_data=merge_node_input.content.model_dump(),
+    )
+
+    merge_task_input = BaseTaskInput[MergeResultsInput](
+        thread_id=thread_id,
+        node_id=merge_node_id,
+        task_id=make_task_id(),
+        task_name="merge_results",
+        content=merge_input,
     )
 
     merge_exc: Exception | None = None
-    merge_result: dict[str, Any] = {}
+    merge_output: MergeResultsOutput | None = None
     try:
-        merge_result = await merge_results(merged_state)
+        merge_task_output: BaseTaskOutput[MergeResultsOutput] = await merge_results(merge_task_input)
+        merge_output = merge_task_output.content
     except Exception as exc:
         merge_exc = exc
-
-    # ── Multi-hop: notify merge_node AND parent subgraph concurrently ──
-    # merge_node is the last child node; once it reaches a terminal state
-    # the subgraph container is also terminal.  Firing both SSE notifications
-    # concurrently halves the ACK-wait cost compared to sequential calls.
-    if merge_exc is not None:
-        await asyncio.gather(
-            complete_node(
-                thread_id=thread_id,
-                node_id=merge_node_id,
-                node_name=_MERGE_NODE,
-                failed=True,
-                error=str(merge_exc),
-            ),
-            complete_node(
-                thread_id=thread_id,
-                node_id=subgraph_node_id,
-                node_name=_SUBGRAPH_NAME,
-                failed=True,
-                error=str(merge_exc),
-            ),
-            return_exceptions=True,
-        )
-        raise merge_exc
-
-    final_state: GraphState = {**merged_state, **merge_result}
-    await asyncio.gather(
-        complete_node(
+        await complete_node(
             thread_id=thread_id,
             node_id=merge_node_id,
             node_name=_MERGE_NODE,
-            output_data=merge_result,
-        ),
-        complete_node(
+            failed=True,
+            error=str(exc),
+        )
+
+    if merge_exc is not None:
+        await complete_node(
             thread_id=thread_id,
             node_id=subgraph_node_id,
             node_name=_SUBGRAPH_NAME,
-            output_data={"merged_research": final_state.get("merged_research", {})},
-        ),
+            failed=True,
+            error=str(merge_exc),
+        )
+        raise merge_exc
+
+    merge_node_output = BaseNodeOutput[MergeResultsOutput](
+        thread_id=thread_id,
+        node_id=merge_node_id,
+        node_name=_MERGE_NODE,
+        content=merge_output,  # type: ignore[arg-type]
+    )
+    await complete_node(
+        thread_id=thread_id,
+        node_id=merge_node_id,
+        node_name=_MERGE_NODE,
+        output_data=merge_node_output.content.model_dump(),
     )
 
-    return final_state
+    subgraph_output = BaseNodeOutput[MergeResultsOutput](
+        thread_id=thread_id,
+        node_id=subgraph_node_id,
+        node_name=_SUBGRAPH_NAME,
+        content=merge_output,  # type: ignore[arg-type]
+    )
+    await complete_node(
+        thread_id=thread_id,
+        node_id=subgraph_node_id,
+        node_name=_SUBGRAPH_NAME,
+        output_data=subgraph_output.content.model_dump(),
+    )
+
+    return {
+        **state,
+        "stats_data": stats_output.model_dump(),
+        "news_data": news_output.model_dump(),
+        "merged_research": merge_output.model_dump(),  # type: ignore[union-attr]
+    }

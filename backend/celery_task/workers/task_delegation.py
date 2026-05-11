@@ -251,7 +251,7 @@ async def _emit_task_sse(
     """
     try:
         from backend.centrifugo_mq.sse_notification.thread.node.task import notify
-        logger.error(
+        logger.debug(
             "[task_delegation] emitting task SSE task_id=%s task_name=%s status=%s thread_id=%s",
             task_id, task_name, status, thread_id,
         )
@@ -274,7 +274,7 @@ async def _emit_task_sse(
                 task_id, task_name, status, thread_id,
             )
         else:
-            logger.error(
+            logger.debug(
                 "[task_delegation] task SSE acked task_id=%s task_name=%s status=%s thread_id=%s",
                 task_id, task_name, status, thread_id,
             )

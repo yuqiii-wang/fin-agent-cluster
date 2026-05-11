@@ -6,46 +6,114 @@
  *  2. Node graph + node detail side panel (Splitter)
  *  3. Node timeline
  *  4. Task Gantt
+ *
+ * When ``sseInfo``/``llmInfo`` are null but the thread is still running
+ * (e.g. opened from history), the component bootstraps fresh Centrifugo
+ * tokens from the API so live updates keep working.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Badge, Card, Divider, Splitter, Spin, Tag, Typography } from 'antd';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Badge, Button, Card, Divider, Splitter, Spin, Tag, Typography } from 'antd';
+import { MenuFoldOutlined, MenuUnfoldOutlined, StopOutlined } from '@ant-design/icons';
 import NodeGraph from './NodeGraph';
-import NodeDetail from './NodeDetail';
+import NodeDetail from './NodeDetail/index';
 import NodeTimeline from './NodeTimeline';
-import TaskGantt from './TaskGantt';
+import DataViewer from './DataViewer/index';
+import { COLOR_BORDER_PANEL, COLOR_TEXT_MUTED } from '../constants/styleColors';
 import { useCentrifugoSse } from '../hooks/useCentrifugoSse';
 import { useCentrifugoLlm } from '../hooks/useCentrifugoLlm';
 import { useThreadData } from '../hooks/useThreadData';
+import { getLlmToken, getSseToken, cancelThread, cancelNode, cancelTask } from '../api/threads';
+import { TERMINAL_WORK_STATUSES, isThreadTerminal, isThreadActive, isWorkActive } from '../constants/lifecycleStatus';
+import { STATUS_BADGE } from '../constants/statusColors';
 import type { SseEvent, SseInfo } from '../types';
 
 const { Title, Text } = Typography;
 
-const STATUS_BADGE: Record<string, 'processing' | 'success' | 'error' | 'warning' | 'default'> = {
-  received:  'processing',
-  running:   'processing',
-  completed: 'success',
-  failed:    'error',
-  cancelled: 'warning',
-};
-
-const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
-
 interface Props {
   threadId: string;
+  /** Bootstrap info from submit response, or null when opening a history thread. */
   sseInfo: SseInfo | null;
   llmInfo: SseInfo | null;
+  /** Called once when the thread reaches a terminal state (completed/failed/cancelled). */
+  onDone?: () => void;
 }
 
-const ThreadView: React.FC<Props> = ({ threadId, sseInfo, llmInfo }) => {
+const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInfo: initialLlmInfo, onDone }) => {
   const { thread, nodes, tasks, refresh } = useThreadData(threadId);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [tokenStreams, setTokenStreams] = useState<Record<string, string>>({});
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [detailData, setDetailData] = useState<{ label: string; data: unknown } | null>(null);
+  const [cancelling, setCancelling] = useState<string | null>(null); // id being cancelled
+  const [isStatusBarHovered, setIsStatusBarHovered] = useState(false);
 
-  const isDone = TERMINAL.has(thread?.status ?? '');
+  const handleCancelThread = useCallback(async () => {
+    setCancelling(threadId);
+    try { await cancelThread(threadId); } catch { /* SSE will reflect status */ }
+    finally { setCancelling(null); }
+  }, [threadId]);
 
-  // Reset accumulated token streams whenever we switch to a different thread.
-  useEffect(() => { setTokenStreams({}); }, [threadId]);
+  const handleCancelNode = useCallback(async (nodeId: string) => {
+    setCancelling(nodeId);
+    try { await cancelNode(threadId, nodeId); } catch { /* SSE will reflect status */ }
+    finally { setCancelling(null); }
+  }, [threadId]);
+
+  const handleCancelTask = useCallback(async (taskId: string, nodeId?: string) => {
+    setCancelling(taskId);
+    try { await cancelTask(threadId, taskId, nodeId); } catch { /* SSE will reflect status */ }
+    finally { setCancelling(null); }
+  }, [threadId]);
+
+  const handleViewData = useCallback((label: string, data: unknown) => {
+    setDetailData({ label, data });
+  }, []);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  const onDoneFiredRef = useRef(false);
+
+  // Resolved Centrifugo tokens: may come from props (fresh submit) or be
+  // bootstrapped from the API when opening a running history thread.
+  const [sseInfo, setSseInfo] = useState<SseInfo | null>(initialSseInfo);
+  const [llmInfo, setLlmInfo] = useState<SseInfo | null>(initialLlmInfo);
+
+  const isDone = isThreadTerminal(thread?.status ?? '');
+
+  // Fire onDone once when thread reaches a terminal state.
+  useEffect(() => {
+    if (isDone && !onDoneFiredRef.current) {
+      onDoneFiredRef.current = true;
+      onDoneRef.current?.();
+    }
+  }, [isDone]);
+
+  // Reset accumulated token streams and onDone guard whenever we switch thread.
+  useEffect(() => {
+    setTokenStreams({});
+    setSseInfo(initialSseInfo);
+    setLlmInfo(initialLlmInfo);
+    onDoneFiredRef.current = false;
+  }, [threadId, initialSseInfo, initialLlmInfo]);
+
+  // Bootstrap Centrifugo tokens for running history threads (no props provided).
+  useEffect(() => {
+    if (initialSseInfo || initialLlmInfo || isDone || !thread) return;
+    // Only bootstrap when thread is actually running/pending.
+    if (isThreadTerminal(thread.status)) return;
+
+    let cancelled = false;
+    Promise.all([getSseToken(threadId), getLlmToken(threadId)])
+      .then(([sse, llm]) => {
+        if (cancelled) return;
+        setSseInfo({ ws_url: sse.ws_url, connection_token: sse.connection_token, subscription_token: sse.subscription_token, channel: sse.channel });
+        setLlmInfo({ ws_url: llm.ws_url, connection_token: llm.connection_token, subscription_token: llm.subscription_token, channel: llm.channel });
+      })
+      .catch(() => {
+        // Non-fatal — thread may have just completed; polling will reflect that.
+      });
+    return () => { cancelled = true; };
+  }, [threadId, initialSseInfo, initialLlmInfo, isDone, thread]);
 
   const handleSseEvent = useCallback(
     (ev: SseEvent) => {
@@ -86,11 +154,26 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo, llmInfo }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Status bar */}
-      <Card size="small" style={{ borderRadius: 8 }}>
+      <Card
+        size="small"
+        style={{ borderRadius: 8 }}
+        onMouseEnter={() => setIsStatusBarHovered(true)}
+        onMouseLeave={() => setIsStatusBarHovered(false)}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <Badge status={STATUS_BADGE[thread.status] ?? 'default'} text={thread.status.toUpperCase()} />
           <Text type="secondary" style={{ fontSize: 12 }}>{thread.query}</Text>
-          <Text copyable code style={{ fontSize: 10, color: '#595959' }}>{thread.thread_id}</Text>
+          <Text copyable code style={{ fontSize: 10, color: COLOR_TEXT_MUTED }}>{thread.thread_id}</Text>
+          {isThreadActive(thread.status) && isStatusBarHovered && (
+            <Button
+              size="small"
+              danger
+              icon={<StopOutlined />}
+              loading={cancelling === threadId}
+              onClick={handleCancelThread}
+              style={{ marginLeft: 'auto' }}
+            />
+          )}
         </div>
         {thread.error && (
           <Alert title={thread.error} type="error" showIcon style={{ marginTop: 8 }} />
@@ -101,81 +184,101 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo, llmInfo }) => {
       <Card
         size="small"
         title={<Text strong>Node Graph</Text>}
+        extra={
+          <Button
+            size="small"
+            type="text"
+            icon={sidebarOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+            onClick={() => setSidebarOpen((v) => !v)}
+            title={sidebarOpen ? 'Hide details' : 'Show details'}
+          />
+        }
         style={{ borderRadius: 8 }}
         styles={{ body: { padding: 0 } }}
       >
-        <Splitter style={{ height: 380 }}>
-          <Splitter.Panel defaultSize="60%" min="40%">
-            <div style={{ padding: '8px 0' }}>
-              <NodeGraph
-                nodes={nodes}
-                selectedNodeId={selectedNodeId}
-                onSelectNode={(id) => setSelectedNodeId(id === selectedNodeId ? null : id)}
-              />
-            </div>
-          </Splitter.Panel>
-          <Splitter.Panel>
-            <div
-              style={{
-                padding: 16,
-                overflowY: 'auto',
-                height: '100%',
-                borderLeft: '1px solid #1f1f1f',
-              }}
-            >
-              {selectedNode ? (
-                <NodeDetail node={selectedNode} tasks={tasks} threadId={threadId} tokenStreams={tokenStreams} />
-              ) : (
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  Click a node to see its details.
-                </Text>
-              )}
-            </div>
-          </Splitter.Panel>
-        </Splitter>
+        {sidebarOpen && selectedNode ? (
+          <Splitter style={{ height: 380 }}>
+            <Splitter.Panel defaultSize="60%" min="40%">
+              <div style={{ padding: '8px 0' }}>
+                <NodeGraph
+                  nodes={nodes}
+                  selectedNodeId={selectedNodeId}
+                  onSelectNode={(id) => setSelectedNodeId(id === selectedNodeId ? null : id)}
+                />
+              </div>
+            </Splitter.Panel>
+            <Splitter.Panel>
+              <div
+                style={{
+                  padding: 16,
+                  overflowY: 'auto',
+                  height: '100%',
+                  borderLeft: `1px solid ${COLOR_BORDER_PANEL}`,
+                }}
+              >
+                <NodeDetail
+                  node={selectedNode}
+                  nodes={nodes}
+                  tasks={tasks}
+                  threadId={threadId}
+                  tokenStreams={tokenStreams}
+                  onViewData={handleViewData}
+                  onSelectNode={(id) => setSelectedNodeId(id === selectedNodeId ? null : id)}
+                  onCancelNode={handleCancelNode}
+                  onCancelTask={handleCancelTask}
+                  cancellingId={cancelling}
+                />
+              </div>
+            </Splitter.Panel>
+          </Splitter>
+        ) : (
+          <div style={{ height: 380 }}>
+            <NodeGraph
+              nodes={nodes}
+              selectedNodeId={selectedNodeId}
+              onSelectNode={(id) => setSelectedNodeId(id === selectedNodeId ? null : id)}
+            />
+          </div>
+        )}
       </Card>
 
-      {/* Timeline */}
-      <Card
-        size="small"
-        title={<Text strong>Node Timeline</Text>}
-        style={{ borderRadius: 8 }}
-      >
-        <NodeTimeline
+      {/* Timeline — clicking a node always selects it for the detail panel */}
+      <NodeTimeline
           nodes={nodes}
+          tasks={tasks}
           selectedNodeId={selectedNodeId}
-          onSelectNode={(id) => setSelectedNodeId(id === selectedNodeId ? null : id)}
+          onSelectNode={(id) => setSelectedNodeId(id)}
         />
-      </Card>
 
-      {/* Gantt */}
-      <Card
-        size="small"
-        title={<Text strong>Task Gantt</Text>}
-        style={{ borderRadius: 8 }}
-      >
-        <TaskGantt tasks={tasks} />
-      </Card>
-
-      {/* Completed answer */}
-      {thread.answer && (
+      {/* Detail data panel (node/task input-output) — takes over the answer slot */}
+      {detailData ? (
         <Card
           size="small"
-          title={<Text strong>Answer</Text>}
+          title={<Text strong style={{ fontSize: 12 }}>{detailData.label}</Text>}
+          extra={
+            <Button size="small" type="text" onClick={() => setDetailData(null)}>
+              ✕
+            </Button>
+          }
           style={{ borderRadius: 8 }}
         >
-          <pre
-            style={{
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-              margin: 0,
-              color: '#d9d9d9',
-              fontSize: 13,
-            }}
-          >
-            {thread.answer}
-          </pre>
+          <DataViewer
+            mode={typeof detailData.data === 'string' ? 'markdown' : 'json'}
+            data={typeof detailData.data !== 'string' ? detailData.data : undefined}
+            text={typeof detailData.data === 'string' ? detailData.data : undefined}
+            maxHeight={480}
+          />
         </Card>
+      ) : (
+        thread.answer && (
+          <Card
+            size="small"
+            title={<Text strong>Answer</Text>}
+            style={{ borderRadius: 8 }}
+          >
+            <DataViewer mode="markdown" text={thread.answer} maxHeight={500} />
+          </Card>
+        )
       )}
     </div>
   );

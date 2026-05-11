@@ -14,6 +14,7 @@ import React, { useState } from 'react';
 import { Alert, Button, Form, Input, Radio, Space, Typography } from 'antd';
 import { ensureGuest } from '../api/auth';
 import { submitQuery } from '../api/threads';
+import { useAuth } from '../contexts/AuthContext';
 import type { QueryResponse } from '../types';
 
 const { Title, Text } = Typography;
@@ -29,6 +30,7 @@ interface Props {
 }
 
 const QueryForm: React.FC<Props> = ({ onSubmit }) => {
+  const { refresh: refreshAuth } = useAuth();
   const [mode, setMode] = useState<Mode>('semantic test');
   const [detail, setDetail] = useState('');
   const [loading, setLoading] = useState(false);
@@ -39,6 +41,8 @@ const QueryForm: React.FC<Props> = ({ onSubmit }) => {
     setLoading(true);
     try {
       await ensureGuest();
+      // Update AuthContext so UserButton and history reflect the new session.
+      await refreshAuth();
       const query = detail.trim() ? `${mode}: ${detail.trim()}` : mode;
       const result = await submitQuery(query);
       onSubmit(result);

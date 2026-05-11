@@ -1,21 +1,37 @@
 """backend.main_thread.lock — Redis-based thread ownership lock.
 
 Each graph run is exclusively owned by one main thread (FastAPI instance).
-The lock key maps a thread UUID to the owning instance's port and PID.
+The lock key maps a thread UUID to the owning instance's port, PID, and
+fencing token.
 
-Key format:  ``fin:thread:lock:{thread_id}``
-Value:       JSON ``{"port": 8432, "pid": 12345}``
-TTL:         ``THREAD_LOCK_TTL_SECONDS`` (default 60 s), renewed every
-             ``THREAD_LOCK_RENEW_INTERVAL_SECONDS`` (default 25 s) while
-             the graph is running.
+Key format:       ``fin:thread:lock:{thread_id}``
+Value:            JSON ``{"port": 8432, "pid": 12345, "token": 7}``
+Fencing counter:  ``fin:thread:fencing:{thread_id}`` — monotonically
+                  increasing integer, incremented atomically on each lock
+                  acquisition or steal.  The token in the lock value equals
+                  the counter at acquisition time and is stored in every DB
+                  write so stale (zombie) writes can be rejected by the DB
+                  guard ``fencing_token = current_token``.
+TTL:              ``THREAD_LOCK_TTL_SECONDS`` (default 60 s), renewed every
+                  ``THREAD_LOCK_RENEW_INTERVAL_SECONDS`` (default 25 s) while
+                  the graph is running.
 
-The shard for the lock key follows the same ``shard_for_thread`` routing as
-all other per-thread Redis data so lock operations never cross shards.
+Fix summary implemented here
+-----------------------------
+Fix 1 – CAS steal: ``steal_lock`` only overwrites when the stored owner
+        matches the dead owner confirmed by the caller.  Two simultaneous
+        steal attempts produce at most one winner.
+Fix 5 – Fencing token: ``acquire_lock`` and ``steal_lock`` atomically
+        increment a per-thread counter in the same Redis script that writes
+        the lock, returning the new token so the graph run can stamp all its
+        DB writes.
+
+The shard for both the lock and fencing counter follows ``shard_for_thread``
+so all per-thread key operations target the same Redis node.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import TypedDict
@@ -23,23 +39,53 @@ from typing import TypedDict
 logger = logging.getLogger(__name__)
 
 _LOCK_KEY_PREFIX = "fin:thread:lock:"
+_FENCING_KEY_PREFIX = "fin:thread:fencing:"
 
-# Lua script for atomic check-and-delete release:
-# Only deletes if the caller's port+pid match the stored owner.
-_RELEASE_SCRIPT = """
-local val = redis.call('GET', KEYS[1])
-if val then
-    local ok, data = pcall(cjson.decode, val)
-    if ok and data['port'] == tonumber(ARGV[1]) and data['pid'] == tonumber(ARGV[2]) then
-        redis.call('DEL', KEYS[1])
-        return 1
-    end
+# ---------------------------------------------------------------------------
+# Lua scripts
+# ---------------------------------------------------------------------------
+
+# Atomic acquire: returns the new fencing token if acquired, nil otherwise.
+# Entire script is atomic (single-threaded Redis eval).
+# KEYS[1] = lock key, KEYS[2] = fencing counter key
+# ARGV[1] = port, ARGV[2] = pid, ARGV[3] = lock ttl_ms, ARGV[4] = counter ttl_s
+_ACQUIRE_SCRIPT = """
+local existing = redis.call('GET', KEYS[1])
+if existing then
+    return nil
 end
-return 0
+local token = redis.call('INCR', KEYS[2])
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[4]))
+local owner = '{"port":' .. ARGV[1] .. ',"pid":' .. ARGV[2] .. ',"token":' .. token .. '}'
+redis.call('SET', KEYS[1], owner, 'PX', tonumber(ARGV[3]))
+return token
 """
 
-# Lua script for atomic check-and-pexpire renewal:
-# Only extends TTL if the caller's port+pid match the stored owner.
+# CAS steal: only overwrites when stored owner matches dead_port+dead_pid.
+# Returns the new fencing token if stolen, nil if the CAS check fails
+# (lock is gone or belongs to a different instance than expected).
+# KEYS[1] = lock key, KEYS[2] = fencing counter key
+# ARGV[1] = dead_port, ARGV[2] = dead_pid
+# ARGV[3] = new_port,  ARGV[4] = new_pid
+# ARGV[5] = lock ttl_ms, ARGV[6] = counter ttl_s
+_STEAL_CAS_SCRIPT = """
+local val = redis.call('GET', KEYS[1])
+if not val then
+    return nil
+end
+local ok, data = pcall(cjson.decode, val)
+if ok and data['port'] == tonumber(ARGV[1]) and data['pid'] == tonumber(ARGV[2]) then
+    local token = redis.call('INCR', KEYS[2])
+    redis.call('EXPIRE', KEYS[2], tonumber(ARGV[6]))
+    local owner = '{"port":' .. ARGV[3] .. ',"pid":' .. ARGV[4] .. ',"token":' .. token .. '}'
+    redis.call('SET', KEYS[1], owner, 'PX', tonumber(ARGV[5]))
+    return token
+end
+return nil
+"""
+
+# Atomic TTL renewal: only extends if caller's port+pid match.
+# KEYS[1] = lock key; ARGV[1] = port, ARGV[2] = pid, ARGV[3] = ttl_ms
 _RENEW_SCRIPT = """
 local val = redis.call('GET', KEYS[1])
 if val then
@@ -52,29 +98,57 @@ end
 return 0
 """
 
+# Atomic release: only deletes if caller's port+pid match.
+# KEYS[1] = lock key; ARGV[1] = port, ARGV[2] = pid
+_RELEASE_SCRIPT = """
+local val = redis.call('GET', KEYS[1])
+if val then
+    local ok, data = pcall(cjson.decode, val)
+    if ok and data['port'] == tonumber(ARGV[1]) and data['pid'] == tonumber(ARGV[2]) then
+        redis.call('DEL', KEYS[1])
+        return 1
+    end
+end
+return 0
+"""
+
 
 class OwnerInfo(TypedDict):
-    """Lock owner identifier."""
+    """Lock owner identifier including the fencing token at acquisition time."""
 
     port: int
     pid: int
+    token: int
 
+
+# ---------------------------------------------------------------------------
+# Key helpers
+# ---------------------------------------------------------------------------
 
 def _lock_key(thread_id: str) -> str:
     """Return the Redis key for the thread ownership lock."""
     return f"{_LOCK_KEY_PREFIX}{thread_id}"
 
 
+def _fencing_key(thread_id: str) -> str:
+    """Return the Redis key for the per-thread fencing counter."""
+    return f"{_FENCING_KEY_PREFIX}{thread_id}"
+
+
 def _lock_shard(thread_id: str) -> int:
-    """Return the Redis shard index for this thread's lock key."""
+    """Return the Redis shard index for this thread's lock and fencing keys."""
     from backend.db.redis import shard_for_thread
     return shard_for_thread(thread_id)
 
 
 def this_owner() -> OwnerInfo:
-    """Return the OwnerInfo for this main thread instance."""
+    """Return the OwnerInfo for this main thread instance (token=0 placeholder).
+
+    The real fencing token is returned by :func:`acquire_lock` or
+    :func:`steal_lock` and stored separately via the context module.
+    """
     from backend.config import get_settings
-    return OwnerInfo(port=get_settings().MAIN_THREAD_PORT, pid=os.getpid())
+    return OwnerInfo(port=get_settings().MAIN_THREAD_PORT, pid=os.getpid(), token=0)
 
 
 async def _client(thread_id: str):  # type: ignore[return]
@@ -82,48 +156,83 @@ async def _client(thread_id: str):  # type: ignore[return]
     return await get_client(_lock_shard(thread_id))
 
 
-async def acquire_lock(thread_id: str) -> bool:
-    """Try to acquire the thread lock for this main thread instance (SET NX).
+# ---------------------------------------------------------------------------
+# Lock operations
+# ---------------------------------------------------------------------------
+
+async def acquire_lock(thread_id: str) -> int | None:
+    """Try to acquire the thread lock atomically (Fix 5: increments fencing counter).
+
+    Uses a Lua script that atomically checks for an existing lock, increments
+    the per-thread fencing counter, and writes the lock with the new token.
+    No two concurrent callers can both succeed.
 
     Args:
         thread_id: LangGraph thread UUID.
 
     Returns:
-        ``True`` if the lock was acquired, ``False`` if already held.
+        The new fencing token (>= 1) if the lock was acquired, ``None`` if
+        the lock is already held by another instance.
     """
     from backend.config import get_settings
     settings = get_settings()
     client = await _client(thread_id)
     owner = this_owner()
-    value = json.dumps(owner)
     ttl_ms = settings.THREAD_LOCK_TTL_SECONDS * 1000
-    result = await client.set(_lock_key(thread_id), value, px=ttl_ms, nx=True)
-    return result is not None
+    counter_ttl_s = settings.THREAD_LOCK_TTL_SECONDS * 20
+    result = await client.eval(
+        _ACQUIRE_SCRIPT, 2,
+        _lock_key(thread_id), _fencing_key(thread_id),
+        owner["port"], owner["pid"], ttl_ms, counter_ttl_s,
+    )
+    return int(result) if result is not None else None
 
 
-async def steal_lock(thread_id: str) -> None:
-    """Force-acquire the lock regardless of current owner.
+async def steal_lock(thread_id: str, dead_owner: OwnerInfo) -> int | None:
+    """CAS steal the lock from a confirmed-dead owner (Fix 1 + Fix 5).
 
-    Must only be called after confirming the current owner is dead.
+    Atomically checks that the stored owner matches *dead_owner* (port+pid),
+    then increments the fencing counter and overwrites the lock with the new
+    owner.  If the stored owner no longer matches (another instance already
+    stole it), returns ``None`` without writing anything.
 
     Args:
-        thread_id: LangGraph thread UUID.
+        thread_id:  LangGraph thread UUID.
+        dead_owner: The owner previously confirmed dead by
+            :func:`check_owner_alive`.  The CAS comparison uses port+pid.
+
+    Returns:
+        The new fencing token if the steal succeeded, ``None`` if the CAS
+        check failed (lock was already stolen by someone else or expired).
     """
     from backend.config import get_settings
     settings = get_settings()
     client = await _client(thread_id)
-    owner = this_owner()
-    value = json.dumps(owner)
+    new_owner = this_owner()
     ttl_ms = settings.THREAD_LOCK_TTL_SECONDS * 1000
-    await client.set(_lock_key(thread_id), value, px=ttl_ms)
-    logger.error(
-        "[main_thread.lock] stolen lock thread_id=%s new_owner_port=%d",
-        thread_id, owner["port"],
+    counter_ttl_s = settings.THREAD_LOCK_TTL_SECONDS * 20
+    result = await client.eval(
+        _STEAL_CAS_SCRIPT, 2,
+        _lock_key(thread_id), _fencing_key(thread_id),
+        dead_owner["port"], dead_owner["pid"],
+        new_owner["port"], new_owner["pid"],
+        ttl_ms, counter_ttl_s,
     )
+    if result is not None:
+        token = int(result)
+        logger.error(
+            "[main_thread.lock] stolen lock thread_id=%s new_owner_port=%d fencing_token=%d",
+            thread_id, new_owner["port"], token,
+        )
+        return token
+    return None
 
 
 async def get_lock_owner(thread_id: str) -> OwnerInfo | None:
     """Return the current lock owner, or ``None`` if the lock is not held.
+
+    Backward-compatible: old lock values without a ``token`` field default
+    to ``token=0``.
 
     Args:
         thread_id: LangGraph thread UUID.
@@ -131,12 +240,18 @@ async def get_lock_owner(thread_id: str) -> OwnerInfo | None:
     Returns:
         :class:`OwnerInfo` dict or ``None``.
     """
+    import json
     client = await _client(thread_id)
     data = await client.get(_lock_key(thread_id))
     if data is None:
         return None
     try:
-        return json.loads(data)
+        raw = json.loads(data)
+        return OwnerInfo(
+            port=int(raw.get("port", 0)),
+            pid=int(raw.get("pid", 0)),
+            token=int(raw.get("token", 0)),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error("[main_thread.lock] malformed lock value thread_id=%s: %s", thread_id, exc)
         return None

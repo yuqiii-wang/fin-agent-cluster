@@ -70,6 +70,7 @@ class TaskInfo(BaseModel):
     node_name: str
     task_name: str
     status: str
+    is_streaming: bool = False
     input: Optional[dict[str, Any]] = None
     output: Optional[dict[str, Any]] = None
     created_at: Optional[datetime] = None
@@ -92,6 +93,7 @@ class NodeExecutionInfo(BaseModel):
     status: str
     type: str = "Typical"
     parent_node_id: Optional[str] = None
+    parallel_group: Optional[str] = None
     input: Optional[dict[str, Any]] = None
     output: Optional[dict[str, Any]] = None
     started_at: Optional[datetime] = None

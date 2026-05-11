@@ -8,6 +8,21 @@ Thread (thread_id)
 
 Every field is optional so each node only needs to populate its own outputs;
 previous node results are preserved across checkpoints automatically.
+
+State-to-SQL mapping
+--------------------
+GraphState field   SQL column (fin_agents.*)           Typed shape
+-----------------  -----------------------------------  ----------------------------
+query              user_queries.query                   str
+query_analysis     tasks.output (analyze_query)         AnalyzeQueryOutput (as dict)
+stats_data         tasks.output (read_stats)            ReadStatsOutput (as dict)
+news_data          tasks.output (read_news)             ReadNewsOutput (as dict)
+merged_research    tasks.output (merge_results)         MergeResultsOutput (as dict)
+conclusion         user_queries.answer                  str
+
+All node/task JSONB payloads are the ``model_dump()`` of the corresponding
+content model.  Nodes deserialise via ``model_validate`` when they need to
+pass typed values downstream.
 """
 
 from __future__ import annotations
@@ -24,25 +39,21 @@ class GraphState(TypedDict, total=False):
     test_config: Optional[dict[str, Any]]  # For internal testing purposes; ignored in production.
 
     # ── query_node output ─────────────────────────────────────────────
-    # Result of the analyze_query task:
-    #   {"intent": str, "symbols": list[str], "filters": dict}
+    # Serialised AnalyzeQueryOutput: {"intent": str, "symbols": list[str], "filters": dict}
     query_analysis: dict[str, Any]
 
     # ── research subgraph outputs ─────────────────────────────────────
-    # Result of the read_stats task:
-    #   {"records": list[dict], "symbol": str, "interval": str}
+    # Serialised ReadStatsOutput: {"symbol": str, "interval": str, "records": list[dict]}
     stats_data: dict[str, Any]
 
-    # Result of the read_news task:
-    #   {"articles": list[dict], "symbol": str}
+    # Serialised ReadNewsOutput: {"symbol": str, "articles": list[dict]}
     news_data: dict[str, Any]
 
-    # Result of the merge_results task:
-    #   {"summary": str, "stats": ..., "news": ...}
+    # Serialised MergeResultsOutput: {"symbol": str, "summary": str, "stats": dict, "news": dict}
     merged_research: dict[str, Any]
 
     # ── conclusion_node output ────────────────────────────────────────
-    # Full concatenated streaming answer; persisted to fin_agents.llm_responses
+    # Full concatenated streaming answer; persisted to fin_agents.user_queries.answer
     conclusion: Optional[str]
 
     # ── Error propagation (any node can set this) ─────────────────────

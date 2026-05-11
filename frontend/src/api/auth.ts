@@ -15,6 +15,10 @@ export function setStoredToken(token: string): void {
   localStorage.setItem('fin_user_token', token);
 }
 
+export function clearStoredToken(): void {
+  localStorage.removeItem('fin_user_token');
+}
+
 export async function ensureGuest(): Promise<GuestAuthResponse> {
   const existing = getStoredToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

@@ -48,7 +48,7 @@ async def set_cancel_flag(thread_id: str) -> None:
     client = await get_client(_CANCEL_SHARD)
     key = _cancel_key(thread_id)
     await client.set(key, "1", ex=settings.GRAPH_CANCEL_TTL_SECONDS)
-    logger.error("[cancel_flag] set thread_id=%s key=%s", thread_id, key)
+    logger.debug("[cancel_flag] set thread_id=%s key=%s", thread_id, key)
 
 
 async def is_cancel_flag_set(thread_id: str) -> bool:
