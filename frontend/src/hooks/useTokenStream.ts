@@ -9,7 +9,9 @@
 import { useEffect, useRef } from 'react';
 import { Centrifuge, Subscription } from 'centrifuge';
 import { getLlmToken } from '../api/threads';
+import { createLlmClientBundle } from '../api/centrifugoLlmClient';
 import type { SseEvent } from '../types';
+import { useLatestRef } from './refUtils';
 
 interface Options {
   threadId: string;
@@ -22,10 +24,8 @@ interface Options {
 export function useTokenStream({ threadId, taskId, active, onToken, onEnd }: Options): void {
   const cfRef = useRef<Centrifuge | null>(null);
   const subRef = useRef<Subscription | null>(null);
-  const onTokenRef = useRef(onToken);
-  const onEndRef = useRef(onEnd);
-  onTokenRef.current = onToken;
-  onEndRef.current = onEnd;
+  const onTokenRef = useLatestRef(onToken);
+  const onEndRef = useLatestRef(onEnd);
 
   useEffect(() => {
     if (!active || !taskId) return;
@@ -37,8 +37,7 @@ export function useTokenStream({ threadId, taskId, active, onToken, onEnd }: Opt
         const tok = await getLlmToken(threadId);
         if (cancelled) return;
 
-        const cf = new Centrifuge(tok.ws_url, { token: tok.connection_token });
-        const sub = cf.newSubscription(tok.channel, { token: tok.subscription_token });
+        const { cf, sub } = createLlmClientBundle(tok, false);
 
         sub.on('publication', (ctx) => {
           const ev = ctx.data as SseEvent;

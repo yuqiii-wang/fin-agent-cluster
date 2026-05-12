@@ -78,7 +78,7 @@ class NodeType(StrEnum):
     Using ``StrEnum`` means instances compare equal to plain strings.
     """
 
-    TYPICAL = "Typical"
+    WORKFLOW = "Workflow"
     REFERENCE = "Reference"
     SUBGRAPH = "Subgraph"
 

@@ -19,12 +19,14 @@ export const STATUS_BADGE: Record<string, 'processing' | 'success' | 'error' | '
 };
 
 export const STATUS_TAG_COLOR: Record<string, string> = {
-  pending:   'default',
-  running:   'processing',
-  completed: 'success',
-  failed:    'error',
-  cancelled: 'warning',
-  wrong:     'error',
+  pending:    'default',
+  connecting: 'default',
+  received:   'cyan',
+  running:    'processing',
+  completed:  'success',
+  failed:     'error',
+  cancelled:  'warning',
+  wrong:      'error',
 };
 
 export const STATUS_HEX: Record<string, string> = {

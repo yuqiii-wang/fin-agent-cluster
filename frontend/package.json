@@ -10,13 +10,15 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
+    "@types/uuid": "^10.0.0",
     "antd": "^6.3.7",
     "centrifuge": "^5.5.3",
     "lightweight-charts": "^5.1.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

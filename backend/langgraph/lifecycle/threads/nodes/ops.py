@@ -39,7 +39,7 @@ async def upsert_node(
     thread_id: str,
     node_id: str,
     node_name: str,
-    node_type: str = NodeType.TYPICAL,
+    node_type: str = NodeType.WORKFLOW,
     parent_node_id: str | None = None,
     input_data: dict[str, Any] | None = None,
     parallel_group: str | None = None,
@@ -55,7 +55,7 @@ async def upsert_node(
         thread_id:      LangGraph thread UUID.
         node_id:        Stable node ID (from ``make_node_id``).
         node_name:      Human-readable node name.
-        node_type:      ``"Typical"``, ``"Reference"``, or ``"Subgraph"``.
+        node_type:      ``"Workflow"``, ``"Reference"``, or ``"Subgraph"``.
         parent_node_id: Parent subgraph node ID, or ``None`` for top-level nodes.
         input_data:     Serialisable input payload.
         parallel_group: Shared label for nodes that run concurrently within

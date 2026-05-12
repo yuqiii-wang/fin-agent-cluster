@@ -258,3 +258,48 @@ async def get_centrifugo_sse_token(
         shard_index=shard,
         channel=channel,
     )
+
+
+@router.get("/centrifugo/sse-presence", response_model=CentrifugoSseNotificationResponse)
+async def get_centrifugo_sse_presence_token(
+    x_user_token: Annotated[str, Header(alias="X-User-Token")],
+) -> CentrifugoSseNotificationResponse:
+    """Return Centrifugo tokens for the user-level presence channel.
+
+    The frontend subscribes to ``user:{user_id}`` on the correct centrifugo-sse
+    shard on app mount.  Maintaining this subscription is the signal that the
+    browser is open.  The backend checks ``presence_stats`` on this channel via
+    :func:`~backend.centrifugo_mq.client.has_app_viewers` to skip SSE publishing
+    and LLM streaming when the browser is closed.
+
+    Args:
+        x_user_token: Guest-auth bearer token from ``localStorage``.
+
+    Returns:
+        ``CentrifugoSseNotificationResponse`` with tokens for ``user:{user_id}``
+        on the centrifugo-sse shard that owns this user.
+
+    Raises:
+        HTTPException 401: If ``x_user_token`` is invalid.
+    """
+    settings = get_settings()
+    user, _ = await ensure_guest(x_user_token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid user token")
+
+    user_id = str(user.id)
+    secret = settings.CENTRIFUGO_SECRET
+    channel = f"user:{user_id}"
+    shard = get_sse_shard_index(user_id)
+
+    ws_url = f"{settings.CENTRIFUGO_PUBLIC_BASE}/centrifugo-sse-{shard}/connection/websocket"
+    connection_token = make_connection_token(user_id, secret)
+    subscription_token = make_subscription_token(user_id, channel, secret)
+
+    return CentrifugoSseNotificationResponse(
+        ws_url=ws_url,
+        connection_token=connection_token,
+        subscription_token=subscription_token,
+        shard_index=shard,
+        channel=channel,
+    )

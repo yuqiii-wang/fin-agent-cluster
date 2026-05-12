@@ -13,8 +13,9 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useLatestRef } from '../hooks/refUtils';
 import { Alert, Badge, Button, Card, Divider, Splitter, Spin, Tag, Typography } from 'antd';
-import { MenuFoldOutlined, MenuUnfoldOutlined, StopOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, MenuFoldOutlined, MenuUnfoldOutlined, StopOutlined } from '@ant-design/icons';
 import NodeGraph from './NodeGraph';
 import NodeDetail from './NodeDetail/index';
 import NodeTimeline from './NodeTimeline';
@@ -37,9 +38,13 @@ interface Props {
   llmInfo: SseInfo | null;
   /** Called once when the thread reaches a terminal state (completed/failed/cancelled). */
   onDone?: () => void;
+  /** Called whenever the thread-level status changes (for syncing history sidebar). */
+  onStatusChange?: (status: string) => void;
+  /** When set, shows a ← back button that navigates back (e.g. to the concurrency grid). */
+  onBack?: () => void;
 }
 
-const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInfo: initialLlmInfo, onDone }) => {
+const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInfo: initialLlmInfo, onDone, onStatusChange, onBack }) => {
   const { thread, nodes, tasks, refresh } = useThreadData(threadId);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [tokenStreams, setTokenStreams] = useState<Record<string, string>>({});
@@ -69,14 +74,19 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
   const handleViewData = useCallback((label: string, data: unknown) => {
     setDetailData({ label, data });
   }, []);
-  const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
+  const onDoneRef = useLatestRef(onDone);
   const onDoneFiredRef = useRef(false);
+  const onStatusChangeRef = useLatestRef(onStatusChange);
+  const prevStatusRef = useRef<string | undefined>(undefined);
 
   // Resolved Centrifugo tokens: may come from props (fresh submit) or be
   // bootstrapped from the API when opening a running history thread.
   const [sseInfo, setSseInfo] = useState<SseInfo | null>(initialSseInfo);
   const [llmInfo, setLlmInfo] = useState<SseInfo | null>(initialLlmInfo);
+  // Gate the LLM MQ connection: false until the backend stream_start handshake
+  // is confirmed (fresh submit path).  True immediately for history threads
+  // so they can recover in-flight tokens via channel history.
+  const [llmEnabled, setLlmEnabled] = useState(() => initialLlmInfo === null);
 
   const isDone = isThreadTerminal(thread?.status ?? '');
 
@@ -88,12 +98,16 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
     }
   }, [isDone]);
 
-  // Reset accumulated token streams and onDone guard whenever we switch thread.
+  // Reset accumulated token streams and guards whenever we switch thread.
   useEffect(() => {
     setTokenStreams({});
     setSseInfo(initialSseInfo);
     setLlmInfo(initialLlmInfo);
+    // Fresh submit: wait for stream_start before connecting to LLM MQ.
+    // History / bootstrap: connect immediately and rely on channel recovery.
+    setLlmEnabled(initialLlmInfo === null);
     onDoneFiredRef.current = false;
+    prevStatusRef.current = undefined;
   }, [threadId, initialSseInfo, initialLlmInfo]);
 
   // Bootstrap Centrifugo tokens for running history threads (no props provided).
@@ -115,8 +129,22 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
     return () => { cancelled = true; };
   }, [threadId, initialSseInfo, initialLlmInfo, isDone, thread]);
 
+  // Bridge: drive history sidebar status from the same polled thread.status so
+  // both the ThreadView display and the history entry reflect the same value.
+  useEffect(() => {
+    const s = thread?.status;
+    if (!s || s === prevStatusRef.current) return;
+    prevStatusRef.current = s;
+    onStatusChangeRef.current?.(s);
+  }, [thread?.status]);
+
   const handleSseEvent = useCallback(
     (ev: SseEvent) => {
+      // Backend confirmed it is about to start token streaming — open the
+      // LLM MQ channel now so the subscription is ready before the first token.
+      if (ev.event === 'stream_start') {
+        setLlmEnabled(true);
+      }
       // Trigger a data refresh on any lifecycle event.
       if (
         ev.event === 'node_status' ||
@@ -139,7 +167,7 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
   );
 
   useCentrifugoSse({ sseInfo, onEvent: handleSseEvent, done: isDone });
-  useCentrifugoLlm({ llmInfo, onToken: handleToken, done: isDone });
+  useCentrifugoLlm({ llmInfo, onToken: handleToken, done: isDone, enabled: llmEnabled });
 
   const selectedNode = nodes.find((n) => n.node_id === selectedNodeId) ?? null;
 
@@ -153,6 +181,20 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Back button — shown when navigating from the concurrency test grid */}
+      {onBack && (
+        <div>
+          <Button
+            icon={<ArrowLeftOutlined />}
+            size="small"
+            type="text"
+            onClick={onBack}
+            style={{ paddingLeft: 0 }}
+          >
+            Back to Test Grid
+          </Button>
+        </div>
+      )}
       {/* Status bar */}
       <Card
         size="small"

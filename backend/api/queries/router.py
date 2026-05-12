@@ -137,6 +137,91 @@ async def get_active_query(
     )
 
 
+@router.get("/search", response_model=Optional[ThreadSummary])
+async def search_by_uuid(
+    uuid: str,
+    x_user_token: Annotated[str, Header(alias="X-User-Token")],
+) -> Optional[ThreadSummary]:
+    """Resolve any thread_id / node_id / task_id UUID to its parent ThreadSummary.
+
+    Checks in order:
+    1. ``uuid`` is a ``thread_id`` owned by this user.
+    2. ``uuid`` is a ``node_id`` — finds parent ``thread_id``, verifies ownership.
+    3. ``uuid`` is a ``task_id`` — finds parent ``thread_id``, verifies ownership.
+
+    Args:
+        uuid:         UUID string to resolve (thread / node / task id).
+        x_user_token: Guest bearer token from ``localStorage``.
+
+    Returns:
+        :class:`ThreadSummary` of the owning thread, or ``null`` if not found.
+    """
+    import re
+    from sqlalchemy import select
+    from backend.db.postgres.engine import get_read_session_factory
+    from backend.db.postgres.connection import raw_conn
+    from backend.db.postgres.queries.fin_agents import NodeSQL, TaskSQL
+    from backend.users.models import UserQuery
+
+    _UUID_RE = re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+        re.IGNORECASE,
+    )
+    if not _UUID_RE.match(uuid):
+        return None
+
+    user, _ = await ensure_guest(x_user_token)
+    factory = get_read_session_factory()
+
+    async def _fetch_thread_summary(thread_id: str) -> Optional[ThreadSummary]:
+        """Return ThreadSummary for thread_id if owned by this user, else None."""
+        async with factory() as session:
+            result = await session.execute(
+                select(UserQuery)
+                .where(
+                    UserQuery.thread_id == thread_id,
+                    UserQuery.user_id == str(user.id),
+                )
+                .limit(1)
+            )
+            row = result.scalar_one_or_none()
+        if not row:
+            return None
+        return ThreadSummary(
+            thread_id=row.thread_id,
+            query=row.query,
+            status=row.status,
+            created_at=row.created_at,
+            completed_at=row.completed_at,
+            answer=row.answer,
+        )
+
+    # 1. Try as thread_id
+    summary = await _fetch_thread_summary(uuid)
+    if summary:
+        return summary
+
+    # 2. Try as node_id
+    async with raw_conn(readonly=True) as conn:
+        cur = await conn.execute(NodeSQL.GET_THREAD_BY_NODE_ID, (uuid,))
+        row = await cur.fetchone()
+    if row:
+        summary = await _fetch_thread_summary(row["thread_id"])
+        if summary:
+            return summary
+
+    # 3. Try as task_id
+    async with raw_conn(readonly=True) as conn:
+        cur = await conn.execute(TaskSQL.GET_THREAD_BY_TASK_ID, (uuid,))
+        row = await cur.fetchone()
+    if row:
+        summary = await _fetch_thread_summary(row["thread_id"])
+        if summary:
+            return summary
+
+    return None
+
+
 @router.get("/{thread_id}", response_model=QueryResponse)
 async def get_query(thread_id: str) -> QueryResponse:
     """Return the full status of a single query thread.

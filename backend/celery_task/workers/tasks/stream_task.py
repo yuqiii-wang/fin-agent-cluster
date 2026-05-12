@@ -86,11 +86,13 @@ async def _run_stream_async(
         ``{"answer": str, "total_tokens": int, "latency_ms": int}``
     """
     from backend.db.redis.streams.publisher import stream_token, stream_token_batch
+    from backend.centrifugo_mq.client import has_app_viewers, has_thread_viewers
+    from backend.centrifugo_mq.sse_notification.thread import notify as notify_thread
+    from backend.centrifugo_mq.errors import STREAM_START_NACK
     from langchain_core.messages import HumanMessage
 
     query = payload.get("query", {})
     merged = payload.get("merged_research", {})
-    test_config = payload.get("test_config", {})  # For internal testing; ignored in production.
     context_text = merged.get("summary", "No research context available.")
     prompt = (
         f"Based on the following market research, provide a concise analysis "
@@ -100,17 +102,51 @@ async def _run_stream_async(
     # Build the LLM based on settings.
     from backend.llm.factory import get_llm
     from backend.llm.providers import get_mock_llm
+    from backend.llm.providers.mock_llm.word_pool import SEMANTIC_DURATION_SECS, SEMANTIC_TOKENS_PER_SEC
 
     provider = "mock"
     model_name = "mock"
-    if query.startswith("semantic test"):
-        llm = get_mock_llm(mode="semantic")
-    elif query.startswith("concurrency test"):
-        llm = get_mock_llm(mode="throttle", tokens_per_sec=test_config.get("tokens_per_sec", 100.0), timeout=test_config.get("timeout_seconds", 60))
-    elif query.startswith("throughput test"):
-        llm = get_mock_llm(mode="fanout", total_tokens=test_config.get("total_tokens", 1_000_000), timeout=test_config.get("timeout_seconds", 60))
+    if query.startswith("semantic test") or query.startswith("concurrency test"):
+        # Parse optional config encoded in the query by the frontend.
+        # Format: "semantic test [tps=30 dur=10]: <detail>" — extras are ignored if absent.
+        import re as _re
+        _tps_m = _re.search(r"\btps=(\d+(?:\.\d+)?)", query)
+        _dur_m = _re.search(r"\bdur=(\d+(?:\.\d+)?)", query)
+        _tps = float(_tps_m.group(1)) if _tps_m else SEMANTIC_TOKENS_PER_SEC
+        _dur = float(_dur_m.group(1)) if _dur_m else float(SEMANTIC_DURATION_SECS)
+        llm = get_mock_llm(tokens_per_sec=_tps, duration_secs=_dur)
     else:
         llm = get_llm()
+
+    # Check once whether any frontend client is watching this thread.
+    # If the browser is closed (has_app_viewers=False), skip all centrifugo-llm
+    # publishing — the full answer is still accumulated and persisted to DB.
+    # If the app is open but on a different thread (has_thread_viewers=False),
+    # also skip token streaming — the result will be visible via DB polling.
+    viewers_present = (
+        await has_app_viewers(thread_id)
+        and await has_thread_viewers(thread_id)
+    )
+
+    # ── Pre-stream handshake: signal UI to connect to LLM MQ channel ─────────
+    # Publish stream_start on the SSE tier and await ACK from the frontend.
+    # The frontend defers its centrifugo-llm subscription until stream_start is
+    # received, ensuring the MQ connection is ready before the first token
+    # arrives.  When no app viewers are present, notify() returns True
+    # immediately without publishing.
+    acked = await notify_thread(
+        thread_id,
+        "stream_start",
+        {"task_id": task_id, "task_name": task_name, "node_name": node_name},
+        dedup_key=f"stream_start:{task_id}",
+        retry_interval=5.0,
+        max_retries=3,
+    )
+    if not acked:
+        logger.error(
+            "[%s] stream_start NACK thread_id=%s task_id=%s",
+            STREAM_START_NACK, thread_id, task_id,
+        )
 
     messages = [HumanMessage(content=prompt)]
     full_answer = ""
@@ -123,6 +159,8 @@ async def _run_stream_async(
     # reaches _BATCH_MAX_SIZE or _BATCH_FLUSH_MS elapses, whichever comes
     # first.  Each token carries a monotonic `seq` so the frontend can
     # detect out-of-order or dropped messages and reassemble in order.
+    # When no frontend client is watching, token publishing is skipped and
+    # the output is cached locally for DB persistence only.
     batch: list[dict[str, Any]] = []
     batch_t0 = time.perf_counter()
 
@@ -134,26 +172,27 @@ async def _run_stream_async(
         total_tokens += 1
         seq += 1
 
-        batch.append(
-            {
-                "event": "token",
-                "thread_id": thread_id,
-                "task_id": task_id,
-                "task_name": task_name,
-                "node_name": node_name,
-                "token": token,
-                "seq": seq,
-            }
-        )
+        if viewers_present:
+            batch.append(
+                {
+                    "event": "token",
+                    "thread_id": thread_id,
+                    "task_id": task_id,
+                    "task_name": task_name,
+                    "node_name": node_name,
+                    "token": token,
+                    "seq": seq,
+                }
+            )
 
-        elapsed_ms = (time.perf_counter() - batch_t0) * 1_000
-        if len(batch) >= _BATCH_MAX_SIZE or elapsed_ms >= _BATCH_FLUSH_MS:
-            await stream_token_batch(thread_id, batch)
-            batch.clear()
-            batch_t0 = time.perf_counter()
+            elapsed_ms = (time.perf_counter() - batch_t0) * 1_000
+            if len(batch) >= _BATCH_MAX_SIZE or elapsed_ms >= _BATCH_FLUSH_MS:
+                await stream_token_batch(thread_id, batch)
+                batch.clear()
+                batch_t0 = time.perf_counter()
 
     # Flush any remaining buffered tokens before signalling end-of-stream.
-    if batch:
+    if viewers_present and batch:
         await stream_token_batch(thread_id, batch)
         batch.clear()
 
@@ -165,19 +204,17 @@ async def _run_stream_async(
     thinking_text, answer_text = _extract_thinking_answer(full_answer)
 
     # ── Recover from Redis Stream, persist to PG, clean up Redis ─────
-    # Read every entry for this task_id from the Redis Stream (paginated),
-    # reconstruct each text field by ordering on the embedded `seq` counter,
-    # persist to fin_agents.llm_responses, then delete all consumed entries.
-    # Falling back to the in-memory split for the answer/thinking columns guards
-    # against the unlikely case where entries were already trimmed by MAXLEN.
-    from backend.db.redis.streams.reader import recover_task_tokens, delete_stream_entries
+    # When viewers were present the tokens were published to the Redis Stream
+    # and we recover prompt metadata from it before deleting the entries.
+    # When no viewers were present there are no stream entries to recover.
     from backend.db.postgres.connection import raw_conn
 
-    text_by_column, entry_ids = await recover_task_tokens(thread_id, task_id)
-    # Use in-memory split as the canonical source — Redis recovery is for
-    # any other text columns (prompts).  The thinking/answer split from the
-    # full in-memory buffer is always complete.
-    recovered_answer = text_by_column.get("answer") or full_answer
+    prompts_text: str | None = None
+    entry_ids: list[Any] = []
+    if viewers_present:
+        from backend.db.redis.streams.reader import recover_task_tokens, delete_stream_entries
+        text_by_column, entry_ids = await recover_task_tokens(thread_id, task_id)
+        prompts_text = text_by_column.get("prompts")
 
     event_id = str(uuid.uuid4())
 
@@ -199,7 +236,7 @@ async def _run_stream_async(
                 model_name,
                 task_name,
                 node_name,
-                text_by_column.get("prompts"),
+                prompts_text,
                 thinking_text,
                 answer_text,
                 total_tokens,
@@ -208,28 +245,28 @@ async def _run_stream_async(
             ),
         )
 
-    # Signal end-of-stream to the frontend first so the stream_end entry is
-    # present in Redis when we scan below (allowing full cleanup in one pass).
-    # `total_seq` mirrors `total_tokens` and lets the UI confirm it has
-    # received every seq in [1 … total_seq] with no gaps.
-    await stream_token(
-        thread_id,
-        {
-            "event": "stream_end",
-            "thread_id": thread_id,
-            "task_id": task_id,
-            "task_name": task_name,
-            "node_name": node_name,
-            "total_tokens": total_tokens,
-            "total_seq": seq,
-        },
-    )
-
-    await delete_stream_entries(thread_id, entry_ids)
+    if viewers_present:
+        # Signal end-of-stream to the frontend.  `total_seq` mirrors `total_tokens`
+        # and lets the UI confirm it has received every seq in [1 … total_seq].
+        await stream_token(
+            thread_id,
+            {
+                "event": "stream_end",
+                "thread_id": thread_id,
+                "task_id": task_id,
+                "task_name": task_name,
+                "node_name": node_name,
+                "total_tokens": total_tokens,
+                "total_seq": seq,
+            },
+        )
+        if entry_ids:
+            from backend.db.redis.streams.reader import delete_stream_entries
+            await delete_stream_entries(thread_id, entry_ids)
 
     logger.info(
-        "[stream_task] completed thread_id=%s task_name=%s tokens=%d latency_ms=%d",
-        thread_id, task_name, total_tokens, latency_ms,
+        "[stream_task] completed thread_id=%s task_name=%s tokens=%d latency_ms=%d viewers=%s",
+        thread_id, task_name, total_tokens, latency_ms, viewers_present,
     )
     return {"thinking": thinking_text, "answer": answer_text, "total_tokens": total_tokens, "latency_ms": latency_ms}
 

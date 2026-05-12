@@ -16,10 +16,10 @@ node's ``except Exception`` handler can clean up.
 
 Result delivery
 ---------------
-The Celery worker writes its result to the Celery result backend (Redis DB 2)
-as before.  ``_await_result`` retrieves it via a non-blocking
-``asyncio.wait_for`` wrapper around ``async_result.get`` executed in a
-thread-pool, iterating until the result arrives or timeout/cancel fires.
+The Celery worker writes its result to the Celery result backend (Redis DB 2).
+``_await_result`` polls ``celery-task-meta-{task_id}`` directly via a shared
+``redis.asyncio`` client, avoiding the synchronous Celery backend connection
+pool that caused Protocol Errors under parallel node execution.
 
 Hierarchy
 ---------
@@ -33,10 +33,9 @@ Hierarchy
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 from typing import Any
-
-import celery.exceptions
 
 from backend.celery_task.celery_engine import celery_engine
 from backend.celery_task.config import get_ondemand_queue
@@ -52,22 +51,21 @@ _STREAM_TIMEOUT = 300
 _CANCEL_POLL_INTERVAL = 0.5
 
 
+
 async def _await_result(
     async_result: Any,
     thread_id: str,
     task_id: str,
     total_timeout: float,
 ) -> dict[str, Any]:
-    """Await *async_result* with Redis-based cancellation support.
+    """Await *async_result* by polling the Celery result backend via async Redis.
 
-    Registers the Celery ``AsyncResult`` in the process-local lifecycle
-    registry so it can be revoked externally.  Polls every
-    ``_CANCEL_POLL_INTERVAL`` seconds via ``run_in_executor``, checking
-    the Redis cancel flag (written by FastAPI) before each attempt.
-
-    Using ``get_running_loop()`` (not the deprecated ``get_event_loop()``)
-    ensures this always targets the correct event loop regardless of which
-    process runs this code.
+    Polls ``celery-task-meta-{celery_task_id}`` directly using the shared
+    ``redis.asyncio`` client (DB 2, shard 0) instead of calling
+    ``async_result.get()`` in a thread-pool executor.  This prevents the
+    Protocol Errors that occur when two concurrent ``run_in_executor`` threads
+    (e.g. stats_node + news_node) share the synchronous Celery backend
+    connection pool and corrupt each other's TCP reads.
 
     Args:
         async_result:  Celery ``AsyncResult`` from ``send_task``.
@@ -82,6 +80,8 @@ async def _await_result(
         ThreadCancelledError: If the Redis cancel flag for the thread is set.
         TimeoutError:         If *total_timeout* elapses before completion.
     """
+    from backend.celery_task.config import CELERY_BACKEND_DB
+    from backend.db.redis.client import get_client
     from backend.main_thread.cancel_flag import is_cancel_flag_set
     from backend.langgraph.lifecycle.threads.manager import get_thread_registry
 
@@ -91,28 +91,22 @@ async def _await_result(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + total_timeout
     _last_warn_s: int = 0
+    result_key = f"celery-task-meta-{async_result.id}"
+    client = await get_client(shard=0, db=CELERY_BACKEND_DB)
 
     try:
         while True:
             remaining = deadline - loop.time()
             elapsed = total_timeout - remaining
             # Log a warning every 30 s when the task is taking unusually long.
-            # Include the Celery task state so we can distinguish PENDING (never
-            # picked up, e.g. all workers busy or broker queue lost) from STARTED
-            # (picked up but running slowly) or FAILURE (silently failed without
-            # propagating the exception back through the result backend).
             if elapsed > 10:
                 _warn_bucket = int(elapsed) // 30 * 30
                 if _warn_bucket > _last_warn_s:
                     _last_warn_s = _warn_bucket
-                    try:
-                        celery_state = async_result.state
-                    except Exception:  # noqa: BLE001
-                        celery_state = "unknown"
                     logger.error(
                         "[task_delegation] waiting for celery task_id=%s thread_id=%s"
-                        " elapsed_s=%.0f celery_state=%s",
-                        task_id, thread_id, elapsed, celery_state,
+                        " elapsed_s=%.0f",
+                        task_id, thread_id, elapsed,
                     )
             if remaining <= 0:
                 registry.revoke_celery_task(task_id)
@@ -125,16 +119,18 @@ async def _await_result(
                 registry.revoke_celery_task(task_id)
                 raise ThreadCancelledError(thread_id)
 
-            poll_timeout = min(_CANCEL_POLL_INTERVAL, remaining)
-            try:
-                result: dict[str, Any] = await loop.run_in_executor(
-                    None,
-                    lambda t=poll_timeout: async_result.get(timeout=t),
-                )
-                return result
-            except celery.exceptions.TimeoutError:
-                # Not done yet — loop and re-check cancel flag.
-                continue
+            raw = await client.get(result_key)
+            if raw is not None:
+                data = _json.loads(raw)
+                status = data.get("status")
+                if status == "SUCCESS":
+                    return data["result"]
+                if status == "FAILURE":
+                    tb = data.get("traceback") or str(data.get("result", "unknown error"))
+                    raise Exception(f"Celery task failed: {tb}")
+                # PENDING / STARTED / RETRY — keep polling
+
+            await asyncio.sleep(min(_CANCEL_POLL_INTERVAL, remaining))
     finally:
         registry.discard_celery_result(task_id)
 

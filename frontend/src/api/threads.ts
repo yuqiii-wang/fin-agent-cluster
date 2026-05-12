@@ -79,6 +79,36 @@ export async function getHistory(limit = 40, offset = 0): Promise<ThreadSummary[
   return res.json();
 }
 
+/**
+ * Resolve a UUID (thread_id / node_id / task_id) to its parent ThreadSummary.
+ * Returns null if not found or UUID is not owned by this user.
+ */
+export async function searchByUuid(uuid: string): Promise<ThreadSummary | null> {
+  const res = await fetch(`${BASE}/queries/search?uuid=${encodeURIComponent(uuid)}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`UUID search failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Register the current user as actively viewing `threadId`.
+ *
+ * Sets the explicit Redis viewer flags on the backend so `stream_task` can
+ * detect viewer presence without relying on Centrifugo WebSocket timing.
+ * Fire-and-forget — errors are swallowed; the backend defaults to True on miss.
+ */
+export async function setThreadViewer(threadId: string): Promise<void> {
+  try {
+    await fetch(`${BASE}/threads/${threadId}/viewer`, {
+      method: 'PUT',
+      headers: authHeaders(),
+    });
+  } catch {
+    // Non-fatal — backend defaults to True for viewer detection on error.
+  }
+}
+
 export async function getActiveThread(): Promise<ThreadSummary | null> {
   const res = await fetch(`${BASE}/auth/me/active`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Get active thread failed: ${res.status}`);

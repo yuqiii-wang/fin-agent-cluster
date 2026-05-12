@@ -42,7 +42,7 @@
         "name": "thread",
         "history_size": 2000,
         "history_ttl": "24h",
-        "force_recovery": false
+        "force_recovery": true
       }
     ]
   },

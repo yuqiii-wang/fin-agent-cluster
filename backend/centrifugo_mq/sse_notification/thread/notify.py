@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any
 
-from backend.centrifugo_mq.client import publish_thread_event
+from backend.centrifugo_mq.client import publish_thread_event, has_app_viewers, has_thread_viewers
 from backend.centrifugo_mq.errors import CENTRIFUGO_SSE_NACK
 from backend.db.redis.session.notify_ack_store import wait_notify_ack
 
@@ -41,9 +41,26 @@ async def notify(
     Returns:
         ``True`` if the frontend ACKed; ``False`` on explicit NACK or exhaustion.
     """
+    # When the browser is closed skip publishing entirely — the graph keeps
+    # running silently.  When the app is open but the user is on a different
+    # thread, publish once for Centrifugo history recovery without waiting for
+    # an ACK (no subscriber is actively listening).  Full ACK cycle only when
+    # the user is actively viewing this thread.
+    if not await has_app_viewers(thread_id):
+        return True
+
+    # When no frontend client is subscribed, publish once and return — the
+    # event is stored in Centrifugo history (force_recovery) so the user sees
+    # it when they open the thread later.  Skipping the ACK loop avoids
+    # blocking the graph runner for ~18 s on background threads.
+    viewers_present = await has_thread_viewers(thread_id)
     nonce = uuid.uuid4().hex[:8]
     ack_key = f"{dedup_key or f'thread:{event}'}:{nonce}"
     published_payload = {"event": event, "thread_id": thread_id, "ack_key": ack_key, **payload}
+
+    if not viewers_present:
+        await publish_thread_event(thread_id, published_payload)
+        return True
 
     t0_total = time.monotonic()
     for attempt in range(max_retries):

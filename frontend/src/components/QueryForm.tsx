@@ -1,17 +1,19 @@
 /**
- * QueryForm — semantic test query submission form.
+ * QueryForm — query submission form supporting semantic and concurrency tests.
  *
  * Modes:
- *  - semantic test (default, implemented): query must start with "semantic test"
+ *  - semantic test: query starts with "semantic test [tps=N dur=N]"
+ *  - concurrency test: fires N parallel requests each as "concurrency test [tps=N dur=N]"
  *
  * On submit:
  *  1. Calls ensureGuest() to set up the guest session.
- *  2. Posts the query to /api/v1/threads/query.
- *  3. Returns the thread_id + SSE bootstrap to the parent.
+ *  2. Posts the query (or N queries) to /api/v1/threads/query.
+ *  3. Returns the results to the parent via onSubmit / onConcurrencySubmit.
  */
 
 import React, { useState } from 'react';
-import { Alert, Button, Form, Input, Radio, Space, Typography } from 'antd';
+import { Alert, Button, Form, InputNumber, Radio, Space, Typography } from 'antd';
+import { v4 as uuidv4 } from 'uuid';
 import { ensureGuest } from '../api/auth';
 import { submitQuery } from '../api/threads';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,31 +23,50 @@ const { Title, Text } = Typography;
 
 const MODES = [
   { label: 'Semantic Test', value: 'semantic test' },
+  { label: 'Concurrency Test', value: 'concurrency test' },
 ] as const;
 
 type Mode = (typeof MODES)[number]['value'];
 
 interface Props {
   onSubmit: (result: QueryResponse) => void;
+  onConcurrencySubmit?: (results: QueryResponse[]) => void;
 }
 
-const QueryForm: React.FC<Props> = ({ onSubmit }) => {
+const QueryForm: React.FC<Props> = ({ onSubmit, onConcurrencySubmit }) => {
   const { refresh: refreshAuth } = useAuth();
   const [mode, setMode] = useState<Mode>('semantic test');
-  const [detail, setDetail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Shared config
+  const [duration, setDuration] = useState<number>(10);
+  const [tps, setTps] = useState<number>(30);
+  // Concurrency-only config
+  const [concurrency, setConcurrency] = useState<number>(5);
+
+  function buildQuery(mode: Mode): string {
+    const uuid = uuidv4();
+    return `${mode} [tps=${tps} dur=${duration} id=${uuid}]`;
+  }
 
   async function handleSubmit() {
     setError(null);
     setLoading(true);
     try {
       await ensureGuest();
-      // Update AuthContext so UserButton and history reflect the new session.
       await refreshAuth();
-      const query = detail.trim() ? `${mode}: ${detail.trim()}` : mode;
-      const result = await submitQuery(query);
-      onSubmit(result);
+
+      if (mode === 'concurrency test') {
+        const promises = Array.from({ length: concurrency }, () =>
+          submitQuery(buildQuery(mode)),
+        );
+        const results = await Promise.all(promises);
+        onConcurrencySubmit?.(results);
+      } else {
+        const result = await submitQuery(buildQuery(mode));
+        onSubmit(result);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error');
     } finally {
@@ -75,22 +96,41 @@ const QueryForm: React.FC<Props> = ({ onSubmit }) => {
           </Radio.Group>
         </Form.Item>
 
-        <Form.Item label={<Text strong>Query detail (optional)</Text>}>
-          <Input.TextArea
-            value={detail}
-            onChange={(e) => setDetail(e.target.value)}
-            rows={3}
-            placeholder="e.g. analyse AAPL for the past week"
-            style={{ resize: 'none' }}
+        <Form.Item label={<Text strong>Duration (seconds)</Text>}>
+          <InputNumber
+            min={1}
+            max={120}
+            value={duration}
+            onChange={(v) => setDuration(v ?? 10)}
+            style={{ width: 160 }}
           />
-          <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
-            Query will be prefixed with "{mode}: "
-          </Text>
         </Form.Item>
+
+        <Form.Item label={<Text strong>Tokens per second</Text>}>
+          <InputNumber
+            min={1}
+            max={500}
+            value={tps}
+            onChange={(v) => setTps(v ?? 30)}
+            style={{ width: 160 }}
+          />
+        </Form.Item>
+
+        {mode === 'concurrency test' && (
+          <Form.Item label={<Text strong>Concurrency (number of requests)</Text>}>
+            <InputNumber
+              min={1}
+              max={50}
+              value={concurrency}
+              onChange={(v) => setConcurrency(v ?? 5)}
+              style={{ width: 160 }}
+            />
+          </Form.Item>
+        )}
 
         {error && (
           <Form.Item>
-            <Alert title={error} type="error" showIcon />
+            <Alert message={error} type="error" showIcon />
           </Form.Item>
         )}
 

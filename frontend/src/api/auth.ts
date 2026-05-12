@@ -30,3 +30,13 @@ export async function ensureGuest(): Promise<GuestAuthResponse> {
   setStoredToken(data.id);
   return data;
 }
+
+export async function getSsePresenceToken(): Promise<import('../types').CentrifugoTokenResponse> {
+  const token = getStoredToken();
+  if (!token) throw new Error('No user token');
+  const res = await fetch(`${BASE}/auth/centrifugo/sse-presence`, {
+    headers: { 'X-User-Token': token },
+  });
+  if (!res.ok) throw new Error(`sse-presence token failed: ${res.status}`);
+  return res.json();
+}

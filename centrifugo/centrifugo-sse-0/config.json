@@ -61,7 +61,12 @@
         "name": "thread",
         "history_size": 2000,
         "history_ttl": "24h",
-        "force_recovery": true
+        "force_recovery": true,
+        "presence": true
+      },
+      {
+        "name": "user",
+        "presence": true
       }
     ]
   },

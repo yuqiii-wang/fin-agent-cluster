@@ -114,3 +114,38 @@ async def resume_thread_route(thread_id: TThreadId) -> QueryResponse:
     """
     return await resume_query(thread_id)
 
+
+@router.put("/{thread_id}/viewer", status_code=204, tags=["thread"])
+async def register_viewer_route(
+    thread_id: TThreadId,
+    x_user_token: Annotated[str, Header(alias="X-User-Token")],
+) -> None:
+    """Register the calling user as actively viewing *thread_id*.
+
+    Sets the explicit Redis viewer flags (app-level and thread-level) so
+    ``stream_task`` can detect viewer presence without relying on Centrifugo
+    WebSocket presence timing.
+
+    Called by the frontend whenever the user navigates to a thread that was
+    submitted in a previous session (history threads) or when the app reopens
+    a running thread.  For freshly submitted threads the flags are already set
+    by :func:`~backend.users.queries.submit_query`.
+
+    Args:
+        thread_id:    LangGraph thread UUID.
+        x_user_token: Guest-auth bearer token from ``localStorage``.
+
+    Returns:
+        HTTP 204 No Content on success.
+
+    Raises:
+        HTTPException 401: If ``x_user_token`` is invalid.
+    """
+    from backend.db.redis.session.viewer_store import set_viewer
+
+    user, _ = await ensure_guest(x_user_token)
+    if user is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Invalid user token")
+    await set_viewer(str(user.id), thread_id)
+

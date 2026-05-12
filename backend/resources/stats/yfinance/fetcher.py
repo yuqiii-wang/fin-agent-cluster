@@ -1,7 +1,7 @@
 """yfinance stats fetcher — async wrapper around the synchronous yfinance library.
 
 yfinance is a blocking library; all calls run in the default
-``asyncio`` thread-pool executor via :func:`asyncio.get_event_loop().run_in_executor`
+``asyncio`` thread-pool executor via :func:`asyncio.get_running_loop().run_in_executor`
 so the FastAPI event loop is never blocked.
 
 Public API
@@ -49,7 +49,7 @@ async def fetch(symbol: str, period: str) -> StatsRecord:
         symbol, period, yf_period, yf_interval,
     )
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         df = await loop.run_in_executor(
             None,

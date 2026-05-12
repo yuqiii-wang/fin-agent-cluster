@@ -9,8 +9,9 @@ import redis.asyncio as aioredis
 
 from backend.config import get_settings
 
-# Shard-indexed pool: {shard_index: (redis.asyncio.Redis, loop_id)}
-_clients: dict[int, tuple[aioredis.Redis, int]] = {}
+# Cache key: (shard_index, db_override) → (redis.asyncio.Redis, loop_id)
+# db_override=None means use the DB embedded in the URL.
+_clients: dict[tuple[int, int | None], tuple[aioredis.Redis, int]] = {}
 _init_lock: asyncio.Lock | None = None
 _init_lock_loop: asyncio.AbstractEventLoop | None = None
 
@@ -49,7 +50,7 @@ def shard_for_thread(thread_id: str) -> int:
     return int(hashlib.sha256(thread_id.encode()).hexdigest(), 16) % n
 
 
-async def get_client(shard: int = 0) -> aioredis.Redis:
+async def get_client(shard: int = 0, db: int | None = None) -> aioredis.Redis:
     """Return (lazily creating) the shared async Redis client for *shard*.
 
     Falls back to ``DATABASE_REDIS_URL`` when ``DATABASE_REDIS_NODES`` is
@@ -57,6 +58,10 @@ async def get_client(shard: int = 0) -> aioredis.Redis:
 
     Args:
         shard: Zero-based shard index matching ``DATABASE_REDIS_NODES``.
+        db:    Optional Redis DB index override.  When ``None`` the DB embedded
+               in the configured URL is used.  Pass an explicit integer to
+               target a different DB on the same host (e.g. the Celery result
+               backend on DB 2 while the main app uses DB 0).
 
     Returns:
         Shared :class:`redis.asyncio.Redis` instance with connection pooling.
@@ -66,27 +71,27 @@ async def get_client(shard: int = 0) -> aioredis.Redis:
     except RuntimeError:
         current_loop_id = 0
 
-    if shard in _clients:
-        client, stored_loop_id = _clients[shard]
+    cache_key = (shard, db)
+    if cache_key in _clients:
+        client, stored_loop_id = _clients[cache_key]
         if stored_loop_id == current_loop_id:
             return client
-        del _clients[shard]
+        del _clients[cache_key]
 
     async with _get_lock():
-        if shard in _clients:
-            client, stored_loop_id = _clients[shard]
+        if cache_key in _clients:
+            client, stored_loop_id = _clients[cache_key]
             if stored_loop_id == current_loop_id:
                 return client
-            del _clients[shard]
+            del _clients[cache_key]
         settings = get_settings()
         nodes = settings.DATABASE_REDIS_NODES
         url = nodes[shard] if nodes and shard < len(nodes) else settings.DATABASE_REDIS_URL
-        client = aioredis.from_url(
-            url,
-            decode_responses=True,
-            socket_connect_timeout=settings.DB_CONNECT_TIMEOUT_SECONDS,
-        )
-        _clients[shard] = (client, current_loop_id)
+        extra: dict = {"decode_responses": True, "socket_connect_timeout": settings.DB_CONNECT_TIMEOUT_SECONDS}
+        if db is not None:
+            extra["db"] = db
+        client = aioredis.from_url(url, **extra)
+        _clients[cache_key] = (client, current_loop_id)
         return client
 
 

@@ -8,7 +8,7 @@ DROP TYPE IF EXISTS fin_agents.work_status CASCADE;
 CREATE TYPE fin_agents.work_status AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled', 'wrong');
 
 DROP TYPE IF EXISTS fin_agents.node_types CASCADE;
-CREATE TYPE fin_agents.node_types AS ENUM ('Typical', 'Reference', 'Subgraph');
+CREATE TYPE fin_agents.node_types AS ENUM ('Workflow', 'Reference', 'Subgraph');
 
 
 CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
@@ -30,12 +30,12 @@ CREATE INDEX IF NOT EXISTS fin_agents_user_queries_created_at_idx ON fin_agents.
 
 
 
--- Dedup guard — same-second resubmission guard.
+-- Dedup guard — same-minute resubmission guard.
 -- Blocks the same user from resubmitting the identical query within the same
--- calendar second, even after a previous attempt completed or failed.
+-- calendar minute, even after a previous attempt completed or failed.
 -- Uses an immutable expression so it works as a unique index predicate.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_queries_time_guard
-    ON fin_agents.user_queries (user_id, md5(query), date_trunc('second', created_at AT TIME ZONE 'UTC'));
+    ON fin_agents.user_queries (user_id, md5(query), date_trunc('minute', created_at AT TIME ZONE 'UTC'));
 
 CREATE TABLE IF NOT EXISTS fin_agents.checkpoints (
     thread_id TEXT NOT NULL,
@@ -81,7 +81,7 @@ CREATE INDEX IF NOT EXISTS checkpoint_writes_thread_id_idx ON fin_agents.checkpo
 CREATE TABLE IF NOT EXISTS fin_agents.nodes (
     node_id          TEXT NOT NULL PRIMARY KEY,
     thread_id TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
-    type             fin_agents.node_types NOT NULL DEFAULT 'Typical',
+    type             fin_agents.node_types NOT NULL DEFAULT 'Workflow',
     -- Self-referencing FK: set for inner subgraph nodes whose parent is an outer
     -- subgraph node.  NULL for top-level graph nodes.
     parent_node_id  TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE CASCADE,

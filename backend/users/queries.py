@@ -296,6 +296,15 @@ async def submit_query(request: QueryRequest, user: Any) -> QueryResponse:
             detail={"code": API_QUERY_DUPLICATE, "message": API_ERRORS[API_QUERY_DUPLICATE]},
         )
 
+    # Set viewer flags BEFORE dispatching the graph run so that stream_task's
+    # has_thread_viewer / has_app_viewer checks always see the flags even when
+    # the Celery worker starts executing before this coroutine resumes.
+    # Race window without this ordering: dispatch → Celery runs stream_task →
+    # has_thread_viewer returns False → viewers_present=False → 0 tokens streamed.
+    from backend.db.redis.session.thread_user_store import set_thread_user
+    from backend.db.redis.session.viewer_store import set_viewer
+    await set_thread_user(thread_id, str(user.id))
+    await set_viewer(str(user.id), thread_id)
     # Dispatch graph run directly on this main thread's asyncio event loop.
     from backend.main_thread import dispatch_graph_run
     await dispatch_graph_run(thread_id, request.query)

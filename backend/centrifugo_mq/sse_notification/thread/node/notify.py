@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any
 
-from backend.centrifugo_mq.client import publish_node_event, publish_thread_event
+from backend.centrifugo_mq.client import publish_node_event, publish_thread_event, has_app_viewers, has_thread_viewers
 from backend.centrifugo_mq.errors import CENTRIFUGO_SSE_NACK
 from backend.db.redis.session.notify_ack_store import wait_notify_ack
 
@@ -43,9 +43,17 @@ async def notify(
     Returns:
         ``True`` if the frontend ACKed; ``False`` on explicit NACK or exhaustion.
     """
+    if not await has_app_viewers(thread_id):
+        return True
+
+    viewers_present = await has_thread_viewers(thread_id)
     nonce = uuid.uuid4().hex[:8]
     ack_key = f"{dedup_key or f'node:{node_id}:{event}'}:{nonce}"
     published_payload = {"event": event, "thread_id": thread_id, "node_id": node_id, "ack_key": ack_key, **payload}
+
+    if not viewers_present:
+        await publish_node_event(thread_id, published_payload)
+        return True
 
     t0_total = time.monotonic()
     for attempt in range(max_retries):

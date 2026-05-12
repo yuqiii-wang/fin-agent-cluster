@@ -24,6 +24,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 * In langgraph, horizontally early/before and later/after means within the same version the nodes are position in the close to root node (early/before) or close to leaf nodes (later/after); vertically early/before and later/after means across versions, the earlier version is early/before and the later version is later/after.
 * Do NOT use test/mock names if the code is for more generic use.
 * Config setup can be found from docker_compose.yml and backend/config.py, do not hardcode any config in the code, but to add in config files and read from config in the code.
+* study feasibility and complexity and maintainability, if good then start implementation, if not good, propose your answer , user confirmed then continue implementation.
 
 ### Backend and Frontend Communications
 

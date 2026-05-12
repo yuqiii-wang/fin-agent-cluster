@@ -91,7 +91,7 @@ class NodeExecutionInfo(BaseModel):
     thread_id: str
     node_name: str
     status: str
-    type: str = "Typical"
+    type: str = "Workflow"
     parent_node_id: Optional[str] = None
     parallel_group: Optional[str] = None
     input: Optional[dict[str, Any]] = None

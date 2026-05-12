@@ -38,6 +38,12 @@ export interface StreamViewerProps {
   threadId?: string;
   /** Called once when the stream finishes (either path). */
   onStreamEnd?: () => void;
+  /**
+   * When provided the completed output area becomes clickable: clicking it
+   * calls this callback with a combined thinking + answer markdown string,
+   * overwriting whatever is currently shown in the parent DataViewer panel.
+   */
+  onViewData?: (label: string, data: unknown) => void;
   maxHeight?: number;
   style?: React.CSSProperties;
 }
@@ -48,6 +54,7 @@ const StreamViewer: React.FC<StreamViewerProps> = ({
   task,
   threadId,
   onStreamEnd,
+  onViewData,
   maxHeight = 320,
   style,
 }) => {
@@ -136,6 +143,16 @@ const StreamViewer: React.FC<StreamViewerProps> = ({
 
   // Completed stream — read thinking from task.output (backend-extracted).
   const thinking = task?.output?.thinking as string | undefined;
+  const answer = task?.output?.answer as string | undefined;
+
+  const handleOutputClick = onViewData
+    ? () => {
+        const parts: string[] = [];
+        if (thinking) parts.push(`### Thinking\n\n${thinking}`);
+        if (answer) parts.push(`### Answer\n\n${answer}`);
+        onViewData(`${task?.task_name ?? 'stream'} · Output`, parts.join('\n\n---\n\n') || '(no output)');
+      }
+    : undefined;
 
   const thinkItems: CollapseProps['items'] | undefined = thinking
     ? [
@@ -159,7 +176,11 @@ const StreamViewer: React.FC<StreamViewerProps> = ({
     : undefined;
 
   return (
-    <div style={style}>
+    <div
+      style={{ ...style, cursor: handleOutputClick ? 'pointer' : undefined }}
+      onClick={handleOutputClick}
+      title={handleOutputClick ? 'Click to view full output' : undefined}
+    >
       {thinkItems ? (
         <Collapse ghost size="small" items={thinkItems} />
       ) : (

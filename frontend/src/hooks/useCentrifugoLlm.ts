@@ -10,22 +10,29 @@
 import { useEffect, useRef } from 'react';
 import { Centrifuge, Subscription } from 'centrifuge';
 import type { SseInfo } from '../types';
+import { useLatestRef } from './refUtils';
+import { createLlmClientBundle } from '../api/centrifugoLlmClient';
 
 interface Options {
   llmInfo: SseInfo | null;
   onToken: (taskId: string, token: string, seq: number) => void;
   /** Set to true once the thread reaches a terminal state. */
   done: boolean;
+  /**
+   * When false the hook defers the MQ connection until the backend
+   * stream_start handshake is confirmed.  Defaults to true (connect
+   * immediately, e.g. when recovering a history thread).
+   */
+  enabled?: boolean;
 }
 
-export function useCentrifugoLlm({ llmInfo, onToken, done }: Options): void {
+export function useCentrifugoLlm({ llmInfo, onToken, done, enabled = true }: Options): void {
   const cfRef = useRef<Centrifuge | null>(null);
   const subRef = useRef<Subscription | null>(null);
-  const onTokenRef = useRef(onToken);
-  onTokenRef.current = onToken;
+  const onTokenRef = useLatestRef(onToken);
 
   useEffect(() => {
-    if (!llmInfo || done) return;
+    if (!llmInfo || done || !enabled) return;
 
     // Same deferred-microtask pattern as useCentrifugoSse: prevents React
     // StrictMode from opening and immediately closing the WebSocket during
@@ -35,13 +42,7 @@ export function useCentrifugoLlm({ llmInfo, onToken, done }: Options): void {
     Promise.resolve().then(() => {
       if (cancelled) return;
 
-      const cf = new Centrifuge(llmInfo.ws_url, {
-        token: llmInfo.connection_token,
-      });
-
-      const sub = cf.newSubscription(llmInfo.channel, {
-        token: llmInfo.subscription_token,
-      });
+      const { cf, sub } = createLlmClientBundle(llmInfo);
 
       // Store refs before connecting so cleanup can reach them.
       cfRef.current = cf;
@@ -73,5 +74,5 @@ export function useCentrifugoLlm({ llmInfo, onToken, done }: Options): void {
       cfRef.current = null;
       subRef.current = null;
     };
-  }, [llmInfo, done]);
+  }, [llmInfo, done, enabled]);
 }

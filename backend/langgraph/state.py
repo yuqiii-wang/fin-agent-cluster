@@ -36,7 +36,6 @@ class GraphState(TypedDict, total=False):
     thread_id: str
     user_id: str
     query: str
-    test_config: Optional[dict[str, Any]]  # For internal testing purposes; ignored in production.
 
     # ── query_node output ─────────────────────────────────────────────
     # Serialised AnalyzeQueryOutput: {"intent": str, "symbols": list[str], "filters": dict}

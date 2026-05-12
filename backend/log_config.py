@@ -40,6 +40,7 @@ import json
 import logging
 import logging.config
 import logging.handlers
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -215,6 +216,26 @@ class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
 
 
 # ---------------------------------------------------------------------------
+# Per-instance port injection
+# ---------------------------------------------------------------------------
+
+
+class ServerPortFilter(logging.Filter):
+    """Inject the listening port of this uvicorn instance into every log record.
+
+    Reads ``FASTAPI_PORT`` from the environment at emit time so the correct
+    value is used even when :func:`configure_logging` is called before the
+    env var is set (e.g. during module import before ``run.py`` sets it).
+    Falls back to ``"?"`` if the variable is absent (e.g. in tests or direct
+    ``uvicorn`` invocations without ``run.py``).
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
+        record.server_port = os.environ.get("FASTAPI_PORT", "?")
+        return True
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -284,9 +305,11 @@ def get_logging_config() -> dict[str, Any]:
                 "()": "backend.log_config.JsonFileFormatter",
             },
             # Uvicorn's own access formatter — preserves coloured status codes.
+            # [%(server_port)s] is injected by ServerPortFilter (added to uvicorn_access_h)
+            # so each line shows which FastAPI instance handled the request.
             "uvicorn_access": {
                 "()": "uvicorn.logging.AccessFormatter",
-                "fmt": "%(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+                "fmt": "%(levelprefix)s [%(server_port)s] %(client_addr)s - \"%(request_line)s\" %(status_code)s",
             },
             "uvicorn_default": {
                 "()": "uvicorn.logging.DefaultFormatter",
@@ -297,9 +320,11 @@ def get_logging_config() -> dict[str, Any]:
 
         # ── Filters ────────────────────────────────────────────────────────
         "filters": {
-
             "health_check_throttle": {
                 "()": "backend.api.log_filters.HealthCheckThrottleFilter",
+            },
+            "server_port_inject": {
+                "()": "backend.log_config.ServerPortFilter",
             },
         },
 
@@ -309,21 +334,21 @@ def get_logging_config() -> dict[str, Any]:
                 "class": "logging.StreamHandler",
                 "formatter": "console",
                 "stream": "ext://sys.stdout",
-                "level": "DEBUG",
+                "level": "INFO",
             },
             "app_file": {
                 **_file("app.log"),
                 "level": "WARNING",  # catch-all for unexpected warnings
             },
-            "api_file":                {**_file("api.log"),                "level": "DEBUG"},
-            "centrifugo_file":          {**_file("centrifugo.log"),          "level": "DEBUG"},
-            "db_file":                 {**_file("db.log"),                 "level": "DEBUG"},
-            "graph_file":              {**_file("graph.log"),              "level": "DEBUG"},
-            "llm_file":                {**_file("llm.log"),                "level": "DEBUG"},
-            "resources_file":          {**_file("resources.log"),          "level": "DEBUG"},
-            "sse_notifications_file":  {**_file("sse_notifications.log"),  "level": "DEBUG"},
-            "streaming_file":          {**_file("streaming.log"),          "level": "DEBUG"},
-            "users_file":              {**_file("users.log"),              "level": "DEBUG"},
+            "api_file":                {**_file("api.log"),                "level": "INFO"},
+            "centrifugo_file":          {**_file("centrifugo.log"),          "level": "INFO"},
+            "db_file":                 {**_file("db.log"),                 "level": "INFO"},
+            "graph_file":              {**_file("graph.log"),              "level": "INFO"},
+            "llm_file":                {**_file("llm.log"),                "level": "INFO"},
+            "resources_file":          {**_file("resources.log"),          "level": "INFO"},
+            "sse_notifications_file":  {**_file("sse_notifications.log"),  "level": "INFO"},
+            "streaming_file":          {**_file("streaming.log"),          "level": "INFO"},
+            "users_file":              {**_file("users.log"),              "level": "INFO"},
             # Uvicorn-specific handlers (required by uvicorn internals)
             "uvicorn_default_h": {
                 "class": "logging.StreamHandler",
@@ -336,13 +361,13 @@ def get_logging_config() -> dict[str, Any]:
                 "class": "logging.StreamHandler",
                 "formatter": "console",
                 "stream": "ext://sys.stdout",
-                "level": "DEBUG",
+                "level": "INFO",
             },
             "uvicorn_access_h": {
                 "class": "logging.StreamHandler",
                 "formatter": "uvicorn_access",
                 "stream": "ext://sys.stdout",
-                "filters": ["health_check_throttle"],
+                "filters": ["health_check_throttle", "server_port_inject"],
             },
         },
 
@@ -351,12 +376,12 @@ def get_logging_config() -> dict[str, Any]:
             # ── Application component loggers ──────────────────────────────
             "backend.api": {
                 "handlers": ["console", "api_file", "app_file"],
-                "level": "DEBUG",
+                "level": "INFO",
                 "propagate": False,
             },
             "backend.centrifugo_mq": {
                 "handlers": ["console", "centrifugo_file", "app_file"],
-                "level": "DEBUG",
+                "level": "INFO",
                 "propagate": False,
             },
             "backend.db.postgres": {
@@ -365,26 +390,23 @@ def get_logging_config() -> dict[str, Any]:
                 "propagate": False,
             },
             "backend.db.redis": {
-                # Promoted to DEBUG to trace Redis publish/subscribe events.
                 "handlers": ["console", "db_file", "app_file"],
-                "level": "DEBUG",
+                "level": "INFO",
                 "propagate": False,
             },
             "backend.main_thread": {
                 "handlers": ["console", "graph_file", "app_file"],
-                "level": "DEBUG",
+                "level": "INFO",
                 "propagate": False,
             },
             "backend.langgraph": {
                 "handlers": ["console", "graph_file", "app_file"],
-                "level": "DEBUG",
+                "level": "INFO",
                 "propagate": False,
             },
             "backend.sse_notifications": {
-                # Critical notification path — every task lifecycle event and
-                # phase transition that drives the frontend status display.
                 "handlers": ["console", "sse_notifications_file", "app_file"],
-                "level": "DEBUG",
+                "level": "INFO",
                 "propagate": False,
             },
             "backend.llm": {
@@ -399,7 +421,7 @@ def get_logging_config() -> dict[str, Any]:
             },
             "backend.celery_task": {
                 "handlers": ["console", "streaming_file", "app_file"],
-                "level": "DEBUG",
+                "level": "INFO",
                 "propagate": False,
             },
             "backend.celery_task.workers": {
@@ -407,7 +429,7 @@ def get_logging_config() -> dict[str, Any]:
                 # task logs directly to streaming.log
                 # without relying on propagation through backend.celery_task.
                 "handlers": ["console", "streaming_file", "app_file"],
-                "level": "DEBUG",
+                "level": "INFO",
                 "propagate": False,
             },
             "backend.users": {

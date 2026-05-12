@@ -45,11 +45,6 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, liveStream, onViewData, o
   const isRunning = task.status === 'running';
   const isLive = isStreaming && isRunning;
 
-  // For completed streaming tasks: answer goes to the DataViewer panel.
-  const completedAnswer = !isLive && isStreaming
-    ? (task.output?.answer as string | undefined)
-    : undefined;
-
   return (
     <div style={{ padding: '0 4px' }}>
       <div
@@ -86,11 +81,18 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, liveStream, onViewData, o
             View Input
           </Button>
         )}
-        {/* For completed streaming tasks: "View Output" sends answer text to the panel. */}
-        {!isLive && isStreaming && completedAnswer && (
+        {/* For completed streaming tasks: "View Output" sends thinking + answer to the panel. */}
+        {!isLive && isStreaming && (task.output?.answer || task.output?.thinking) && (
           <Button
             size="small"
-            onClick={() => onViewData?.(`${task.task_name} · Output`, completedAnswer)}
+            onClick={() => {
+              const thinking = task.output?.thinking as string | undefined;
+              const answer = task.output?.answer as string | undefined;
+              const parts: string[] = [];
+              if (thinking) parts.push(`### Thinking\n\n${thinking}`);
+              if (answer) parts.push(`### Answer\n\n${answer}`);
+              onViewData?.(`${task.task_name} · Output`, parts.join('\n\n---\n\n') || '(no output)');
+            }}
           >
             View Output
           </Button>
@@ -106,7 +108,7 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, liveStream, onViewData, o
         )}
       </Space>
 
-      {/* Streaming output: live stream inline; on completion, thinking stays inline. */}
+      {/* Streaming output: live stream inline; on completion, thinking stays inline (clickable). */}
       {isStreaming && (
         <DataViewer
           mode="stream"
@@ -115,6 +117,7 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, liveStream, onViewData, o
           task={task}
           threadId={threadId}
           onStreamEnd={() => setStreamingDone(true)}
+          onViewData={!isLive ? onViewData : undefined}
           maxHeight={320}
         />
       )}

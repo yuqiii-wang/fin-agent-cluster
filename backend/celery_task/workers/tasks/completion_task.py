@@ -5,10 +5,11 @@ The LangGraph ``@task`` dispatches work here via
 The LangGraph thread polls / blocks on the AsyncResult until the worker
 returns, then resumes the graph with the result.
 
-Handlers live in ``backend.langgraph.tasks`` and are registered in
-``backend.langgraph.tasks.HANDLERS``.  To add a new handler, create a module
-under ``backend/langgraph/tasks/`` and add an entry to that registry — no
-changes are needed here.
+Handlers live in ``backend.langgraph.nodes`` (assembled from each node's
+``tasks`` sub-package).  To add a new handler, create a task module under
+``backend/langgraph/nodes/<node_name>/tasks/`` and add the ``NodeTask``
+instance to the node's ``tasks/__init__.py`` HANDLERS slice — no changes
+are needed here.
 
 Task signature
 --------------
@@ -36,7 +37,7 @@ import time
 from typing import Any
 
 from backend.celery_task.celery_engine import celery_engine
-from backend.langgraph.tasks import HANDLERS
+from backend.langgraph.nodes import HANDLERS
 
 logger = logging.getLogger(__name__)
 

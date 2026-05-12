@@ -52,6 +52,35 @@ export const TERMINAL_WORK_STATUSES = new Set([
 ] as const);
 
 // ---------------------------------------------------------------------------
+// Derived types
+// ---------------------------------------------------------------------------
+
+/** Thread-level status type, including UI-only 'pending' initial state. */
+export type QueryStatusValue =
+  | 'pending'       // UI-only initial — not emitted by backend
+  | 'connecting'
+  | 'received'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+/**
+ * Terminal thread status values only — used by the SSE drain mechanism
+ * (terminalStatusRef) in useConcurrencyThread.
+ */
+export type TerminalQueryStatus = 'completed' | 'failed' | 'cancelled';
+
+/** Node/task-level work status type. */
+export type WorkStatusValue =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'wrong';
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

@@ -153,6 +153,13 @@ class NodeSQL:
         LIMIT 1
     """
 
+    GET_THREAD_BY_NODE_ID = """
+        SELECT thread_id
+        FROM fin_agents.nodes
+        WHERE node_id = %s
+        LIMIT 1
+    """
+
 
 class TaskSQL:
     """Queries against ``fin_agents.tasks``."""
@@ -278,4 +285,11 @@ class TaskSQL:
         WHERE thread_id = %s
           AND node_name = %s
         ORDER BY created_at
+    """
+
+    GET_THREAD_BY_TASK_ID = """
+        SELECT thread_id
+        FROM fin_agents.tasks
+        WHERE task_id = %s
+        LIMIT 1
     """

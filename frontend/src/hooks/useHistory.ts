@@ -17,6 +17,8 @@ interface UseHistoryResult {
   prepend: (entry: ThreadSummary) => void;
   /** Re-fetch from the backend (e.g., after a status change). */
   reload: () => Promise<void>;
+  /** Patch fields on a single history entry in-place (no network round-trip). */
+  updateEntry: (threadId: string, changes: Partial<ThreadSummary>) => void;
 }
 
 export function useHistory(userId: string | undefined): UseHistoryResult {
@@ -45,5 +47,11 @@ export function useHistory(userId: string | undefined): UseHistoryResult {
     });
   }, []);
 
-  return { history, prepend, reload };
+  const updateEntry = useCallback((threadId: string, changes: Partial<ThreadSummary>) => {
+    setHistory((prev) =>
+      prev.map((t) => (t.thread_id === threadId ? { ...t, ...changes } : t)),
+    );
+  }, []);
+
+  return { history, prepend, reload, updateEntry };
 }

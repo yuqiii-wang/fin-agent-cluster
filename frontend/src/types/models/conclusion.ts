@@ -10,6 +10,7 @@ export interface StreamConclusionInput {
 
 export interface StreamConclusionOutput {
   answer: string;
+  thinking?: string | null;
   total_tokens: number;
   latency_ms: number;
 }

@@ -272,6 +272,129 @@ async def publish_stream_event(thread_id: str, payload: dict[str, Any]) -> None:
     await _publish_to_sse_channel(thread_id, payload)
 
 
+async def has_app_viewers(thread_id: str) -> bool:
+    """Return ``True`` if the user who owns *thread_id* still has the app open.
+
+    Checks the explicit Redis viewer flag (``fin:user:app_viewer:{user_id}``)
+    set at query submission time first.  Falls back to Centrifugo
+    ``presence_stats`` on the ``user:{user_id}`` channel of the centrifugo-sse
+    shard that owns that user.
+
+    The Redis-first strategy eliminates the WebSocket timing race: the flag is
+    set synchronously before the graph even starts, whereas the Centrifugo
+    presence subscription may not yet be established when ``stream_task`` checks.
+
+    Differs from :func:`has_thread_viewers`:
+
+    * ``has_app_viewers`` — is the user's browser open at all?  ``False`` means
+      the browser is closed; skip all SSE publishing and LLM streaming.
+    * ``has_thread_viewers`` — is the user actively viewing *this* thread?
+      ``False`` means they are on a different thread; still publish SSE (stored
+      in Centrifugo history for recovery) but skip LLM token streaming.
+
+    On any error defaults to ``True`` so events are never silently dropped.
+
+    Args:
+        thread_id: LangGraph thread UUID (used to look up the owning user).
+
+    Returns:
+        ``True`` if at least one client is viewing the app;
+        ``False`` if the user has no open browser session.
+    """
+    from backend.db.redis.session.thread_user_store import get_user_id_for_thread
+    from backend.db.redis.session.viewer_store import has_app_viewer
+
+    user_id = await get_user_id_for_thread(thread_id)
+    if user_id is None:
+        return True  # Cannot determine owner — safe default.
+
+    # Primary: explicit Redis flag set at query submission or viewer registration.
+    if await has_app_viewer(user_id):
+        return True
+
+    # Secondary fallback: Centrifugo presence stats (covers reconnects / tab
+    # reopens where the Redis flag may have been set before a new session).
+    settings = get_settings()
+    if not settings.CENTRIFUGO_SSE_NODES:
+        return True
+    shard = get_sse_shard_index(user_id)
+    try:
+        base = settings.CENTRIFUGO_SSE_NODES[shard]
+        client = _get_sse_http_client(shard)
+        resp = await client.post(
+            f"{base}/api",
+            headers={
+                "Authorization": f"apikey {settings.CENTRIFUGO_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "method": "presence_stats",
+                "params": {"channel": f"user:{user_id}"},
+            },
+        )
+        if resp.status_code >= 400:
+            return True
+        data = resp.json()
+        num_clients: int = data.get("result", {}).get("num_clients", 0)
+        return num_clients > 0
+    except Exception:  # noqa: BLE001
+        return True
+
+
+async def has_thread_viewers(thread_id: str) -> bool:
+    """Return ``True`` if any frontend client is actively viewing *thread_id*.
+
+    Checks the explicit Redis viewer flag (``fin:thread:viewer:{thread_id}``)
+    set at query submission time first.  Falls back to Centrifugo
+    ``presence_stats`` on the ``thread:{thread_id}`` channel of centrifugo-sse.
+
+    The Redis-first strategy eliminates the WebSocket timing race: the flag is
+    set synchronously before the graph even starts, whereas the Centrifugo
+    ``thread:`` subscription may not be established when ``stream_task`` checks.
+
+    On any error the function defaults to ``True`` so SSE notifications are
+    not silently swallowed when the check itself fails.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+
+    Returns:
+        ``True`` if at least one client is subscribed; ``False`` otherwise.
+    """
+    from backend.db.redis.session.viewer_store import has_thread_viewer
+
+    # Primary: explicit Redis flag.
+    if await has_thread_viewer(thread_id):
+        return True
+
+    # Secondary fallback: Centrifugo presence stats.
+    settings = get_settings()
+    if not settings.CENTRIFUGO_SSE_NODES:
+        return True  # Safe default — assume viewers present.
+    shard = get_sse_shard_index(thread_id)
+    try:
+        base = settings.CENTRIFUGO_SSE_NODES[shard]
+        client = _get_sse_http_client(shard)
+        resp = await client.post(
+            f"{base}/api",
+            headers={
+                "Authorization": f"apikey {settings.CENTRIFUGO_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "method": "presence_stats",
+                "params": {"channel": f"thread:{thread_id}"},
+            },
+        )
+        if resp.status_code >= 400:
+            return True  # Safe default on API error.
+        data = resp.json()
+        num_clients: int = data.get("result", {}).get("num_clients", 0)
+        return num_clients > 0
+    except Exception:  # noqa: BLE001
+        return True  # Safe default on network error.
+
+
 __all__ = [
     "get_shard_index",
     "get_sse_shard_index",
@@ -279,4 +402,6 @@ __all__ = [
     "publish_node_event",
     "publish_task_event",
     "publish_stream_event",
+    "has_app_viewers",
+    "has_thread_viewers",
 ]

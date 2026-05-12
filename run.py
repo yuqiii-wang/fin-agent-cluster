@@ -96,6 +96,7 @@ def _start_uvicorn_instances(
         instance_env = os.environ.copy()
         if extra_env_per_instance and i < len(extra_env_per_instance):
             instance_env.update(extra_env_per_instance[i])
+        instance_env["FASTAPI_PORT"] = str(port)
         cmd = [
             sys.executable, "-m", "uvicorn",
             app_module,
@@ -375,6 +376,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     settings = get_settings()
+    print("[run.py] Settings:")
+    for _k, _v in settings.model_dump().items():
+        print(f"  {_k} = {_v}")
     proxy_to_use = None if args.no_proxy else settings.HTTP_PROXY
     _configure_proxy(proxy_to_use)
 

@@ -71,6 +71,14 @@ setup_redis_volumes() {
     for vol in redis_0_data redis_1_data; do
         local full="${project}_${vol}"
         if docker volume inspect "$full" >/dev/null 2>&1; then
+            # Stop and remove any containers using this volume before removing it
+            local containers
+            containers=$(docker ps -a --filter "volume=${full}" --format "{{.ID}}" 2>/dev/null)
+            if [[ -n "$containers" ]]; then
+                echo "[redis_volumes] Stopping containers using $full"
+                echo "$containers" | xargs docker stop 2>/dev/null || true
+                echo "$containers" | xargs docker rm 2>/dev/null || true
+            fi
             echo "[redis_volumes] Removing volume $full"
             docker volume rm "$full"
         else

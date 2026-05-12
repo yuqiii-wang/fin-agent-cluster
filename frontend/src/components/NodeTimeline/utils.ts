@@ -71,8 +71,11 @@ export function buildEffectiveSpans(
 
 export function formatMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${(ms / 60_000).toFixed(1)}m`;
+  const totalS = Math.round(ms / 1000);
+  if (totalS < 300) return `${(ms / 1000).toFixed(1)}s`;
+  const mins = Math.floor(totalS / 60);
+  const secs = totalS % 60;
+  return secs > 0 ? `${mins}min ${secs}s` : `${mins}min`;
 }
 
 /**

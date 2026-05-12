@@ -9,6 +9,8 @@
 import { useEffect, useRef } from 'react';
 import { Centrifuge, Subscription } from 'centrifuge';
 import type { SseEvent, SseInfo } from '../types';
+import { useLatestRef } from './refUtils';
+import { createSseClientBundle } from '../api/centrifugoSseClient';
 
 interface Options {
   sseInfo: SseInfo | null;
@@ -20,8 +22,7 @@ interface Options {
 export function useCentrifugoSse({ sseInfo, onEvent, done }: Options): void {
   const cfRef = useRef<Centrifuge | null>(null);
   const subRef = useRef<Subscription | null>(null);
-  const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
+  const onEventRef = useLatestRef(onEvent);
   // Tracks ack_keys for which the backend has already confirmed receipt.
   // Once an ack_key is confirmed we must not send another ACK for retried
   // copies of the same event, since the backend has already stopped listening.
@@ -44,16 +45,7 @@ export function useCentrifugoSse({ sseInfo, onEvent, done }: Options): void {
     Promise.resolve().then(() => {
       if (cancelled) return;
 
-      const cf = new Centrifuge(sseInfo.ws_url, {
-        token: sseInfo.connection_token,
-      });
-
-      const sub = cf.newSubscription(sseInfo.channel, {
-        token: sseInfo.subscription_token,
-        // Request history recovery from the beginning of the current epoch so
-        // messages published before this subscription connected are replayed.
-        since: { offset: 0, epoch: '' },
-      });
+      const { cf, sub } = createSseClientBundle(sseInfo);
 
       // Store refs before connecting so cleanup can reach them if it fires
       // after this microtask but before the connection is torn down.

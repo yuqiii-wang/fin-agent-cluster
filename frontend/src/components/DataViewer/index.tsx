@@ -62,6 +62,7 @@ const DataViewer: React.FC<DataViewerProps> = ({
       task={task}
       threadId={threadId}
       onStreamEnd={onStreamEnd}
+      onViewData={_onViewData}
       maxHeight={maxHeight}
       style={style}
     />
