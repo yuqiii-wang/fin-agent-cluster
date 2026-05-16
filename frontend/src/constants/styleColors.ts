@@ -50,6 +50,10 @@ export const COLOR_GRAPH_SELECTED_GLOW  = 'rgba(255,255,255,0.8)';
 // ── Node subgraph top-border indicator ────────────────────────────────────
 export const COLOR_SUBGRAPH_INDICATOR_DIM = '#555555';
 
+// ── Semantic status ─────────────────────────────────────────────────────
+export const COLOR_DANGER               = '#ff4d4f'; // Error / danger border/highlight
+export const COLOR_STATUS_DARK_FALLBACK = '#2d2d2d'; // Fallback dark bg for unknown status
+
 // ── Timeline overlap highlight ────────────────────────────────────────────
 export const COLOR_OVERLAP_FILL   = 'rgba(255, 220, 80, 0.18)';
 export const COLOR_OVERLAP_BORDER = 'rgba(255, 220, 80, 0.45)';

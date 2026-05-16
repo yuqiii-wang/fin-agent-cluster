@@ -3,7 +3,7 @@
 Hierarchy
 ---------
 Thread (thread_id)
-  └── Node  (NodeContext: thread_id + node_id + node_name)
+  └── Node  (NodeContext: thread_id + node_id + node_name + version)
         └── Task  (TaskContext extends NodeContext: + task_id + task_name)
               └── TaskInput[T] / TaskOutput[T]  (ctx + typed biz content)
 
@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
@@ -38,9 +38,20 @@ T = TypeVar("T")
 class NodeContext(BaseModel):
     """Thread → Node identity.  Passed to all lifecycle calls and run_task()."""
 
+    # Allow mutation so BaseNode.__call__ can accumulate task_ids after tasks start.
+    model_config = ConfigDict(frozen=False)
+
     thread_id: str
     node_id: str
     node_name: str
+    # Fork generation counter that was active when this node was dispatched.
+    # Used to compute the UUID5 node_id and to set version in the DB row.
+    version: int = 1
+    # Predecessor node IDs in the current branch (for topology recording).
+    prev_node_ids: list[str] = Field(default_factory=list)
+    # Task IDs accumulated during this node's execution.  Mutable so that
+    # run_task() can append before delegating to the @task function.
+    task_ids: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -49,6 +60,34 @@ class TaskContext(NodeContext):
 
     task_id: str
     task_name: str
+
+
+class TaskInput(BaseModel, Generic[T]):
+    """Typed input envelope for a @task.
+
+    Attributes:
+        ctx: Full thread → node → task identity chain.
+        content: Biz-specific input; type is fixed by the concrete subclass.
+    """
+
+    ctx: TaskContext
+    content: T
+
+
+class TaskOutput(BaseModel, Generic[T]):
+    """Typed output envelope from a @task.  Mirrors TaskInput for traceability.
+
+    Attributes:
+        ctx: Same TaskContext that was passed in — carries origin identity.
+        content: Biz-specific result; type is fixed by the concrete subclass.
+    """
+
+    ctx: TaskContext
+    content: T
+
+
+__all__ = ["NodeContext", "TaskContext", "TaskInput", "TaskOutput"]
+
 
 
 class TaskInput(BaseModel, Generic[T]):

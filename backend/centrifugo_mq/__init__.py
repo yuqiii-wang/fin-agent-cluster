@@ -45,7 +45,7 @@ from backend.centrifugo_mq.client import (
     publish_task_event,
     publish_thread_event,
 )
-from backend.centrifugo_mq.rpc_proxy import handle_ack_rpc
+from backend.centrifugo_mq.publish_proxy import handle_ack_publish
 
 __all__ = [
     "publish_thread_event",
@@ -56,5 +56,5 @@ __all__ = [
     "make_subscription_token",
     "get_shard_index",
     "get_sse_shard_index",
-    "handle_ack_rpc",
+    "handle_ack_publish",
 ]

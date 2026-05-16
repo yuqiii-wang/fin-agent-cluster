@@ -22,11 +22,19 @@ class HealthCheckThrottleFilter(logging.Filter):
     are polled frequently by load balancers and browsers.  Each matching
     record is dropped and its count accumulated.  Every 5 minutes the
     first suppressed record is replaced with a summary line.
+
+    Paths in ``_SUPPRESSED`` are dropped permanently with no summary.
     """
 
     _INTERVAL: float = 300.0  # 5 minutes
     _THROTTLED: frozenset[str] = frozenset(
         {"/docs", "/health", "/openapi.json", "/redoc", "/favicon.ico"}
+    )
+    # Paths that are always dropped — no throttle summary, no log entry.
+    # Internal Centrifugo publish-proxy callbacks are high-frequency and
+    # provide no diagnostic value in normal operation.
+    _SUPPRESSED: frozenset[str] = frozenset(
+        {"/api/v1/centrifugo/publish"}
     )
 
     def __init__(self) -> None:
@@ -54,6 +62,9 @@ class HealthCheckThrottleFilter(logging.Filter):
 
         parts = request_line.split()
         path = parts[1] if len(parts) >= 2 else ""
+
+        if path in self._SUPPRESSED:
+            return False
 
         if path not in self._THROTTLED:
             return True

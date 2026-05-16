@@ -33,27 +33,14 @@ async def init_compiled_graph() -> None:
         return
 
     from backend.db.postgres.checkpointer import ensure_setup, get_pool_checkpointer
-    from langgraph.graph import StateGraph, START, END
-    from backend.langgraph.state import GraphState
-    from backend.langgraph.nodes.query_node import query_node
-    from backend.langgraph.nodes.research_subgraph import research_subgraph
-    from backend.langgraph.nodes.conclusion_node import conclusion_node
+    from backend.langgraph.graph import build_graph_builder
 
     # Ensure checkpointer tables exist cluster-wide (Redis-locked, idempotent).
     await ensure_setup()
 
     pg_checkpointer = get_pool_checkpointer()
 
-    builder = StateGraph(GraphState)
-    builder.add_node("query_node", query_node)
-    builder.add_node("research_subgraph", research_subgraph)
-    builder.add_node("conclusion_node", conclusion_node)
-    builder.add_edge(START, "query_node")
-    builder.add_edge("query_node", "research_subgraph")
-    builder.add_edge("research_subgraph", "conclusion_node")
-    builder.add_edge("conclusion_node", END)
-
-    _compiled_graph = builder.compile(checkpointer=pg_checkpointer)
+    _compiled_graph = build_graph_builder().compile(checkpointer=pg_checkpointer)
     logger.info("[langgraph.compiled] graph compiled with pooled AsyncPostgresSaver")
 
 

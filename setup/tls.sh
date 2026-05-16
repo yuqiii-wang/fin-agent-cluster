@@ -31,14 +31,14 @@ setup_tls() {
         -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
     echo "[tls] Certificate written to $cert_file"
 
-    # If nginx-api is already running, force-recreate it so it loads the new cert.
+    # If nginx-internal is already running, force-recreate it so it loads the new cert.
     # nginx reads SSL cert/key files only at worker spawn.  The bind-mount
     # (./certs:/etc/nginx/certs:ro) ensures the container always sees the latest
     # files, but the process must be cycled to pick them up.
-    if docker compose ps --status running nginx-api 2>/dev/null | grep -q "nginx-api"; then
-        echo "[tls] nginx-api is running — restarting to load new certificate..."
-        docker compose up -d --force-recreate nginx-api
-        echo "[tls] nginx-api restarted."
+    if docker compose ps --status running nginx-internal 2>/dev/null | grep -q "nginx-internal"; then
+        echo "[tls] nginx-internal is running — restarting to load new certificate..."
+        docker compose up -d --force-recreate nginx-internal
+        echo "[tls] nginx-internal restarted."
     fi
 }
 

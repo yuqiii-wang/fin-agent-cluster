@@ -148,21 +148,11 @@ export function useConcurrencyThread({
       sub.on('publication', (ctx) => {
         const ev = ctx.data as SseEvent;
 
-        // ── ACK confirmation ─────────────────────────────────────────────
-        // Deduplicate: count only the first confirmation per unique ack_key.
-        // Without this, history-replayed ack_confirmed events AND new confirmations
-        // triggered by our RPC both increment the counter → confirmed > sent.
+        // ack_confirmed is no longer published as a channel event — confirmation
+        // is signalled by sub.publish() promise resolution.  Guard to silently
+        // ignore stale ack_confirmed events that may exist in Centrifugo history.
         if (ev.event === 'ack_confirmed') {
-          if (ev.ack_key) {
-            confirmedKeysRef.current.add(ev.ack_key);
-            if (!countedConfirmedKeysRef.current.has(ev.ack_key)) {
-              countedConfirmedKeysRef.current.add(ev.ack_key);
-              acksConfirmedRef.current += 1;
-              onUpdateRef.current(threadId, { acksConfirmed: acksConfirmedRef.current });
-            }
-          }
-          // After updating confirmed count, check if we can now close
-          // (covers the case where this is the last in-flight confirmation).
+          if (ev.ack_key) confirmedKeysRef.current.add(ev.ack_key);
           checkDrain();
           return;
         }
@@ -227,7 +217,7 @@ export function useConcurrencyThread({
             : `thread:${ev.event}:${ev.status ?? ''}`);
 
         // Deduplicate sending: history can replay the same event multiple times
-        // (backend retries with the same ack_key). Only send one RPC per key.
+        // (backend retries with the same ack_key). Only send one publish per key.
         if (confirmedKeysRef.current.has(ackKey)) return;
         if (sentAckKeysRef.current.has(ackKey)) return;
         sentAckKeysRef.current.add(ackKey);
@@ -235,24 +225,31 @@ export function useConcurrencyThread({
         acksSentRef.current += 1;
         onUpdateRef.current(threadId, { acksSent: acksSentRef.current });
 
-        cf.rpc('thread_ack', {
+        sub.publish({
+          event: 'ack',
           scope: ev.task_id ? 'task' : ev.node_id ? 'node' : 'thread',
           ack_key: ackKey,
           thread_id: threadId,
+        }).then(() => {
+          // sub.publish() resolves when Centrifugo's publish proxy returns 200,
+          // meaning the backend LPUSH already succeeded — this IS the confirmation.
+          confirmedKeysRef.current.add(ackKey);
+          if (!countedConfirmedKeysRef.current.has(ackKey)) {
+            countedConfirmedKeysRef.current.add(ackKey);
+            acksConfirmedRef.current += 1;
+            onUpdateRef.current(threadId, { acksConfirmed: acksConfirmedRef.current });
+          }
+          checkDrain();
         }).catch((err) => {
-          // Suppress Centrifugo "disconnected" error (code 11) — expected on cleanup.
+          // code 11 = connection closed — expected on cleanup, not actionable.
           if (err && typeof err === 'object' && (err as { code?: number }).code === 11) return;
-          // On any other RPC failure the backend never receives the ack so
-          // ack_confirmed will never arrive.  Remove the key from sentAckKeys
-          // so the drain counter is not artificially inflated and checkDrain
-          // can still complete normally.
+          // On publish failure the backend never received the ACK.  Remove from
+          // sentAckKeys so the drain gate is not permanently blocked.
+          // NOTE: do NOT decrement acksSentRef — it is a monotonic send counter.
           sentAckKeysRef.current.delete(ackKey);
-          acksSentRef.current = sentAckKeysRef.current.size;
-          onUpdateRef.current(threadId, { acksSent: acksSentRef.current });
           checkDrain();
         });
-        // After registering this ACK, check drain in case this is a terminal event
-        // and the confirmation was already received (history replay scenario).
+        // Check drain immediately: handles the terminal-event + all-confirmed fast path.
         checkDrain();
       });
 

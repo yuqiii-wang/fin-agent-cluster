@@ -3,10 +3,10 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  # Scrape nginx-api metrics via the nginx-prometheus-exporter sidecar.
+  # Scrape nginx-internal metrics via the nginx-prometheus-exporter sidecar.
   # Exposes connection counts, request rates, and upstream health.
-  - job_name: nginx-api
+  - job_name: nginx-internal
     static_configs:
       - targets:
-          - nginx-api-exporter:9113
+          - nginx-internal-exporter:9113
     metrics_path: /metrics

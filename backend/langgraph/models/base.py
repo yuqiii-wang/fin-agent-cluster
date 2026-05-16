@@ -35,6 +35,8 @@ from typing import Any, Generic, Optional, TypeVar
 
 from pydantic import BaseModel, Field
 
+from backend.langgraph.lifecycle.ids import strip_node_suffix
+
 __all__ = [
     "BaseTaskInput",
     "BaseTaskOutput",
@@ -222,7 +224,7 @@ class BaseNodeSseNotification(BaseModel, Generic[T]):
         """
         return {
             "status": self.status,
-            "node_name": self.node_name,
+            "node_name": strip_node_suffix(self.node_name),
             **_content_to_dict(self.content),
         }
 
@@ -266,6 +268,6 @@ class BaseTaskSseNotification(BaseModel, Generic[T]):
             "status": self.status,
             "task_name": self.task_name,
             "node_id": self.node_id,
-            "node_name": self.node_name,
+            "node_name": strip_node_suffix(self.node_name),
             **_content_to_dict(self.content),
         }

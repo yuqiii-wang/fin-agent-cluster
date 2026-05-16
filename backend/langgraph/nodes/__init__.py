@@ -3,7 +3,8 @@
 Exports
 -------
 Node callables (registered with LangGraph StateGraph):
-    query_node, research_subgraph, conclusion_node
+    query_node, research_subgraph, analyze_stats_node, analyze_news_node,
+    conclusion_node, apac_analyze_node, emea_analyze_node, amer_analyze_node
 
 HANDLERS registry (consumed by the Celery completion worker):
     Flat dict mapping task_name → async handler assembled from each node's
@@ -15,10 +16,28 @@ from backend.langgraph.nodes.query_node import query_node
 from backend.langgraph.nodes.query_node import HANDLERS as _QH
 from backend.langgraph.nodes.research_subgraph import research_subgraph
 from backend.langgraph.nodes.research_subgraph import HANDLERS as _RH
+from backend.langgraph.nodes.analyze_stats_node import analyze_stats_node
+from backend.langgraph.nodes.analyze_stats_node import HANDLERS as _ASH
+from backend.langgraph.nodes.analyze_news_node import analyze_news_node
+from backend.langgraph.nodes.analyze_news_node import HANDLERS as _ANH
 from backend.langgraph.nodes.conclusion_node import conclusion_node
 from backend.langgraph.nodes.conclusion_node import HANDLERS as _CH
+from backend.langgraph.nodes.regional_analyze_nodes import (
+    apac_analyze_node,
+    emea_analyze_node,
+    amer_analyze_node,
+)
+from backend.langgraph.nodes.regional_analyze_nodes import HANDLERS as _RAH
 
 # Global HANDLERS registry consumed by completion_task.run_completion.
-HANDLERS: dict = {**_QH, **_RH, **_CH}
+HANDLERS: dict = {**_QH, **_RH, **_ASH, **_ANH, **_CH, **_RAH}
 
-__all__ = ["query_node", "research_subgraph", "conclusion_node", "HANDLERS"]
+__all__ = [
+    "query_node",
+    "research_subgraph",
+    "conclusion_node",
+    "apac_analyze_node",
+    "emea_analyze_node",
+    "amer_analyze_node",
+    "HANDLERS",
+]

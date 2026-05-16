@@ -23,8 +23,10 @@ class QueryNodeOutput(BaseModel):
         intent: Classified query intent (e.g. ``"market_analysis"``).
         symbols: Equity ticker symbols extracted from the query.
         filters: Optional filter key/values (e.g. date range, interval).
+        query_time: UTC ISO 8601 timestamp captured when the query entered the graph.
     """
 
     intent: str = Field(description="Classified query intent.")
     symbols: list[str] = Field(default_factory=list, description="Extracted equity tickers.")
     filters: dict[str, Any] = Field(default_factory=dict, description="Optional query filters.")
+    query_time: str = Field(default="", description="UTC ISO 8601 timestamp when the query entered the graph.")

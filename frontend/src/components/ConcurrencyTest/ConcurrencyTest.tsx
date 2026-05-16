@@ -14,11 +14,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLatestRef } from '../../hooks/refUtils';
 import { Badge, Button, Space, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
-import { QuestionCircleOutlined } from '@ant-design/icons';
+import { QuestionCircleOutlined, StopOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { QueryResponse, SseInfo } from '../../types';
 import { isThreadTerminal, isThreadActive } from '../../constants/lifecycleStatus';
 import { STATUS_TAG_COLOR } from '../../constants/statusColors';
+import { cancelThread } from '../../api/threads';
 import { useConcurrencyThread } from './useConcurrencyThread';
 import StreamingDisplay from './StreamingDisplay';
 import type { ThreadRow } from './types';
@@ -106,6 +107,9 @@ const ConcurrencyTest: React.FC<Props> = ({ initialResults, onSelectThread, onSt
     return m;
   });
 
+  // Tracks the historical peak of the combined TPS sum across all streaming MQ threads.
+  const peakTpsSumRef = useRef(0);
+
   // streamTextRef per thread, registered by ThreadWatcher on mount.
   const streamTextRefsMap = useRef<Map<string, React.MutableRefObject<string>>>(new Map());
   const fallbackEmptyRef = useRef('');
@@ -138,30 +142,64 @@ const ConcurrencyTest: React.FC<Props> = ({ initialResults, onSelectThread, onSt
     );
   }, []);
 
+  const [cancellingAll, setCancellingAll] = useState(false);
+
+  const handleCancelAll = useCallback(async () => {
+    const active = rows.filter((r) => !isThreadTerminal(r.status));
+    if (active.length === 0) return;
+    setCancellingAll(true);
+    try {
+      await Promise.allSettled(active.map((r) => cancelThread(r.threadId)));
+    } finally {
+      setCancellingAll(false);
+    }
+  }, [rows]);
+
   // Per-second TPS ticker: recompute live TPS from token counters.
   useEffect(() => {
     const tid = setInterval(() => {
-      setRows((prev) =>
-        prev.map((r) => {
+      setRows((prev) => {
+        const updated = prev.map((r) => {
           if (r.streamStart === null || r.streamEnd !== null) return r;
           const elapsedSec = (Date.now() - r.streamStart) / 1000;
           const tps = elapsedSec > 0 ? Math.round((r.tokensReceived / elapsedSec) * 10) / 10 : 0;
           return { ...r, currentTps: tps };
-        }),
-      );
+        });
+        // Update peak combined TPS sum across all threads with active MQ streaming.
+        const currentSum = updated
+          .filter((r) => r.llmMqConnected && r.streamEnd === null && r.currentTps > 0)
+          .reduce((sum, r) => sum + r.currentTps, 0);
+        const rounded = Math.round(currentSum * 10) / 10;
+        if (rounded > peakTpsSumRef.current) peakTpsSumRef.current = rounded;
+        return updated;
+      });
     }, 1000);
     return () => clearInterval(tid);
   }, []);
 
   // ── Aggregation metrics ──────────────────────────────────────────────────
   const agg = useMemo(() => {
+    const now = Date.now();
     const streaming = rows.filter((r) => isThreadActive(r.status));
-    const peakConcurrency = rows.reduce((acc, r) => {
-      // Approximate: count threads that were ever streaming simultaneously.
-      return r.streamStart !== null ? acc + 1 : acc;
-    }, 0);
-    const tpsList = rows.filter((r) => r.currentTps > 0).map((r) => r.currentTps);
-    const peakTps = tpsList.length > 0 ? Math.max(...tpsList) : 0;
+
+    // Sweep-line over [streamStart, streamEnd] intervals to find the max
+    // number of threads that were running simultaneously at any point.
+    const events: [number, number][] = [];
+    for (const r of rows) {
+      if (r.streamStart === null) continue;
+      events.push([r.streamStart, 1]);
+      events.push([r.streamEnd ?? now, -1]);
+    }
+    // Sort by time; process ends (-1) before starts (+1) on ties so that a
+    // thread ending exactly when another starts is not counted as overlapping.
+    events.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    let _count = 0;
+    let peakConcurrency = 0;
+    for (const [, delta] of events) {
+      _count += delta;
+      if (_count > peakConcurrency) peakConcurrency = _count;
+    }
+    const peakTps = peakTpsSumRef.current;
     const latencies = rows.filter((r) => r.latencyToConclusion !== null).map((r) => r.latencyToConclusion as number);
     const maxLatency = latencies.length > 0 ? Math.max(...latencies) : null;
     const minLatency = latencies.length > 0 ? Math.min(...latencies) : null;
@@ -323,14 +361,14 @@ const ConcurrencyTest: React.FC<Props> = ({ initialResults, onSelectThread, onSt
       </Title>
 
       {/* Aggregation header */}
-      <Space size={32} style={{ marginBottom: 20, flexWrap: 'wrap' }}>
+      <Space size={32} style={{ marginBottom: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <Statistic
           title="Active / Peak Concurrency"
           value={`${agg.activeCount} / ${agg.peakConcurrency}`}
           styles={{ content: { fontSize: 20 } }}
         />
         <Statistic
-          title="Peak TPS (any thread)"
+          title="Peak TPS (thread sum)"
           value={agg.peakTps}
           suffix="tok/s"
           styles={{ content: { fontSize: 20 } }}
@@ -347,6 +385,15 @@ const ConcurrencyTest: React.FC<Props> = ({ initialResults, onSelectThread, onSt
           suffix={agg.minLatency !== null ? (agg.minLatency >= 1000 ? 's' : 'ms') : ''}
           styles={{ content: { fontSize: 20 } }}
         />
+        <Button
+          danger
+          icon={<StopOutlined />}
+          loading={cancellingAll}
+          disabled={agg.activeCount === 0}
+          onClick={handleCancelAll}
+        >
+          Cancel All
+        </Button>
       </Space>
 
       {/* Per-thread grid */}
@@ -357,7 +404,8 @@ const ConcurrencyTest: React.FC<Props> = ({ initialResults, onSelectThread, onSt
         pagination={false}
         size="small"
         bordered
-        scroll={{ x: 'max-content' }}
+        virtual
+        scroll={{ x: 1490, y: 600 }}
         onRow={onSelectThread ? (r) => ({
           onClick: () => onSelectThread(r.threadId),
           style: { cursor: 'pointer' },

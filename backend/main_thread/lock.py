@@ -144,11 +144,12 @@ def _lock_shard(thread_id: str) -> int:
 def this_owner() -> OwnerInfo:
     """Return the OwnerInfo for this main thread instance (token=0 placeholder).
 
-    The real fencing token is returned by :func:`acquire_lock` or
-    :func:`steal_lock` and stored separately via the context module.
+    Uses ``FASTAPI_PORT`` (set per-instance by ``run.py``) as the canonical
+    instance address.  The real fencing token is returned by :func:`acquire_lock`
+    or :func:`steal_lock` and stored separately via the context module.
     """
     from backend.config import get_settings
-    return OwnerInfo(port=get_settings().MAIN_THREAD_PORT, pid=os.getpid(), token=0)
+    return OwnerInfo(port=get_settings().FASTAPI_PORT, pid=os.getpid(), token=0)
 
 
 async def _client(thread_id: str):  # type: ignore[return]
@@ -292,17 +293,40 @@ async def release_lock(thread_id: str) -> None:
     )
 
 
-async def check_owner_alive(owner: OwnerInfo) -> bool:
-    """Check whether the lock owner FastAPI instance is still reachable.
+def _pid_alive(pid: int) -> bool:
+    """Return ``True`` if process *pid* is still running (Linux / WSL2).
 
-    Uses a plain TCP connection attempt to avoid importing an HTTP client.
-    If the port is accepting connections, the process is alive.
+    Uses ``os.kill(pid, 0)`` which sends no signal but raises
+    ``ProcessLookupError`` if the PID does not exist and ``PermissionError``
+    if the PID exists but is owned by another user.
+    """
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # PID exists; we just cannot signal it.
+    except OSError:
+        return False
+
+
+async def check_owner_alive(owner: OwnerInfo) -> bool:
+    """Check whether the lock owner FastAPI instance is still running.
+
+    Two-step check to handle the same-port restart race:
+    1. TCP connect — if the port is not responding at all, the instance is dead.
+    2. PID check via ``os.kill(pid, 0)`` — if the port IS responding but the
+       recorded PID no longer exists, a new process replaced the old one on
+       the same port (e.g. uvicorn ``--reload`` or process restart).  In that
+       case we return ``False`` so the caller can steal the lock and dispatch
+       recovery rather than routing to the replacement process.
 
     Args:
         owner: :class:`OwnerInfo` as stored in the lock.
 
     Returns:
-        ``True`` if the TCP connection succeeds, ``False`` otherwise.
+        ``True`` only when both the port responds AND the original PID is alive.
     """
     import asyncio
     from backend.config import get_settings
@@ -315,7 +339,10 @@ async def check_owner_alive(owner: OwnerInfo) -> bool:
         )
         writer.close()
         await writer.wait_closed()
-        return True
+        # Port is reachable — verify the ORIGINAL process is still running.
+        # Without this check, a replacement process on the same port would
+        # cause the old dead owner to appear alive and prevent recovery.
+        return _pid_alive(owner["pid"])
     except Exception:  # noqa: BLE001
         return False
 

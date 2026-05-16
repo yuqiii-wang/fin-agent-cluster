@@ -8,9 +8,11 @@ Thread
 
 Responsibilities
 ----------------
-* Read merged research summary and original user query from GraphState.
+* Read research_subgraph output from ``fin_agents.node_executions`` via the
+  PG replica (``read_node_output``).
 * Run the ``stream_conclusion`` task to stream an LLM answer to the frontend.
-* Write the final answer string to ``state["conclusion"]``.
+* Write the final answer string to ``state["conclusion"]`` so executor.py
+  can pass it to ``complete_thread``.
 
 Agent upgrade path
 ------------------
@@ -20,10 +22,11 @@ a tool.  ``build_input`` and ``get_state_updates`` are unchanged.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from backend.db.postgres.types import NodeType
 from langchain_core.runnables import Runnable, RunnableLambda
+from backend.langgraph.lifecycle import read_node_output
 from backend.langgraph.nodes.base.node import BaseNode
 from backend.langgraph.nodes.base.models import NodeContext, TaskOutput
 from backend.langgraph.nodes.base.task import NodeTask
@@ -37,12 +40,37 @@ class ConclusionNode(BaseNode[ConclusionNodeInput, ConclusionNodeOutput]):
 
     node_name = "conclusion_node"
     node_type = NodeType.WORKFLOW
-    tasks: list[NodeTask] = [stream_conclusion]
+    tasks: ClassVar[list[NodeTask]] = [stream_conclusion]
+    _prev_node_names: ClassVar[list[str]] = ["analyze_stats_node", "analyze_news_node"]
 
-    def build_input(self, state: GraphState) -> ConclusionNodeInput:
-        """Read merged_research and original query from GraphState."""
+    async def build_input(self, state: GraphState) -> ConclusionNodeInput:
+        """Read analyze_stats_node and analyze_news_node outputs from the PG replica.
+
+        Reads the outputs stored by both parallel analysis nodes in
+        ``fin_agents.node_executions`` and builds the LLM prompt context.
+        """
+        stats_node_id = self._find_node_id_by_name(state, "analyze_stats_node")
+        news_node_id = self._find_node_id_by_name(state, "analyze_news_node")
+
+        stats_analysis: str = ""
+        stats_key_metrics: dict = {}
+        if stats_node_id:
+            stats_output = await read_node_output(stats_node_id)
+            stats_analysis = stats_output.get("stats_analysis", "")
+            stats_key_metrics = stats_output.get("key_metrics", {})
+
+        news_sentiment: str = ""
+        news_highlights: list[str] = []
+        if news_node_id:
+            news_output = await read_node_output(news_node_id)
+            news_sentiment = news_output.get("news_sentiment", "")
+            news_highlights = news_output.get("highlights", [])
+
         return ConclusionNodeInput(
-            merged_research=state.get("merged_research", {}),
+            stats_analysis=stats_analysis,
+            stats_key_metrics=stats_key_metrics,
+            news_sentiment=news_sentiment,
+            news_highlights=news_highlights,
             query=state.get("query", ""),
         )
 

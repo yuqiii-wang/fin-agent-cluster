@@ -14,6 +14,9 @@ setup_docker_services() {
         case "$arg" in --foreground) detach=0 ;; esac
     done
 
+    docker compose restart centrifugo-llm-0 centrifugo-llm-1 centrifugo-sse-0 centrifugo-sse-1 2>/dev/null || true
+    docker compose restart nginx-internal nginx-internal-exporter nginx-frontend 2>/dev/null || true
+
     echo "[docker_services] Starting Docker Compose services..."
     if [[ $detach -eq 1 ]]; then
         docker compose up -d

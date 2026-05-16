@@ -1,7 +1,8 @@
 """Input model for conclusion_node.
 
-Reads two state slices:
-  - state["merged_research"]  — MergeOutput serialised from research_subgraph
+Reads from three predecessor node outputs:
+  - analyze_stats_node output — stats analysis narrative and key metrics
+  - analyze_news_node output  — news sentiment narrative and highlights
   - state["query"]            — original user query for LLM context
 """
 
@@ -18,9 +19,15 @@ class ConclusionNodeInput(BaseModel):
     """Typed input for ``conclusion_node`` and its ``stream_conclusion`` task.
 
     Attributes:
-        merged_research: Serialised ``MergeOutput`` dict from research_subgraph.
+        stats_analysis: Narrative from analyze_stats_node (return, volatility, trend).
+        stats_key_metrics: Key OHLCV metrics dict from analyze_stats_node.
+        news_sentiment: Narrative from analyze_news_node (sentiment score, label).
+        news_highlights: Top headline strings from analyze_news_node.
         query: Original user query string for LLM prompt context.
     """
 
-    merged_research: dict[str, Any] = Field(default_factory=dict)
+    stats_analysis: str = Field(default="", description="Statistical analysis narrative.")
+    stats_key_metrics: dict[str, Any] = Field(default_factory=dict)
+    news_sentiment: str = Field(default="", description="News sentiment narrative.")
+    news_highlights: list[str] = Field(default_factory=list)
     query: str = Field(default="", description="Original user query for LLM context.")

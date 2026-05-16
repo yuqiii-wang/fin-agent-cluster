@@ -3,7 +3,10 @@
  *
  * Connects to centrifugo-sse-{shard} using the bootstrap info from the
  * submit_query response.  Fires onEvent on every publication.  Sends an
- * RPC ACK back to the backend for events that require acknowledgement.
+ * ACK back to the backend for events that require acknowledgement by
+ * publishing to the same channel (sub.publish), which Centrifugo forwards
+ * to the backend publish proxy endpoint.  The publish promise resolving
+ * is the confirmation signal — no separate ack_confirmed event needed.
  */
 
 import { useEffect, useRef } from 'react';
@@ -27,6 +30,13 @@ export function useCentrifugoSse({ sseInfo, onEvent, done }: Options): void {
   // Once an ack_key is confirmed we must not send another ACK for retried
   // copies of the same event, since the backend has already stopped listening.
   const confirmedAckKeysRef = useRef<Set<string>>(new Set());
+  // Tracks in-flight ACK publish promises so the cleanup can drain them before
+  // disconnecting.  Without this, a `sub.publish()` that was started in the
+  // publication handler may fail with code-11 (connection closed) when React
+  // tears down the effect synchronously after `isDone` flips to true on the
+  // same SSE event that triggered the ACK — causing the backend to exhaust its
+  // retry budget without ever receiving the ACK signal.
+  const pendingAckPromsRef = useRef<Set<Promise<void>>>(new Set());
 
   useEffect(() => {
     if (!sseInfo || done) return;
@@ -56,12 +66,12 @@ export function useCentrifugoSse({ sseInfo, onEvent, done }: Options): void {
         const ev = ctx.data as SseEvent;
         onEventRef.current(ev);
 
-        // When the backend confirms an ACK round-trip, record the ack_key so
-        // we do not re-ACK retried copies of the same event.
+        // ack_confirmed is no longer published as a channel event — ACK
+        // confirmation is signalled by the sub.publish() promise resolving.
+        // Guard here to silently ignore any stale ack_confirmed events that
+        // may exist in Centrifugo history from before the migration.
         if (ev.event === 'ack_confirmed') {
-          if (ev.ack_key) {
-            confirmedAckKeysRef.current.add(ev.ack_key);
-          }
+          if (ev.ack_key) confirmedAckKeysRef.current.add(ev.ack_key);
           return;
         }
 
@@ -83,19 +93,26 @@ export function useCentrifugoSse({ sseInfo, onEvent, done }: Options): void {
           return;
         }
 
-        cf.rpc('thread_ack', {
+        const ackProm: Promise<void> = sub.publish({
+          event: 'ack',
           scope: ev.task_id ? 'task' : ev.node_id ? 'node' : 'thread',
           ack_key: ackKey,
           thread_id: tid,
+        }).then(() => {
+          confirmedAckKeysRef.current.add(ackKey);
         }).catch((err: unknown) => {
-          // code 11 = "connection closed" — Centrifugo disconnected before the
-          // RPC completed (tab close / navigation / subscription tear-down).
-          // This is expected and not actionable; suppress to avoid console noise.
-          if (err && typeof err === 'object' && (err as { code?: number }).code === 11) {
-            return;
-          }
-          console.error('[sse-ack] RPC failed event=%s ack_key=%s: %o', ev.event, ackKey, err);
+          // code 11 = "connection closed" — expected on tab close / navigation.
+          if (err && typeof err === 'object' && (err as { code?: number }).code === 11) return;
+          console.error('[sse-ack] publish failed event=%s ack_key=%s: %o', ev.event, ackKey, err);
         });
+
+        // Register the in-flight ACK so cleanup can drain it before tearing
+        // down the WebSocket.  Guard with !cancelled so we don't accumulate
+        // after cleanup has already run (StrictMode double-invoke edge case).
+        if (!cancelled) {
+          pendingAckPromsRef.current.add(ackProm);
+          ackProm.finally(() => pendingAckPromsRef.current.delete(ackProm));
+        }
       });
 
       sub.subscribe();
@@ -104,13 +121,27 @@ export function useCentrifugoSse({ sseInfo, onEvent, done }: Options): void {
 
     return () => {
       cancelled = true;
-      // cfRef.current is null when the microtask was pre-empted by this
-      // cleanup (StrictMode double-invoke) — safe to call on null via ?.
-      subRef.current?.unsubscribe();
-      cfRef.current?.disconnect();
-      cfRef.current = null;
+      // Capture local references immediately so a subsequent effect run
+      // (e.g. StrictMode re-invoke or sseInfo/done change) can overwrite
+      // the shared refs without interfering with this cleanup's disconnect.
+      const subToClose = subRef.current;
+      const cfToClose = cfRef.current;
       subRef.current = null;
+      cfRef.current = null;
+
+      // Capture and clear in-flight ACK promises.  We drain them before
+      // actually disconnecting so that a `sub.publish()` started inside
+      // the publication handler (which may have triggered isDone→true via
+      // refresh()) gets a chance to complete over the still-open WebSocket.
+      // Using Promise.allSettled ensures rejections don't block the drain.
+      const pending = [...pendingAckPromsRef.current];
+      pendingAckPromsRef.current.clear();
       confirmedAckKeysRef.current.clear();
+
+      Promise.allSettled(pending).then(() => {
+        subToClose?.unsubscribe();
+        cfToClose?.disconnect();
+      });
     };
   }, [sseInfo, done]);
 }

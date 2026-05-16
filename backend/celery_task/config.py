@@ -82,12 +82,24 @@ ACTIVE_TOPICS: list[StreamTopicConfig] = []
 # On-demand queue helpers — thread_id → queue name
 # ---------------------------------------------------------------------------
 
-#: Prefix used for all on-demand task queues.
+#: Prefix used for all on-demand (completion) task queues.
 ONDEMAND_QUEUE_PREFIX: str = "celery_ondemand"
+
+#: Prefix used for all stream (LLM streaming) task queues.
+#: Kept separate so fast completion tasks never compete for slots with slow
+#: stream tasks (which hold a Celery slot for the full LLM stream duration).
+STREAM_QUEUE_PREFIX: str = "celery_stream"
+
+
+def _shard(thread_id: str) -> int:
+    """Return the shard index for *thread_id*."""
+    settings = get_settings()
+    n = len(settings.DATABASE_REDIS_NODES) or 1
+    return int(hashlib.sha256(thread_id.encode()).hexdigest(), 16) % n
 
 
 def get_ondemand_queue(thread_id: str) -> str:
-    """Return the Celery queue name for an on-demand task carrying *thread_id*.
+    """Return the Celery queue name for a completion task carrying *thread_id*.
 
     Uses ``SHA-256(thread_id) % n_shards`` — the same formula as
     :class:`~backend.db.redis.router.RedisRouter` and Centrifugo routing —
@@ -99,18 +111,26 @@ def get_ondemand_queue(thread_id: str) -> str:
     Returns:
         Queue name string, e.g. ``"celery_ondemand_0"``.
     """
-    settings = get_settings()
-    n = len(settings.DATABASE_REDIS_NODES) or 1
-    digest = int(hashlib.sha256(thread_id.encode()).hexdigest(), 16)
-    shard = digest % n
-    return f"{ONDEMAND_QUEUE_PREFIX}_{shard}"
+    return f"{ONDEMAND_QUEUE_PREFIX}_{_shard(thread_id)}"
+
+
+def get_stream_queue(thread_id: str) -> str:
+    """Return the Celery queue name for a stream task carrying *thread_id*.
+
+    Stream tasks are routed to a dedicated queue so they never compete for
+    Celery worker slots with fast completion tasks.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+
+    Returns:
+        Queue name string, e.g. ``"celery_stream_0"``.
+    """
+    return f"{STREAM_QUEUE_PREFIX}_{_shard(thread_id)}"
 
 
 def all_ondemand_queues() -> list[str]:
-    """Return the full list of on-demand queue names across all shards.
-
-    Used by the worker startup command to pass ``-Q queue0,queue1,...`` so
-    workers listen on every shard queue.
+    """Return the full list of on-demand (completion) queue names across all shards.
 
     Returns:
         List of queue name strings ordered by shard index.
@@ -120,6 +140,17 @@ def all_ondemand_queues() -> list[str]:
     return [f"{ONDEMAND_QUEUE_PREFIX}_{i}" for i in range(n)]
 
 
+def all_stream_queues() -> list[str]:
+    """Return the full list of stream queue names across all shards.
+
+    Returns:
+        List of queue name strings ordered by shard index.
+    """
+    settings = get_settings()
+    n = len(settings.DATABASE_REDIS_NODES) or 1
+    return [f"{STREAM_QUEUE_PREFIX}_{i}" for i in range(n)]
+
+
 __all__ = [
     "CELERY_BROKER_DB",
     "CELERY_BACKEND_DB",
@@ -127,6 +158,9 @@ __all__ = [
     "StreamTopicConfig",
     "ACTIVE_TOPICS",
     "ONDEMAND_QUEUE_PREFIX",
+    "STREAM_QUEUE_PREFIX",
     "get_ondemand_queue",
+    "get_stream_queue",
     "all_ondemand_queues",
+    "all_stream_queues",
 ]

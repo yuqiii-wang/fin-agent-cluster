@@ -8,7 +8,10 @@ DROP TYPE IF EXISTS fin_agents.work_status CASCADE;
 CREATE TYPE fin_agents.work_status AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled', 'wrong');
 
 DROP TYPE IF EXISTS fin_agents.node_types CASCADE;
-CREATE TYPE fin_agents.node_types AS ENUM ('Workflow', 'Reference', 'Subgraph');
+CREATE TYPE fin_agents.node_types AS ENUM ('Workflow', 'Subgraph');
+
+DROP TYPE IF EXISTS fin_agents.task_types CASCADE;
+CREATE TYPE fin_agents.task_types AS ENUM ('Streaming', 'WebRequest', 'Computation', 'ToolCall');
 
 
 CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
@@ -79,52 +82,82 @@ CREATE INDEX IF NOT EXISTS checkpoint_blobs_thread_id_idx ON fin_agents.checkpoi
 CREATE INDEX IF NOT EXISTS checkpoint_writes_thread_id_idx ON fin_agents.checkpoint_writes (thread_id);
 
 CREATE TABLE IF NOT EXISTS fin_agents.nodes (
-    node_id          TEXT NOT NULL PRIMARY KEY,
-    thread_id TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
-    type             fin_agents.node_types NOT NULL DEFAULT 'Workflow',
+    node_id             TEXT NOT NULL PRIMARY KEY,
+    thread_id           TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
+    -- Fork generation: 0 = original run, 1+ = re-explore branches.
+    -- UUID5(thread_id:node_name:v{version}) determines node_id deterministically.
+    version             INTEGER NOT NULL DEFAULT 0,
+    type                fin_agents.node_types NOT NULL DEFAULT 'Workflow',
     -- Self-referencing FK: set for inner subgraph nodes whose parent is an outer
     -- subgraph node.  NULL for top-level graph nodes.
-    parent_node_id  TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE CASCADE,
-    -- For Reference nodes: the target node_id within the same thread.
-    -- NULL for Typical and Subgraph nodes.
-    referenced_node_id TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE SET NULL,
-    node_name TEXT NOT NULL,
-    -- Identifies nodes that execute concurrently within the same parent subgraph.
-    -- Nodes sharing the same parallel_group value run in parallel (fan-out/fan-in).
-    -- NULL for sequential nodes.
-    parallel_group TEXT,
-    status    fin_agents.work_status NOT NULL DEFAULT 'pending',
-    input JSONB NOT NULL DEFAULT '{}',
-    output JSONB NOT NULL DEFAULT '{}',
-    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    elapsed_ms INTEGER NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    parent_node_id      TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE CASCADE,
+    node_name           TEXT NOT NULL,
+    -- Identifies nodes that execute concurrently within the same parent graph or subgraph.
+    parallel_group      TEXT,
+    -- Identifies the branch within a parallel_group for sequential chains.
+    -- NULL for non-parallel nodes.  Defaults to node_name for single-node branches.
+    -- All nodes in the same sequential chain share the same parallel_branch value.
+    parallel_branch     TEXT,
+    -- Latest node_ids from sibling parallel branches at the last known snapshot time.
+    -- Shape: {branch_key: node_id}.  Retroactively updated as sibling branches advance.
+    parallel_snapshots  JSONB NOT NULL DEFAULT '{}',
+    status              fin_agents.work_status NOT NULL DEFAULT 'pending',
+    -- LangGraph checkpoint_id that was active when this node started.
+    checkpoint_id       TEXT NOT NULL DEFAULT '',
+    -- DAG edges within this run's branch: IDs of predecessor/successor nodes.
+    prev_node_ids       TEXT[] NOT NULL DEFAULT '{}',
+    next_node_ids       TEXT[] NOT NULL DEFAULT '{}',
+    -- Task UUIDs spawned by this node (appended as tasks are created).
+    task_ids            TEXT[] NOT NULL DEFAULT '{}',
+    -- Indicates whether this node is the fork-point of a re-explore branch.
+    -- One is_forked=TRUE node per version > 0.  Original run (version=0) has none.
+    is_forked           BOOLEAN NOT NULL DEFAULT FALSE,
+    -- The version that this fork branched from.  NULL for version=0 nodes.
+    -- For the is_forked node: equals the source node's version at fork time.
+    -- For non-forked nodes within the same version: also set to the source version
+    -- so the API can return the full branch lineage without extra joins.
+    forked_from_version INTEGER,
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    elapsed_ms          INTEGER NOT NULL DEFAULT 0,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     -- Fencing token from the Redis per-thread counter at lock acquisition time.
     -- Zombie writes (lower token) are rejected by guards in upsert/complete SQL.
-    -- 0 = pre-fencing rows (treated as oldest generation).
-    fencing_token BIGINT NOT NULL DEFAULT 0
+    fencing_token       BIGINT NOT NULL DEFAULT 0,
+    -- (thread_id, node_name, version) uniquely identifies each fork branch.
+    UNIQUE (thread_id, node_name, version)
 );
 
 CREATE INDEX IF NOT EXISTS fin_agents_nodes_thread_id_idx ON fin_agents.nodes (thread_id);
 CREATE INDEX IF NOT EXISTS fin_agents_nodes_node_name_idx ON fin_agents.nodes (node_name);
 CREATE INDEX IF NOT EXISTS fin_agents_nodes_node_name_thread_id_idx ON fin_agents.nodes (node_name, thread_id);
-CREATE INDEX IF NOT EXISTS fin_agents_nodes_referenced_node_id_idx ON fin_agents.nodes (referenced_node_id)
-    WHERE referenced_node_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS fin_agents_nodes_parallel_group_idx
+    ON fin_agents.nodes (thread_id, parallel_group, parent_node_id, parallel_branch)
+    WHERE parallel_group IS NOT NULL AND parallel_branch IS NOT NULL;
+
+-- Stores actual input/output payloads for node executions, separated from topology.
+-- Downstream nodes read completed predecessors' output via the PG replica.
+CREATE TABLE IF NOT EXISTS fin_agents.node_executions (
+    node_id     TEXT NOT NULL PRIMARY KEY
+                REFERENCES fin_agents.nodes (node_id) ON DELETE CASCADE,
+    input       JSONB NOT NULL DEFAULT '{}',
+    output      JSONB NOT NULL DEFAULT '{}',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- Sub-tasks emitted by each graph node (one row per fetch / LLM call).
 -- task_id is the primary key — the governance UUID generated in-node,
 -- eliminating the dual-identity problem of having both a numeric id and a uuid.
 CREATE TABLE IF NOT EXISTS fin_agents.tasks (
-    task_id TEXT NOT NULL PRIMARY KEY,
-    thread_id TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
-    node_id TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE CASCADE,
-    node_name TEXT NOT NULL,
-    task_name  TEXT NOT NULL,
-    status    fin_agents.work_status NOT NULL DEFAULT 'pending',
-    input     JSONB NOT NULL DEFAULT '{}',
-    output    JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    task_id       TEXT NOT NULL PRIMARY KEY,
+    thread_id     TEXT NOT NULL REFERENCES fin_agents.user_queries (thread_id) ON DELETE CASCADE,
+    node_id       TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE CASCADE,
+    node_name     TEXT NOT NULL,
+    task_name     TEXT NOT NULL,
+    type          fin_agents.task_types NOT NULL DEFAULT 'ToolCall',
+    status        fin_agents.work_status NOT NULL DEFAULT 'pending',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     -- Fencing token matching the graph run that created this task.
     -- Used by cleanup_zombie_tasks to mark orphaned tasks as 'wrong'.
     -- 0 = pre-fencing rows.
@@ -133,6 +166,15 @@ CREATE TABLE IF NOT EXISTS fin_agents.tasks (
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_id_idx ON fin_agents.tasks (node_id);
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_thread_id_idx ON fin_agents.tasks (thread_id);
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_name_idx ON fin_agents.tasks (node_name);
+
+-- Stores actual input/output payloads for task executions, separated from metadata.
+CREATE TABLE IF NOT EXISTS fin_agents.task_executions (
+    task_id     TEXT NOT NULL PRIMARY KEY
+                REFERENCES fin_agents.tasks (task_id) ON DELETE CASCADE,
+    input       JSONB NOT NULL DEFAULT '{}',
+    output      JSONB NOT NULL DEFAULT '{}',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- LLM token usage records persisted by the FastAPI background task
 -- from the fin:llm:completions Redis Stream after each celery-ingest invocation.

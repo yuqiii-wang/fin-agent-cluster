@@ -39,9 +39,9 @@
   },
   "proxies": [
     {
-      "name": "ack-rpc-proxy",
-      "endpoint": "http://nginx-api:8000/api/v1/centrifugo/rpc",
-      "timeout": "2s",
+      "name": "ack-publish-proxy",
+      "endpoint": "http://nginx-internal:8000/api/v1/centrifugo/publish",
+      "timeout": "5s",
       "http": {
         "static_headers": {
           "X-Centrifugo-Proxy-Key": "centrifugo-rpc-proxy-key"
@@ -49,12 +49,6 @@
       }
     }
   ],
-  "rpc": {
-    "without_namespace": {
-      "proxy_enabled": true,
-      "proxy_name": "ack-rpc-proxy"
-    }
-  },
   "channel": {
     "namespaces": [
       {
@@ -62,7 +56,10 @@
         "history_size": 2000,
         "history_ttl": "24h",
         "force_recovery": true,
-        "presence": true
+        "presence": true,
+        "allow_publish_for_subscriber": true,
+        "publish_proxy_enabled": true,
+        "publish_proxy_name": "ack-publish-proxy"
       },
       {
         "name": "user",

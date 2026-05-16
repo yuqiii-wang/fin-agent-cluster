@@ -14,7 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path
 
 from backend.users.queries import cancel_node, get_node_executions, re_explore_node
-from backend.users.schemas import NodeExecutionInfo, QueryResponse
+from backend.users.schemas import NodeExecutionInfo, QueryResponse, ReExploreRequest
 
 router = APIRouter()
 
@@ -45,8 +45,15 @@ async def cancel_node_route(thread_id: TThreadId, node_id: TNodeId) -> dict:
     tags=["node"],
 )
 async def re_explore_node_route(
-    thread_id: TThreadId, node_id: TNodeId
+    thread_id: TThreadId,
+    node_id: TNodeId,
+    body: ReExploreRequest,
 ) -> QueryResponse:
-    """Fork the graph at the checkpoint just before node_id ran and re-execute from there."""
-    return await re_explore_node(thread_id, node_id)
+    """Fork the graph at the checkpoint just before node_id ran and re-execute from there.
+
+    Optionally accepts ``input_override`` to inject different GraphState values
+    into the forked checkpoint before dispatching, allowing the user to change
+    the inputs the re-explored node will receive.
+    """
+    return await re_explore_node(thread_id, node_id, input_override=body.input_override)
 

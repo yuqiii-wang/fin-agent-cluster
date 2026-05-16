@@ -96,7 +96,7 @@ class NodeSQL:
         UPDATE fin_agents.nodes
         SET status     = %s,
             output     = %s::jsonb,
-            elapsed_ms = EXTRACT(EPOCH FROM (NOW() - started_at))::INT * 1000,
+            elapsed_ms = ROUND(EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000)::INT,
             updated_at = NOW()
         WHERE node_id  = %s
           AND thread_id = %s
@@ -127,30 +127,6 @@ class NodeSQL:
           AND thread_id = %s
           AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
         RETURNING node_id, node_name
-    """
-
-    RESOLVE_REFERENCE = """
-        WITH RECURSIVE ref_chain AS (
-            SELECT node_id, thread_id, node_name, type, referenced_node_id,
-                   status, started_at, updated_at,
-                   0 AS depth
-            FROM fin_agents.nodes
-            WHERE node_id = %s
-              AND thread_id = %s
-            UNION ALL
-            SELECT n.node_id, n.thread_id, n.node_name, n.type, n.referenced_node_id,
-                   n.status, n.started_at, n.updated_at,
-                   rc.depth + 1
-            FROM fin_agents.nodes n
-            JOIN ref_chain rc ON n.node_id = rc.referenced_node_id
-                              AND n.thread_id = rc.thread_id
-                              AND rc.type = 'Reference'
-                              AND rc.depth < 10
-        )
-        SELECT * FROM ref_chain
-        WHERE type != 'Reference'
-        ORDER BY depth
-        LIMIT 1
     """
 
     GET_THREAD_BY_NODE_ID = """

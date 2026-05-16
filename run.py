@@ -316,54 +316,93 @@ def _wait_for_ondemand_workers(
 
 def _start_celery_cluster(
     runner_count: int,
-    workers_per_instance: int = 2,
+    completion_workers_per_instance: int = 2,
+    completion_worker_concurrency: int = 4,
+    stream_workers_per_instance: int = 2,
+    stream_worker_concurrency: int = 8,
 ) -> list[subprocess.Popen]:
-    """Start ``runner_count * workers_per_instance`` Celery workers.
+    """Start completion and stream Celery workers with separate queues.
 
-    Each runner FastAPI instance is paired with ``workers_per_instance``
-    dedicated Celery workers for load distribution.  Workers are named
-    ``worker-{instance_idx}-{worker_idx}@hostname`` for traceability.
+    Completion workers consume ``celery_ondemand_*`` queues (fast tasks:
+    analyze_query, read_stats, read_news, merge_results — each <500ms).
+
+    Stream workers consume ``celery_stream_*`` queues (slow tasks:
+    stream_conclusion — holds a slot for the full LLM stream, e.g. 10s).
+
+    Keeping the pools separate means fast completion tasks are never blocked
+    waiting for stream slots and vice versa.  Peak streaming concurrency =
+    ``runner_count * stream_workers_per_instance * stream_worker_concurrency``.
 
     Args:
-        runner_count: Number of runner FastAPI instances.
-        workers_per_instance: Number of Celery workers per runner instance.
+        runner_count:                   Number of runner FastAPI instances.
+        completion_workers_per_instance: Completion workers per runner instance.
+        completion_worker_concurrency:  Prefork children per completion worker.
+        stream_workers_per_instance:    Stream workers per runner instance.
+        stream_worker_concurrency:      Prefork children per stream worker.
 
     Returns:
-        List of :class:`subprocess.Popen` handles.
+        List of :class:`subprocess.Popen` handles for all started workers.
     """
     is_windows = sys.platform == "win32"
-    # prefork is the production pool on Linux (WSL2); solo works on Windows for debug.
     pool = "solo" if is_windows else "prefork"
     _creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if is_windows else 0
 
-    # All shard-specific on-demand queues that workers must consume.
-    # Derived at startup so it stays consistent with DATABASE_REDIS_NODES.
-    from backend.celery_task.config import all_ondemand_queues  # noqa: PLC0415
-    _queues = ",".join(all_ondemand_queues())
+    from backend.celery_task.config import all_ondemand_queues, all_stream_queues  # noqa: PLC0415
+    _completion_queues = ",".join(all_ondemand_queues())
+    _stream_queues = ",".join(all_stream_queues())
 
     procs: list[subprocess.Popen] = []
-    total = runner_count * workers_per_instance
-    for i in range(total):
-        instance_idx = i // workers_per_instance
-        worker_idx = i % workers_per_instance
-        hostname = f"worker-{instance_idx}-{worker_idx}@%h"
+
+    # ── Completion workers ────────────────────────────────────────────────
+    total_completion = runner_count * completion_workers_per_instance
+    for i in range(total_completion):
+        instance_idx = i // completion_workers_per_instance
+        worker_idx = i % completion_workers_per_instance
+        hostname = f"completion-{instance_idx}-{worker_idx}@%h"
         cmd = [
             sys.executable, "-m", "celery",
             "-A", "backend.celery_task.celery_engine",
             "worker",
             "--hostname", hostname,
-            "--concurrency", "1",
+            "--concurrency", str(completion_worker_concurrency),
             "--pool", pool,
             "--loglevel", "info",
-            "-Q", _queues,
+            "-Q", _completion_queues,
         ]
         if not is_windows:
             cmd += ["--without-gossip", "--without-mingle"]
         print(
-            f"[run.py] Starting Celery worker {i + 1}/{total}"
-            f" (runner_instance={instance_idx}, worker={worker_idx}, pool={pool}) ..."
+            f"[run.py] Starting completion worker {i + 1}/{total_completion}"
+            f" (runner_instance={instance_idx}, worker={worker_idx}, pool={pool},"
+            f" concurrency={completion_worker_concurrency}) ..."
         )
         procs.append(subprocess.Popen(cmd, env=os.environ.copy(), creationflags=_creation_flags))
+
+    # ── Stream workers ────────────────────────────────────────────────────
+    total_stream = runner_count * stream_workers_per_instance
+    for i in range(total_stream):
+        instance_idx = i // stream_workers_per_instance
+        worker_idx = i % stream_workers_per_instance
+        hostname = f"stream-{instance_idx}-{worker_idx}@%h"
+        cmd = [
+            sys.executable, "-m", "celery",
+            "-A", "backend.celery_task.celery_engine",
+            "worker",
+            "--hostname", hostname,
+            "--concurrency", str(stream_worker_concurrency),
+            "--pool", pool,
+            "--loglevel", "info",
+            "-Q", _stream_queues,
+        ]
+        if not is_windows:
+            cmd += ["--without-gossip", "--without-mingle"]
+        print(
+            f"[run.py] Starting stream worker {i + 1}/{total_stream}"
+            f" (runner_instance={instance_idx}, worker={worker_idx}, pool={pool},"
+            f" concurrency={stream_worker_concurrency}) ..."
+        )
+        procs.append(subprocess.Popen(cmd, env=os.environ.copy(), creationflags=_creation_flags))
+
     return procs
 
 
@@ -371,8 +410,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run the FastAPI server.")
     parser.add_argument("--no-proxy", action="store_true", help="Disable the use of the proxy even if configured.")
-    parser.add_argument("--celery-workers-per-instance", type=int, default=2, metavar="N", help="Celery workers bound to each main thread FastAPI instance (default: 2, set to 0 to disable Celery).")
-    parser.add_argument("--runner-instances", type=int, default=4, metavar="N", help="Number of main thread FastAPI instances (default: 4, ports FASTAPI_PORT..FASTAPI_PORT+N-1).")
+
     args = parser.parse_args()
 
     settings = get_settings()
@@ -391,10 +429,13 @@ if __name__ == "__main__":
     _job = _create_job_object()  # kills children automatically on parent exit
 
     celery_procs: list[subprocess.Popen] = []
-    if args.celery_workers_per_instance > 0:
+    if settings.CELERY_WORKERS_PER_INSTANCE > 0 or settings.CELERY_STREAM_WORKERS_PER_INSTANCE > 0:
         celery_procs = _start_celery_cluster(
-            runner_count=args.runner_instances,
-            workers_per_instance=args.celery_workers_per_instance,
+            runner_count=settings.RUNNER_INSTANCE_COUNT,
+            completion_workers_per_instance=settings.CELERY_WORKERS_PER_INSTANCE,
+            completion_worker_concurrency=settings.CELERY_WORKER_CONCURRENCY,
+            stream_workers_per_instance=settings.CELERY_STREAM_WORKERS_PER_INSTANCE,
+            stream_worker_concurrency=settings.CELERY_STREAM_WORKER_CONCURRENCY,
         )
         for _p in celery_procs:
             _assign_to_job(_job, _p)
@@ -411,13 +452,13 @@ if __name__ == "__main__":
     # MAIN_THREAD_PORT so the ownership lock stores the correct port.
     _per_instance_env = [
         {"MAIN_THREAD_PORT": str(settings.FASTAPI_PORT + i)}
-        for i in range(args.runner_instances)
+        for i in range(settings.RUNNER_INSTANCE_COUNT)
     ]
 
     # Start main thread instances (FastAPI + embedded graph runner).
     runner_procs = _start_uvicorn_instances(
         base_port=settings.FASTAPI_PORT,
-        count=args.runner_instances,
+        count=settings.RUNNER_INSTANCE_COUNT,
         app_module="backend.main:app",
         log_config_path=log_config_path,
         extra_env_per_instance=_per_instance_env,

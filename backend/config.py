@@ -9,17 +9,17 @@ _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 class Settings(BaseSettings):
     # ── Database / API keys ─────────────────────────────────────
-    DATABASE_PG_URL: str
+    DATABASE_PG_URL: str = "postgresql://admin:P%40ssw0rd123@127.0.0.1:6543/fin_trading"
     # Read replica URL.  When set, SELECT queries are routed here; writes
     # always go to DATABASE_PG_URL (the primary).  Leave empty to use the
     # primary for both reads and writes (single-instance fallback).
-    DATABASE_PG_READ_URL: str = ""
+    DATABASE_PG_READ_URL: str = "postgresql://admin:P%40ssw0rd123@127.0.0.1:6544/fin_trading"
     DATABASE_REDIS_URL: str = "redis://127.0.0.1:3456"
     # Ordered list of Redis node URLs for hash-based shard routing.
     # Comma-separated when provided via environment variable, e.g.:
     #   DATABASE_REDIS_NODES=redis://redis-0:6379,redis://redis-1:6379
     # When empty, the router falls back to DATABASE_REDIS_URL as a single node.
-    DATABASE_REDIS_NODES: list[str] = []
+    DATABASE_REDIS_NODES: list[str] = ["redis://127.0.0.1:3456", "redis://127.0.0.1:3457"]
     DB_CONNECT_TIMEOUT_SECONDS: int = 8
     # Stats data provider: mock | yfinance | fmp
     # mock    — in-process mock data, no external calls (default)
@@ -29,9 +29,20 @@ class Settings(BaseSettings):
     FASTAPI_PORT: int = 8432
     # Number of main thread FastAPI instances (must match run.py --runner-instances and nginx-api.conf targets).
     RUNNER_INSTANCE_COUNT: int = 4
+    # Number of Celery workers bound to each runner instance (completion tasks only).
+    CELERY_WORKERS_PER_INSTANCE: int = 2
+    # Number of concurrent task slots per completion Celery worker process (prefork child count).
+    # Completion tasks are fast (<500ms), so 4 is sufficient per worker.
+    CELERY_WORKER_CONCURRENCY: int = 4
+    # Number of dedicated stream Celery workers per runner instance.
+    # Stream tasks hold a slot for the full LLM stream duration (e.g. 10s).
+    # Kept separate from completion workers so fast completion tasks are never
+    # blocked by long-running stream tasks.
+    CELERY_STREAM_WORKERS_PER_INSTANCE: int = 2
+    # Concurrent slots per stream worker.  Increase to raise peak streaming concurrency.
+    # Total stream slots = RUNNER_INSTANCE_COUNT * CELERY_STREAM_WORKERS_PER_INSTANCE * CELERY_STREAM_WORKER_CONCURRENCY.
+    CELERY_STREAM_WORKER_CONCURRENCY: int = 8
     # Port this specific main thread instance is bound to.
-    # Set per-instance by run.py via the MAIN_THREAD_PORT environment variable.
-    MAIN_THREAD_PORT: int = 8432
 
     # ── Thread ownership lock (Redis) ─────────────────────────────────────────
     # TTL (seconds) for the per-thread Redis ownership lock.

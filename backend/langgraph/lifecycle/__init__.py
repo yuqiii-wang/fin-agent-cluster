@@ -43,8 +43,8 @@ a best-effort bulk update for orphaned DB rows.
 
 from __future__ import annotations
 
-from backend.langgraph.lifecycle.ids import make_node_id, make_task_id
-from backend.langgraph.lifecycle.errors import ThreadCancelledError
+from backend.langgraph.lifecycle.ids import make_node_id, make_task_id, get_next_fork_generation
+from backend.langgraph.lifecycle.errors import NodeCancelledError, ThreadCancelledError
 from backend.langgraph.lifecycle.threads import (
     cancel_all_running_threads,
     cancel_thread,
@@ -54,8 +54,11 @@ from backend.langgraph.lifecycle.threads import (
     register_thread,
 )
 from backend.langgraph.lifecycle.threads.nodes import (
+    append_node_task_id,
     cancel_node,
     complete_node,
+    get_latest_sibling_node_version,
+    read_node_output,
     upsert_node,
 )
 from backend.langgraph.lifecycle.threads.nodes.tasks import (
@@ -70,7 +73,9 @@ __all__ = [
     # ID helpers
     "make_node_id",
     "make_task_id",
-    # Exception type
+    "get_next_fork_generation",
+    # Exception types
+    "NodeCancelledError",
     "ThreadCancelledError",
     # Thread-level
     "register_thread",
@@ -83,6 +88,9 @@ __all__ = [
     "upsert_node",
     "complete_node",
     "cancel_node",
+    "get_latest_sibling_node_version",
+    "read_node_output",
+    "append_node_task_id",
     # Task-level
     "create_task",
     "complete_task",

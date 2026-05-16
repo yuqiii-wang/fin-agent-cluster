@@ -50,11 +50,7 @@ test('submit semantic test query and observe streaming', async ({ page }) => {
   const semanticRadio = page.getByRole('radio', { name: 'Semantic Test' });
   await expect(semanticRadio).toBeChecked();
 
-  // Optionally add a detail
-  const textarea = page.getByPlaceholder('e.g. analyse AAPL for the past week');
-  await textarea.fill('AAPL short-term momentum');
-
-  // Submit
+  // Submit with default settings (duration=10s, tps=30)
   const submitBtn = page.getByRole('button', { name: /submit/i });
   await submitBtn.click();
 
@@ -76,6 +72,18 @@ test('submit semantic test query and observe streaming', async ({ page }) => {
   }
 
   // Capture final screenshot for inspection
-  await page.screenshot({ path: 'tests/results/semantic-test-final.png' });
+  await page.screenshot({ path: 'tests/results/semantic-test-final.png', fullPage: true });
   console.log('[test] Screenshot saved to tests/results/semantic-test-final.png');
+
+  // Log all visible node names in the NodeGraph (SVG text elements)
+  const svgTexts = await page.locator('svg text').allTextContents();
+  console.log('[test] NodeGraph SVG texts:', svgTexts);
+
+  // Verify all three regional nodes appear
+  const svg = page.locator('svg').first();
+  const svgHtml = await svg.innerHTML();
+  const hasApac = svgHtml.includes('apac');
+  const hasEmea = svgHtml.includes('emea');
+  const hasAmer = svgHtml.includes('amer');
+  console.log(`[test] Regional nodes — apac:${hasApac} emea:${hasEmea} amer:${hasAmer}`);
 });

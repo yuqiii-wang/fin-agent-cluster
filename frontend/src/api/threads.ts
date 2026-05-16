@@ -2,7 +2,7 @@
  * Threads API client — wraps all /api/v1/threads/* and /api/v1/auth/centrifugo/* calls.
  */
 
-import type { CentrifugoTokenResponse, NodeInfo, QueryResponse, TaskInfo, ThreadSummary } from '../types';
+import type { CentrifugoTokenResponse, GraphTopology, NodeInfo, QueryResponse, TaskInfo, ThreadSummary, VersionGraphResponse } from '../types';
 import { getStoredToken } from './auth';
 
 const BASE = '/api/v1';
@@ -79,6 +79,12 @@ export async function getHistory(limit = 40, offset = 0): Promise<ThreadSummary[
   return res.json();
 }
 
+export async function getGraphTopology(): Promise<GraphTopology> {
+  const res = await fetch(`${BASE}/graph/topology`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Get graph topology failed: ${res.status}`);
+  return res.json();
+}
+
 /**
  * Resolve a UUID (thread_id / node_id / task_id) to its parent ThreadSummary.
  * Returns null if not found or UUID is not owned by this user.
@@ -139,4 +145,39 @@ export async function cancelTask(threadId: string, taskId: string, nodeId?: stri
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`Cancel task failed: ${res.status}`);
+}
+
+/**
+ * Fork the graph at the checkpoint just before nodeId ran and re-execute.
+ *
+ * @param inputOverride - Optional GraphState field overrides to inject into
+ *   the forked checkpoint before dispatching.  Keys must be valid GraphState
+ *   field names; values replace the corresponding state entries.
+ */
+export async function reExploreNode(
+  threadId: string,
+  nodeId: string,
+  inputOverride?: Record<string, unknown>,
+): Promise<QueryResponse> {
+  const res = await fetch(`${BASE}/threads/${threadId}/nodes/${nodeId}/re-explore`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ input_override: inputOverride ?? null }),
+  });
+  if (!res.ok) throw new Error(`Re-explore failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Fetch version graph data for a specific fork generation.
+ *
+ * Version 0 = original run (no fork node).
+ * Version N > 0 = re-explore branch; includes the fork node and all branch nodes.
+ */
+export async function getVersionGraph(threadId: string, version: number): Promise<VersionGraphResponse> {
+  const res = await fetch(`${BASE}/threads/${threadId}/version/${version}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Get version graph failed: ${res.status}`);
+  return res.json();
 }

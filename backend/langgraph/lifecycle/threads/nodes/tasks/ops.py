@@ -10,14 +10,15 @@ from typing import Any
 from backend.db.postgres import raw_conn
 from backend.langgraph.lifecycle.errors import (
     LIFECYCLE_DB_ERROR,
-    ThreadCancelledError,
 )
 from backend.langgraph.lifecycle.threads.manager import get_thread_registry
 from backend.langgraph.lifecycle.threads.nodes.tasks.sql import (
     _CANCEL_TASK,
     _CLEANUP_ZOMBIE_TASKS,
     _INSERT_TASK,
+    _INSERT_TASK_EXECUTION,
     _UPDATE_TASK_COMPLETED,
+    _UPDATE_TASK_EXECUTION_OUTPUT,
 )
 from backend.langgraph.lifecycle.threads.nodes.tasks.sse import emit_task_sse
 
@@ -34,24 +35,34 @@ async def create_task(
 ) -> None:
     """Persist a new task row and emit a ``task_status: running`` SSE event.
 
+    Writes task metadata to ``fin_agents.tasks`` and execution payload to
+    ``fin_agents.task_executions`` in the same connection. Then calls
+    ``append_node_task_id`` to record the task_id on the node row.
+
     Args:
         thread_id:  LangGraph thread UUID.
-        node_id:    Owning node ID (from ``make_node_id``).
+        node_id:    UUID5-derived owning node ID.
         node_name:  Human-readable node name.
         task_id:    Unique task UUID (from ``make_task_id``).
         task_name:  Handler key (e.g. ``"analyze_query"``).
         input_data: Serialisable input payload for the task.
     """
+    from backend.langgraph.lifecycle.threads.nodes.ops import append_node_task_id
+    from backend.main_thread.context import get_fencing_token
+
+    fencing_token = get_fencing_token()
     t0 = time.monotonic()
     try:
-        from backend.main_thread.context import get_fencing_token
-        fencing_token = get_fencing_token()
         async with raw_conn() as conn:
             await conn.execute(
                 _INSERT_TASK,
-                (task_id, thread_id, node_id, node_name, task_name,
-                 json.dumps(input_data), fencing_token),
+                (task_id, thread_id, node_id, node_name, task_name, fencing_token),
             )
+            await conn.execute(
+                _INSERT_TASK_EXECUTION,
+                (task_id, json.dumps(input_data)),
+            )
+        await append_node_task_id(thread_id, node_id, task_id)
     except Exception as exc:
         logger.error(
             "[%s] create_task DB error task_id=%s thread_id=%s: %s",
@@ -88,6 +99,9 @@ async def complete_task(
 ) -> None:
     """Mark a task as completed (or failed) and emit the SSE event.
 
+    Updates status in ``fin_agents.tasks`` and writes output payload to
+    ``fin_agents.task_executions``.
+
     This function is **idempotent**: if the task is already in a terminal
     state (e.g. cancelled by the thread-cancel API), the UPDATE affects 0 rows
     and no SSE is emitted.
@@ -116,9 +130,14 @@ async def complete_task(
     async with raw_conn() as conn:
         cur = await conn.execute(
             _UPDATE_TASK_COMPLETED,
-            (status, json.dumps(out), task_id, thread_id),
+            (status, task_id, thread_id),
         )
         updated = cur.rowcount
+        if updated > 0:
+            await conn.execute(
+                _UPDATE_TASK_EXECUTION_OUTPUT,
+                (json.dumps(out), task_id),
+            )
 
     get_thread_registry().discard_celery_result(task_id)
 
@@ -163,6 +182,8 @@ async def persist_task_result(
     call the SSE path.  SSE is emitted by the graph runner after
     ``delegate_completion`` returns.
 
+    Writes status to ``fin_agents.tasks`` and output to ``fin_agents.task_executions``.
+
     Args:
         thread_id:   LangGraph thread UUID.
         node_id:     Owning node ID.
@@ -188,9 +209,14 @@ async def persist_task_result(
     async with raw_conn() as conn:
         cur = await conn.execute(
             _UPDATE_TASK_COMPLETED,
-            (status, json.dumps(out), task_id, thread_id),
+            (status, task_id, thread_id),
         )
         updated = cur.rowcount
+        if updated > 0:
+            await conn.execute(
+                _UPDATE_TASK_EXECUTION_OUTPUT,
+                (json.dumps(out), task_id),
+            )
 
     get_thread_registry().discard_celery_result(task_id)
 
@@ -243,7 +269,7 @@ async def cancel_task(
 async def cleanup_zombie_tasks(thread_id: str, fencing_token: int) -> None:
     """Mark all running tasks from a zombie graph run as 'wrong'.
 
-    Fix 3 – Called from the ``finally`` block of ``_run_graph`` when
+    Called from the ``finally`` block of ``_run_graph`` when
     ``lock_lost_event`` is set.  Identifies the zombie's tasks by their
     ``fencing_token`` and transitions them to ``'wrong'`` so they do not
     remain ``'running'`` indefinitely.
@@ -257,8 +283,6 @@ async def cleanup_zombie_tasks(thread_id: str, fencing_token: int) -> None:
         fencing_token: The zombie run's fencing token — only rows with this
                        exact token are updated.
     """
-    from backend.langgraph.lifecycle.errors import LIFECYCLE_DB_ERROR
-
     try:
         async with raw_conn() as conn:
             cur = await conn.execute(_CLEANUP_ZOMBIE_TASKS, (thread_id, fencing_token))

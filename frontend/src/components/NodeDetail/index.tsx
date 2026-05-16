@@ -10,13 +10,13 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Button, Descriptions, Space, Tag, Typography } from 'antd';
-import { ArrowLeftOutlined, StopOutlined } from '@ant-design/icons';
+import { Button, Descriptions, Space, Tag, Tooltip, Typography } from 'antd';
+import { ArrowLeftOutlined, BranchesOutlined, StopOutlined } from '@ant-design/icons';
 import TaskDetail from './TaskDetail';
 import SubgraphNode from './SubgraphNode';
 import { COLOR_SURFACE_RAISED, COLOR_TEXT_SECONDARY } from '../../constants/styleColors';
 import { STATUS_HEX, STATUS_TAG_COLOR } from '../../constants/statusColors';
-import { isWorkActive } from '../../constants/lifecycleStatus';
+import { isWorkActive, TERMINAL_WORK_STATUSES } from '../../constants/lifecycleStatus';
 import type { NodeInfo, TaskInfo } from '../../types';
 
 const { Title, Text } = Typography;
@@ -27,6 +27,10 @@ interface Props {
   tasks: TaskInfo[];
   threadId: string;
   tokenStreams?: Record<string, string>;
+  /** True when the thread is still running (re-explore btn will be disabled). */
+  threadActive?: boolean;
+  /** Active version being viewed; used to mark shared nodes from older versions. */
+  activeVersion?: number;
   /** Called when the user wants to inspect data in the bottom DataViewer panel. */
   onViewData?: (label: string, data: unknown) => void;
   /** Called when the user clicks a child node (subgraph navigation). */
@@ -37,17 +41,19 @@ interface Props {
   onCancelTask?: (taskId: string, nodeId?: string) => void;
   /** ID currently being cancelled (shows loading state). */
   cancellingId?: string | null;
+  /** Called when the user clicks Re-explore on a terminal node. */
+  onReExplore?: (node: NodeInfo) => void;
 }
 
 type View = { type: 'node' } | { type: 'task'; taskId: string };
 
-const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenStreams = {}, onViewData, onSelectNode, onCancelNode, onCancelTask, cancellingId }) => {
+const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenStreams = {}, threadActive = false, activeVersion, onViewData, onSelectNode, onCancelNode, onCancelTask, cancellingId, onReExplore }) => {
   const [view, setView] = useState<View>({ type: 'node' });
   const [isHeaderHovered, setIsHeaderHovered] = useState(false);
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
 
   const nodeTasks = tasks.filter(
-    (t) => t.node_id === node.node_id || t.node_name === node.node_name,
+    (t) => t.node_id === node.node_id,
   );
 
   // Reset to default view whenever the displayed node changes.
@@ -91,6 +97,17 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
   }
 
   // ── Default node view ─────────────────────────────────────────────────────
+  const nodeVersion = node.version ?? 0;
+  // A node is "shared" when it ran in an earlier version than the one currently viewed.
+  const isShared = activeVersion !== undefined && nodeVersion < activeVersion;
+  // Inner subgraph nodes (parent_node_id set) cannot be re-explored individually.
+  const isInnerNode = !!node.parent_node_id;
+  const isConditional = !!node.conditional_group;
+  // Re-explore is available for: terminal nodes (any) OR conditional not-yet-run (topology-only) nodes.
+  const canReExplore = !isInnerNode && !!onReExplore && (
+    TERMINAL_WORK_STATUSES.has(node.status as never) ||
+    (isConditional && !!node.is_topology_only)
+  );
   return (
     <div>
       <div
@@ -101,7 +118,13 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
         <Title level={5} style={{ margin: 0 }}>{node.node_name}</Title>
         <Tag color={STATUS_TAG_COLOR[node.status] ?? 'default'}>{node.status}</Tag>
         {node.type !== 'Typical' && <Tag>{node.type}</Tag>}
-        {isWorkActive(node.status) && onCancelNode && isHeaderHovered && (
+        <Tooltip title={isShared ? `shared from v${nodeVersion}` : undefined}>
+          <Tag color={isShared ? 'default' : nodeVersion > 0 ? 'blue' : undefined}
+               style={{ cursor: isShared ? 'help' : 'default' }}>
+            v{nodeVersion}{isShared ? ' (shared)' : ''}
+          </Tag>
+        </Tooltip>
+        {isWorkActive(node.status) && !isConditional && onCancelNode && isHeaderHovered && (
           <Button
             size="small"
             danger
@@ -110,6 +133,23 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
             onClick={() => onCancelNode(node.node_id)}
             style={{ marginLeft: 'auto' }}
           />
+        )}
+        {canReExplore && (
+          <Tooltip
+            title={threadActive ? 'Cancel or stop the thread before re-exploring' : (
+              node.is_topology_only ? 'Fork graph to run this conditional branch' : 'Fork graph from this node with different inputs'
+            )}
+          >
+            <Button
+              size="small"
+              icon={<BranchesOutlined />}
+              disabled={threadActive}
+              onClick={() => !threadActive && onReExplore!(node)}
+              style={{ marginLeft: 'auto' }}
+            >
+              Re-explore
+            </Button>
+          </Tooltip>
         )}
       </div>
 

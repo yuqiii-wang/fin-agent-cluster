@@ -12,6 +12,7 @@
 
 import React, { useMemo, useState } from 'react';
 import type { NodeInfo } from '../../types';
+import type { GraphTopology } from '../../types';
 import type { Bubble, EdgeKind } from './types';
 import { SVG_H, INNER_RADIUS, NODE_RADIUS, SUBGRAPH_RADIUS, COLLAPSED_BUBBLE_SIZE, BUBBLE_RX } from './constants';
 import { computeLayout } from './layout';
@@ -25,7 +26,7 @@ import { COLOR_TEXT_SECONDARY } from '../../constants/styleColors';
 type EdgeTuple = [string, string, EdgeKind];
 type EdgeUnit =
   | { type: 'single'; from: string; to: string; kind: EdgeKind }
-  | { type: 'fan'; froms: string[]; tos: string[]; kind: 'fan-out' | 'fan-in' };
+  | { type: 'fan'; froms: string[]; tos: string[]; kind: 'fan-out' | 'fan-in'; dashed?: boolean };
 
 function groupEdges(edges: EdgeTuple[]): EdgeUnit[] {
   const units: EdgeUnit[] = [];
@@ -33,14 +34,14 @@ function groupEdges(edges: EdgeTuple[]): EdgeUnit[] {
   for (let i = 0; i < edges.length; i++) {
     if (consumed.has(i)) continue;
     const [from, to, kind] = edges[i];
-    if (kind === 'fan-out') {
-      const group = edges.map((e, j) => ({ e, j })).filter(({ e, j }) => !consumed.has(j) && e[0] === from && e[2] === 'fan-out');
+    if (kind === 'fan-out' || kind === 'cond-fan-out') {
+      const group = edges.map((e, j) => ({ e, j })).filter(({ e, j }) => !consumed.has(j) && e[0] === from && (e[2] === kind));
       group.forEach(({ j }) => consumed.add(j));
-      units.push({ type: 'fan', froms: [from], tos: group.map(({ e }) => e[1]), kind: 'fan-out' });
-    } else if (kind === 'fan-in') {
-      const group = edges.map((e, j) => ({ e, j })).filter(({ e, j }) => !consumed.has(j) && e[1] === to && e[2] === 'fan-in');
+      units.push({ type: 'fan', froms: [from], tos: group.map(({ e }) => e[1]), kind: 'fan-out', dashed: kind === 'cond-fan-out' });
+    } else if (kind === 'fan-in' || kind === 'cond-fan-in') {
+      const group = edges.map((e, j) => ({ e, j })).filter(({ e, j }) => !consumed.has(j) && e[1] === to && (e[2] === kind));
       group.forEach(({ j }) => consumed.add(j));
-      units.push({ type: 'fan', froms: group.map(({ e }) => e[0]), tos: [to], kind: 'fan-in' });
+      units.push({ type: 'fan', froms: group.map(({ e }) => e[0]), tos: [to], kind: 'fan-in', dashed: kind === 'cond-fan-in' });
     } else {
       consumed.add(i);
       units.push({ type: 'single', from, to, kind });
@@ -51,12 +52,23 @@ function groupEdges(edges: EdgeTuple[]): EdgeUnit[] {
 
 interface Props {
   nodes: NodeInfo[];
+  topology?: GraphTopology | null;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
 }
 
-const NodeGraph: React.FC<Props> = ({ nodes, selectedNodeId, onSelectNode }) => {
+const NodeGraph: React.FC<Props> = ({ nodes, topology, selectedNodeId, onSelectNode }) => {
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+
+  /** keyed by "fromNode→toNode", value is the condition_label */
+  const edgeConditionLabels = useMemo(() => {
+    const m = new Map<string, string>();
+    if (!topology) return m;
+    for (const e of topology.edges) {
+      if (e.condition_label) m.set(`${e.from_node}→${e.to_node}`, e.condition_label);
+    }
+    return m;
+  }, [topology]);
 
   const nodeByName = useMemo(() => {
     const m: Record<string, NodeInfo> = {};
@@ -165,22 +177,64 @@ const NodeGraph: React.FC<Props> = ({ nodes, selectedNodeId, onSelectNode }) => 
         );
       })}
 
-      {/* Pass 2 — top-level chain edges */}
-      {topEdges.map(([from, to]) => {
-        const fp = positions[from];
-        const tp = positions[to];
-        if (!fp || !tp) return null;
-        const edgeId = `edge-${from}-${to}`;
+      {/* Pass 2 — top-level chain edges (sequential, fan-out/in, or conditional dashed fan)
+           Only draw edges whose source node has actually run (is_topology_only = false/undefined). */}
+      {groupEdges(topEdges.filter(([from]) => !nodeByName[from]?.is_topology_only)).map((unit, ui) => {
+        if (unit.type === 'single') {
+          const fp = positions[unit.from];
+          const tp = positions[unit.to];
+          if (!fp || !tp) return null;
+          const edgeId = `edge-${unit.from}-${unit.to}`;
+          return (
+            <GraphEdge
+              key={edgeId}
+              id={edgeId}
+              from={fp} to={tp}
+              fromR={effectiveRadius(unit.from)}
+              toR={effectiveRadius(unit.to)}
+              kind={unit.kind}
+              conditionLabel={edgeConditionLabels.get(`${unit.from}→${unit.to}`)}
+              isHighlighted={hoveredEdgeId === edgeId}
+              onHoverChange={h => setHoveredEdgeId(h ? edgeId : null)}
+            />
+          );
+        }
+        const froms = unit.froms.map(n => positions[n]).filter((p): p is { x: number; y: number } => !!p);
+        const tos   = unit.tos.map(n => positions[n]).filter((p): p is { x: number; y: number } => !!p);
+        if (froms.length === 0 || tos.length === 0) return null;
+        const fanId = `top-fan-${ui}`;
+        // For conditional fans, dash each section based on whether its nearest node ran.
+        // Runtime nodes have is_topology_only=undefined (only set to true for topology-only nodes),
+        // so default to false (solid) when node is in map, true (dashed) when absent.
+        const spurDashed = (name: string) => {
+          const node = nodeByName[name];
+          return node ? (node.is_topology_only ?? false) : true;
+        };
+        const dashedSpurs = unit.dashed
+          ? unit.kind === 'fan-out'
+            ? unit.tos.map(spurDashed)
+            : unit.froms.map(spurDashed)
+          : undefined;
+        const trunkDashed = unit.dashed
+          ? (unit.kind === 'fan-out'
+              ? spurDashed(unit.froms[0])
+              : spurDashed(unit.tos[0]))
+          : false;
+        // Per-spur condition labels: for fan-out keyed by each to-node; for fan-in keyed by each from-node
+        const conditionLabels = unit.kind === 'fan-out'
+          ? unit.tos.map(toName => edgeConditionLabels.get(`${unit.froms[0]}→${toName}`))
+          : unit.froms.map(fromName => edgeConditionLabels.get(`${fromName}→${unit.tos[0]}`));
         return (
-          <GraphEdge
-            key={edgeId}
-            id={edgeId}
-            from={fp} to={tp}
-            fromR={effectiveRadius(from)}
-            toR={effectiveRadius(to)}
-            kind="sequential"
-            isHighlighted={hoveredEdgeId === edgeId}
-            onHoverChange={h => setHoveredEdgeId(h ? edgeId : null)}
+          <FanEdgeGroup
+            key={fanId}
+            froms={froms}
+            tos={tos}
+            fromR={effectiveRadius(unit.froms[0])}
+            toR={effectiveRadius(unit.tos[0])}
+            kind={unit.kind}
+            dashedSpurs={dashedSpurs}
+            trunkDashed={trunkDashed}
+            conditionLabels={conditionLabels}
           />
         );
       })}
@@ -228,8 +282,6 @@ const NodeGraph: React.FC<Props> = ({ nodes, selectedNodeId, onSelectNode }) => 
                   fromR={INNER_RADIUS}
                   toR={INNER_RADIUS}
                   kind={unit.kind}
-                  isHighlighted={hoveredEdgeId === fanId}
-                  onHoverChange={h => setHoveredEdgeId(h ? fanId : null)}
                 />
               );
             })}

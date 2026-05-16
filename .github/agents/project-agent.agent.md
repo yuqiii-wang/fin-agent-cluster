@@ -25,6 +25,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 * Do NOT use test/mock names if the code is for more generic use.
 * Config setup can be found from docker_compose.yml and backend/config.py, do not hardcode any config in the code, but to add in config files and read from config in the code.
 * study feasibility and complexity and maintainability, if good then start implementation, if not good, propose your answer , user confirmed then continue implementation.
+* For new features new refactor, do NOT keep old code for backward compatibility nor fallback, but to delete old code and just throw err if hit original code path, do not keep dead code.
 
 ### Backend and Frontend Communications
 

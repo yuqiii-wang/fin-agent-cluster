@@ -1,12 +1,12 @@
 import React from 'react';
 import { STATUS_BRIGHT, STATUS_DARK } from '../../constants/statusColors';
-import { COLOR_SURFACE_DEEP, COLOR_TEXT_BRIGHT, COLOR_TEXT_TASK_DIM, COLOR_TEXT_TASK_HOV, COLOR_TICK_TASK } from '../../constants/styleColors';
+import { COLOR_SURFACE_DEEP, COLOR_TEXT_BRIGHT, COLOR_TEXT_MUTED, COLOR_TEXT_TASK_DIM, COLOR_TEXT_TASK_HOV, COLOR_TICK_TASK, COLOR_STATUS_DARK_FALLBACK } from '../../constants/styleColors';
 import { AXIS_TICKS, LABEL_W, NARROW_PCT, TASK_H } from './constants';
 import { formatMs } from './utils';
 import type { NodeInfo, TaskInfo } from '../../types';
 
-const sdark   = (s: string) => STATUS_DARK[s]   ?? '#2d2d2d';
-const sbright = (s: string) => STATUS_BRIGHT[s] ?? '#595959';
+const sdark   = (s: string) => STATUS_DARK[s]   ?? COLOR_STATUS_DARK_FALLBACK;
+const sbright = (s: string) => STATUS_BRIGHT[s] ?? COLOR_TEXT_MUTED;
 
 interface Props {
   node: NodeInfo;

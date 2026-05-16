@@ -14,9 +14,15 @@ from backend.langgraph.lifecycle.errors import (
     LIFECYCLE_DB_ERROR,
 )
 from backend.langgraph.lifecycle.threads.nodes.sql import (
+    _APPEND_NODE_TASK_ID,
     _CANCEL_ACTIVE_TASKS_BY_NODE,
     _CANCEL_NODE_SELF,
+    _INSERT_NODE_EXECUTION,
+    _PROPAGATE_TO_PARALLEL_SIBLINGS,
+    _REFRESH_OWN_PARALLEL_SNAPSHOT,
     _UPDATE_NODE_COMPLETED,
+    _UPDATE_NODE_EXECUTION_OUTPUT,
+    _UPDATE_NODE_NEXT_IDS,
     _UPSERT_NODE,
 )
 from backend.langgraph.lifecycle.threads.nodes.sse import (
@@ -35,6 +41,67 @@ def get_thread_registry():
     return _get()
 
 
+async def _sync_parallel_snapshots(
+    thread_id: str,
+    node_id: str,
+    parallel_group: str,
+    parallel_branch: str,
+    parent_node_id: str | None,
+) -> None:
+    """Sync cross-branch parallel snapshots for a node that belongs to a parallel group.
+
+    Called immediately after ``_UPSERT_NODE`` when ``parallel_group`` and
+    ``parallel_branch`` are both set.  Performs two SQL updates in separate
+    connections so each can be retried independently:
+
+    1. **Refresh own snapshot**: sets this node's ``parallel_snapshots`` to the
+       latest known node_id per sibling branch (every branch in the same
+       ``parallel_group`` / ``parent_node_id`` whose ``parallel_branch`` != ours,
+       ordered by ``started_at DESC`` so the freshest node wins).
+
+    2. **Propagate to siblings**: writes this node's ``node_id`` into every
+       sibling node's ``parallel_snapshots[parallel_branch]``, but only when
+       the currently stored node_id for that branch started earlier than this
+       node (guards against sequential ordering: a2 must not be replaced by a1).
+
+    Together these two operations ensure that, for any node X in a parallel group,
+    ``X.parallel_snapshots`` always reflects the most-recently-started node from
+    every other branch — and is retroactively updated as those branches advance.
+
+    Args:
+        thread_id:       LangGraph thread UUID.
+        node_id:         The node that just started (result of ``_UPSERT_NODE``).
+        parallel_group:  Shared label for the concurrent node group.
+        parallel_branch: This node's branch identity within the group.
+        parent_node_id:  Parent subgraph node ID (``None`` for top-level nodes).
+    """
+    try:
+        async with raw_conn() as conn:
+            await conn.execute(
+                _REFRESH_OWN_PARALLEL_SNAPSHOT,
+                (thread_id, parallel_group, parent_node_id, parallel_branch, node_id),
+            )
+    except Exception as exc:
+        logger.error(
+            "[%s] _sync_parallel_snapshots refresh_own error node_id=%s: %s",
+            LIFECYCLE_DB_ERROR, node_id, exc,
+        )
+        raise
+
+    try:
+        async with raw_conn() as conn:
+            await conn.execute(
+                _PROPAGATE_TO_PARALLEL_SIBLINGS,
+                (parallel_branch, node_id, node_id, parallel_branch, parallel_branch, parallel_branch),
+            )
+    except Exception as exc:
+        logger.error(
+            "[%s] _sync_parallel_snapshots propagate error node_id=%s: %s",
+            LIFECYCLE_DB_ERROR, node_id, exc,
+        )
+        raise
+
+
 async def upsert_node(
     thread_id: str,
     node_id: str,
@@ -43,26 +110,57 @@ async def upsert_node(
     parent_node_id: str | None = None,
     input_data: dict[str, Any] | None = None,
     parallel_group: str | None = None,
+    parallel_branch: str | None = None,
+    version: int = 0,
+    checkpoint_id: str = "",
+    prev_node_ids: list[str] | None = None,
+    is_forked: bool = False,
+    forked_from_version: int | None = None,
 ) -> None:
     """Persist a node execution row (INSERT or UPDATE to running).
 
+    Writes topology to ``fin_agents.nodes`` and execution payload to
+    ``fin_agents.node_executions`` in the same connection.
+
     Safe to call multiple times for the same node; subsequent calls update
-    the input and reset status to running (unless already terminal).
+    the checkpoint_id/prev_node_ids and reset status to running (unless
+    already terminal).
 
     Emits a ``node_status: running`` SSE event after the DB write.
 
+    If the node belongs to a parallel group (``parallel_group`` and
+    ``parallel_branch`` are both set), the call also:
+    - Refreshes this node's ``parallel_snapshots`` with the latest node_id
+      from every sibling branch currently known in the DB.
+    - Propagates this node as the new latest for its branch to all sibling
+      nodes' ``parallel_snapshots``, replacing any older node_id for the
+      same branch.
+
     Args:
-        thread_id:      LangGraph thread UUID.
-        node_id:        Stable node ID (from ``make_node_id``).
-        node_name:      Human-readable node name.
-        node_type:      ``"Workflow"``, ``"Reference"``, or ``"Subgraph"``.
-        parent_node_id: Parent subgraph node ID, or ``None`` for top-level nodes.
-        input_data:     Serialisable input payload.
-        parallel_group: Shared label for nodes that run concurrently within
+        thread_id:           LangGraph thread UUID.
+        node_id:             UUID5-derived stable node ID (from ``make_node_id``).
+        node_name:           Human-readable node name.
+        node_type:           ``"Workflow"`` or ``"Subgraph"``.
+        parent_node_id:      Parent subgraph node ID, or ``None`` for top-level nodes.
+        input_data:          Serialisable input payload (written to node_executions).
+        parallel_group:      Shared label for nodes that run concurrently within
             the same parent subgraph.  ``None`` for sequential nodes.
+        parallel_branch:     Branch identifier within the parallel_group.  Must be
+            set alongside ``parallel_group``.  Defaults to ``node_name`` if the
+            caller passes ``parallel_group`` but omits this.
+        version:             Fork generation counter (``GraphState.fork_generation``).
+        checkpoint_id:       LangGraph checkpoint ID at node start.
+        prev_node_ids:       Predecessor node IDs in the current branch.
+        is_forked:           ``True`` for the first node of a re-explore fork branch.
+        forked_from_version: Version that this fork branched from; set on the
+            is_forked node and all sibling nodes in the same version.
     """
     from backend.main_thread.context import get_fencing_token
     fencing_token = get_fencing_token()
+
+    prev_ids = prev_node_ids or []
+    # Infer parallel_branch from node_name when group is set but branch omitted.
+    effective_branch = parallel_branch or (node_name if parallel_group else None)
 
     t0 = time.monotonic()
     try:
@@ -70,11 +168,15 @@ async def upsert_node(
             await conn.execute(
                 _UPSERT_NODE,
                 (
-                    node_id, thread_id, node_type, parent_node_id, node_name,
-                    json.dumps(input_data or {}),
-                    parallel_group,
-                    fencing_token,
+                    node_id, thread_id, version, node_type, parent_node_id,
+                    node_name, checkpoint_id, prev_ids,
+                    parallel_group, effective_branch, fencing_token,
+                    is_forked, forked_from_version,
                 ),
+            )
+            await conn.execute(
+                _INSERT_NODE_EXECUTION,
+                (node_id, json.dumps(input_data or {})),
             )
     except Exception as exc:
         logger.error(
@@ -82,6 +184,15 @@ async def upsert_node(
             LIFECYCLE_DB_ERROR, node_id, thread_id, exc,
         )
         raise
+
+    if parallel_group and effective_branch:
+        await _sync_parallel_snapshots(
+            thread_id=thread_id,
+            node_id=node_id,
+            parallel_group=parallel_group,
+            parallel_branch=effective_branch,
+            parent_node_id=parent_node_id,
+        )
 
     logger.debug(
         "[lifecycle:node] running node_id=%s node_name=%s db_ms=%.0f — emitting SSE",
@@ -103,19 +214,24 @@ async def complete_node(
     *,
     failed: bool = False,
     error: str | None = None,
+    next_node_ids: list[str] | None = None,
 ) -> None:
     """Mark a node as completed (or failed) and emit the SSE event.
+
+    Writes execution output to ``fin_agents.node_executions`` and updates
+    topology (next_node_ids) on ``fin_agents.nodes``.
 
     Idempotent: if the node is already terminal, the UPDATE is a no-op
     and no SSE is emitted.
 
     Args:
-        thread_id:   LangGraph thread UUID.
-        node_id:     Node ID to update.
-        node_name:   Human-readable node name.
-        output_data: Result payload (stored in ``nodes.output``).
-        failed:      ``True`` to mark as failed.
-        error:       Error message included in output when *failed*.
+        thread_id:     LangGraph thread UUID.
+        node_id:       Node ID to update.
+        node_name:     Human-readable node name.
+        output_data:   Result payload (written to ``node_executions``).
+        failed:        ``True`` to mark as failed.
+        error:         Error message included in output when *failed*.
+        next_node_ids: Successor node IDs to record in the nodes table.
     """
     await _complete_node_internal(
         thread_id=thread_id,
@@ -124,6 +240,7 @@ async def complete_node(
         output_data=output_data,
         failed=failed,
         error=error,
+        next_node_ids=next_node_ids,
     )
 
 
@@ -134,6 +251,7 @@ async def _complete_node_internal(
     output_data: dict[str, Any] | None,
     failed: bool,
     error: str | None,
+    next_node_ids: list[str] | None,
 ) -> None:
     """Internal implementation used by both ``complete_node`` and auto-complete."""
     from backend.main_thread.context import get_fencing_token
@@ -150,9 +268,19 @@ async def _complete_node_internal(
     async with raw_conn() as conn:
         cur = await conn.execute(
             _UPDATE_NODE_COMPLETED,
-            (status, json.dumps(out), node_id, thread_id, fencing_token),
+            (status, node_id, thread_id, fencing_token),
         )
         updated = cur.rowcount
+        if updated > 0:
+            await conn.execute(
+                _UPDATE_NODE_EXECUTION_OUTPUT,
+                (json.dumps(out), node_id),
+            )
+            if next_node_ids:
+                await conn.execute(
+                    _UPDATE_NODE_NEXT_IDS,
+                    (next_node_ids, node_id, thread_id),
+                )
 
     if updated == 0:
         try:
@@ -186,6 +314,105 @@ async def _complete_node_internal(
         status, node_id, node_name,
         (time.monotonic() - t_sse) * 1000, (time.monotonic() - t0) * 1000,
     )
+
+
+async def read_node_output(node_id: str) -> dict[str, Any]:
+    """Read the execution output for a completed node from the PG replica.
+
+    Downstream nodes call this instead of passing data through GraphState.
+    Always reads from the replica connection to alleviate primary DB load.
+
+    Args:
+        node_id: UUID5-derived node ID.
+
+    Returns:
+        The ``output`` JSONB dict from ``fin_agents.node_executions``.
+        Returns an empty dict if no row exists.
+    """
+    try:
+        async with raw_conn(readonly=True) as conn:
+            cur = await conn.execute(
+                "SELECT output FROM fin_agents.node_executions WHERE node_id = %s",
+                (node_id,),
+            )
+            row = await cur.fetchone()
+        return row["output"] if row else {}
+    except Exception as exc:
+        logger.error(
+            "[%s] read_node_output DB error node_id=%s: %s",
+            LIFECYCLE_DB_ERROR, node_id, exc,
+        )
+        raise
+
+
+async def get_latest_sibling_node_version(
+    thread_id: str,
+    node_name: str,
+) -> int:
+    """Return the latest completed version of a parallel sibling node.
+
+    Used by the parallel sibling shortcut.  The sibling's latest completed
+    version is independent of the forked node's ``fork_source_version`` —
+    it reflects all re-explores of the sibling that have happened so far,
+    regardless of which other parallel node triggered the current fork.
+
+    For example, if ``analyze_stats_node`` was re-explored to v1, and then
+    ``analyze_news_node`` is re-explored (its fork_source_version=0 because
+    news was at v0), the sibling lookup must return stats v1 — not v0.
+    Bounding by fork_source_version=0 would incorrectly exclude stats_v1.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        node_name: Sibling node name to look up.
+
+    Returns:
+        Highest completed version, or 0 if none exists.
+    """
+    try:
+        async with raw_conn(readonly=True) as conn:
+            cur = await conn.execute(
+                "SELECT COALESCE(MAX(version), 0) AS v"
+                " FROM fin_agents.nodes"
+                " WHERE thread_id = %s AND node_name = %s AND status = 'completed'",
+                (thread_id, node_name),
+            )
+            row = await cur.fetchone()
+        return int(row["v"]) if row else 0
+    except Exception as exc:
+        logger.error(
+            "[%s] get_latest_sibling_node_version DB error node_name=%s: %s",
+            LIFECYCLE_DB_ERROR, node_name, exc,
+        )
+        raise
+
+
+async def append_node_task_id(
+    thread_id: str,
+    node_id: str,
+    task_id: str,
+) -> None:
+    """Append a task_id to the node's task_ids array in the nodes table.
+
+    Called by ``create_task`` after persisting the task row so that the
+    node record always reflects all tasks it has spawned.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        node_id:   UUID5-derived node ID.
+        task_id:   UUID4 task ID to append.
+    """
+    try:
+        async with raw_conn() as conn:
+            await conn.execute(
+                _APPEND_NODE_TASK_ID,
+                (task_id, node_id, thread_id),
+            )
+    except Exception as exc:
+        logger.error(
+            "[%s] append_node_task_id DB error node_id=%s task_id=%s: %s",
+            LIFECYCLE_DB_ERROR, node_id, task_id, exc,
+        )
+        raise
 
 
 async def cancel_node(
@@ -258,6 +485,20 @@ async def cancel_node(
         return False  # Already terminal.
 
     # ------------------------------------------------------------------
+    # 3b. Set per-node cancel flag in Redis so the delegation poll loop
+    #     for this node's tasks exits within one cycle (avoids the 120 s
+    #     task timeout when the node was cancelled mid-execution).
+    # ------------------------------------------------------------------
+    try:
+        from backend.main_thread.cancel_flag import set_node_cancel_flag
+        await set_node_cancel_flag(node_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "[%s] cancel_node set_node_cancel_flag failed node_id=%s: %s",
+            LIFECYCLE_CANCEL_FAILED, node_id, exc,
+        )
+
+    # ------------------------------------------------------------------
     # 4. SSE — tasks first, then node.
     # ------------------------------------------------------------------
     for row in cancelled_task_rows:
@@ -277,4 +518,10 @@ async def cancel_node(
     return True
 
 
-__all__ = ["upsert_node", "complete_node", "cancel_node"]
+__all__ = [
+    "upsert_node",
+    "complete_node",
+    "cancel_node",
+    "read_node_output",
+    "append_node_task_id",
+]

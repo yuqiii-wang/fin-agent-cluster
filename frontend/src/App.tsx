@@ -17,7 +17,7 @@ import ThreadView from './components/ThreadView';
 import ConcurrencyTest from './components/ConcurrencyTest';
 import UserButton from './components/UserButton';
 import UserHistory from './components/UserHistory';
-import type { QueryResponse, SseInfo, ThreadSummary } from './types';
+import type { GraphTopology, QueryResponse, SseInfo, ThreadSummary } from './types';
 import { setThreadViewer } from './api/threads';
 
 const { Header, Sider, Content } = Layout;
@@ -27,6 +27,7 @@ const { Text } = Typography;
 interface LiveThreadInfo {
   sseInfo: SseInfo | null;
   llmInfo: SseInfo | null;
+  topology: GraphTopology | null;
 }
 
 /** Headless component: subscribes to a background thread's SSE channel and
@@ -74,6 +75,7 @@ const AppInner: React.FC = () => {
       [result.thread_id]: {
         sseInfo: result.sse ?? null,
         llmInfo: result.llm ?? null,
+        topology: result.topology ?? null,
       },
     }));
     setActiveId(result.thread_id);
@@ -178,6 +180,7 @@ const AppInner: React.FC = () => {
               threadId={activeEntry!.thread_id}
               sseInfo={activeLive?.sseInfo ?? null}
               llmInfo={activeLive?.llmInfo ?? null}
+              initialTopology={activeLive?.topology ?? null}
               onDone={reload}
               onStatusChange={(s) => updateEntry(activeEntry!.thread_id, { status: s })}
               onBack={fromConcurrency ? () => {

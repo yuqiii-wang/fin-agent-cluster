@@ -17,12 +17,13 @@ export type {
   BaseTaskSseNotification,
 } from './base';
 
-export type { SseInfo, QueryResponse, ThreadSummary } from './thread';
+export type { SseInfo, QueryResponse, ThreadSummary, VersionGraphResponse } from './thread';
 export type { NodeInfo } from './node';
 export type { TaskInfo } from './task';
 export type { GuestAuthResponse, CentrifugoTokenResponse } from './auth';
 export type { SseEvent } from './sse';
 export type { SessionStatus } from './session';
+export type { GraphTopology, TopologyNodeDef, TopologyEdgeDef } from './topology';
 
 export type {
   AnalyzeQueryInput,

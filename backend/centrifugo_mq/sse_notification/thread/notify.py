@@ -20,7 +20,7 @@ async def notify(
     payload: dict[str, Any],
     *,
     dedup_key: str | None = None,
-    retry_interval: float = 3.0,
+    retry_interval: float = 5.0,
     max_retries: int = 6,
 ) -> bool:
     """Publish a thread-scope SSE event and await frontend ACK with automatic retry.

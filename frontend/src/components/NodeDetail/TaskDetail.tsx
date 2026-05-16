@@ -82,7 +82,7 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, liveStream, onViewData, o
           </Button>
         )}
         {/* For completed streaming tasks: "View Output" sends thinking + answer to the panel. */}
-        {!isLive && isStreaming && (task.output?.answer || task.output?.thinking) && (
+        {!isLive && isStreaming && !!(task.output?.answer || task.output?.thinking) && (
           <Button
             size="small"
             onClick={() => {
@@ -98,7 +98,7 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, liveStream, onViewData, o
           </Button>
         )}
         {/* Non-streaming tasks: "View Output" sends raw JSON to the panel. */}
-        {!isStreaming && task.output && (
+        {!isStreaming && !!task.output && (
           <Button
             size="small"
             onClick={() => onViewData?.(`${task.task_name} · Output`, task.output)}

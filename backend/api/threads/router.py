@@ -20,6 +20,10 @@ GET  /api/v1/threads/{thread_id}/nodes                          — all node exe
 POST /api/v1/threads/{thread_id}/nodes/{node_id}/cancel         — cancel a node
 POST /api/v1/threads/{thread_id}/nodes/{node_id}/re-explore     — fork at pre-node checkpoint
 
+Version-level
+-------------
+GET  /api/v1/threads/{thread_id}/version/{version_id}           — fork node + branch nodes for version
+
 Task-level
 ----------
 GET  /api/v1/threads/{thread_id}/tasks                    — all tasks in thread
@@ -46,10 +50,12 @@ from backend.users.queries import (
 from backend.users.schemas import QueryRequest, QueryResponse
 from backend.api.threads.node.router import router as node_router
 from backend.api.threads.node.tasks.router import router as tasks_router
+from backend.api.threads.version.router import router as version_router
 
 router = APIRouter(prefix="/threads", tags=["threads"])
 router.include_router(node_router)
 router.include_router(tasks_router)
+router.include_router(version_router)
 
 
 TThreadId = Annotated[str, Path(description="LangGraph thread UUID")]

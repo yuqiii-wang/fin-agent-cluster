@@ -80,7 +80,6 @@ _COMPONENT_LABELS: list[tuple[str, str]] = [
     ("backend.resources.news",                       "Resources/News"),
     ("backend.resources.stats",                      "Resources/Stats"),
     ("backend.resources",                            "Resources"),
-    ("backend.sse_notifications",                    "SSE/Notify"),
     ("backend.celery_task.workers",                  "Stream/Workers"),
     ("backend.celery_task",                          "Streaming"),
     ("backend.api",                                  "API"),
@@ -346,7 +345,6 @@ def get_logging_config() -> dict[str, Any]:
             "graph_file":              {**_file("graph.log"),              "level": "INFO"},
             "llm_file":                {**_file("llm.log"),                "level": "INFO"},
             "resources_file":          {**_file("resources.log"),          "level": "INFO"},
-            "sse_notifications_file":  {**_file("sse_notifications.log"),  "level": "INFO"},
             "streaming_file":          {**_file("streaming.log"),          "level": "INFO"},
             "users_file":              {**_file("users.log"),              "level": "INFO"},
             # Uvicorn-specific handlers (required by uvicorn internals)
@@ -401,11 +399,6 @@ def get_logging_config() -> dict[str, Any]:
             },
             "backend.langgraph": {
                 "handlers": ["console", "graph_file", "app_file"],
-                "level": "INFO",
-                "propagate": False,
-            },
-            "backend.sse_notifications": {
-                "handlers": ["console", "sse_notifications_file", "app_file"],
                 "level": "INFO",
                 "propagate": False,
             },

@@ -38,7 +38,7 @@ import logging
 from typing import Any
 
 from backend.celery_task.celery_engine import celery_engine
-from backend.celery_task.config import get_ondemand_queue
+from backend.celery_task.config import get_ondemand_queue, get_stream_queue
 from backend.langgraph.lifecycle.errors import ThreadCancelledError
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,7 @@ async def _await_result(
     thread_id: str,
     task_id: str,
     total_timeout: float,
+    node_id: str | None = None,
 ) -> dict[str, Any]:
     """Await *async_result* by polling the Celery result backend via async Redis.
 
@@ -72,18 +73,23 @@ async def _await_result(
         thread_id:     LangGraph thread UUID (for cancel-flag lookup).
         task_id:       Governance task UUID (for registry cleanup).
         total_timeout: Maximum seconds before ``TimeoutError`` is raised.
+        node_id:       Owning node UUID.  When provided the loop also checks
+                       the per-node cancel flag so a single-node cancel exits
+                       quickly instead of waiting for the full task timeout.
 
     Returns:
         The result dict from the Celery worker.
 
     Raises:
+        NodeCancelledError:  If the per-node cancel flag for *node_id* is set.
         ThreadCancelledError: If the Redis cancel flag for the thread is set.
         TimeoutError:         If *total_timeout* elapses before completion.
     """
     from backend.celery_task.config import CELERY_BACKEND_DB
     from backend.db.redis.client import get_client
-    from backend.main_thread.cancel_flag import is_cancel_flag_set
+    from backend.main_thread.cancel_flag import is_cancel_flag_set, is_node_cancel_flag_set
     from backend.langgraph.lifecycle.threads.manager import get_thread_registry
+    from backend.langgraph.lifecycle.errors import NodeCancelledError
 
     registry = get_thread_registry()
     registry.register_celery_result(task_id, async_result)
@@ -118,6 +124,12 @@ async def _await_result(
             if await is_cancel_flag_set(thread_id):
                 registry.revoke_celery_task(task_id)
                 raise ThreadCancelledError(thread_id)
+
+            # Check per-node cancel flag — set by cancel_node API for single-node
+            # cancellation (e.g. one branch of a parallel group cancelled by user).
+            if node_id and await is_node_cancel_flag_set(node_id):
+                registry.revoke_celery_task(task_id)
+                raise NodeCancelledError(node_id)
 
             raw = await client.get(result_key)
             if raw is not None:
@@ -176,24 +188,22 @@ async def delegate_completion(
     _t_dispatch = _time.monotonic()
     try:
         result = await _await_result(
-            async_result, thread_id, task_id, _COMPLETION_TIMEOUT
+            async_result, thread_id, task_id, _COMPLETION_TIMEOUT, node_id=node_id
         )
     except (ThreadCancelledError, TimeoutError):
         # Cancel and timeout have their own SSE paths (cancel_task / node except block).
         raise
     except Exception as exc:
-        # Celery worker raised — emit task:failed SSE from the graph runner loop.
+        # Celery worker raised — emit task:failed SSE before re-raising so the
+        # failure event arrives at the UI before any node-level events.
         logger.error(
             "[task_delegation] task failed task_id=%s task_name=%s thread_id=%s: %s",
             task_id, task_name, thread_id, exc,
         )
-        asyncio.create_task(
-            _emit_task_sse(
-                thread_id, task_id, node_id, node_name, task_name,
-                status="failed",
-                payload={"output": {"error": str(exc)}},
-            ),
-            name=f"sse-task-failed-{task_id}",
+        await _emit_task_sse(
+            thread_id, task_id, node_id, node_name, task_name,
+            status="failed",
+            payload={"output": {"error": str(exc)}},
         )
         raise
 
@@ -208,16 +218,14 @@ async def delegate_completion(
             "[task_delegation] celery done task_id=%s task_name=%s celery_ms=%.0f",
             task_id, task_name, _celery_ms,
         )
-    # Emit task:completed SSE as a background task so the graph runner
-    # proceeds immediately to complete_node without waiting for the ACK
-    # round-trip.
-    asyncio.create_task(
-        _emit_task_sse(
-            thread_id, task_id, node_id, node_name, task_name,
-            status="completed",
-            payload={"output": result},
-        ),
-        name=f"sse-task-completed-{task_id}",
+    # Await task:completed SSE so the event is published and ACKed before
+    # delegate_completion returns.  This guarantees task:completed arrives at
+    # the UI before complete_node fires node:completed, preventing out-of-order
+    # events on the shared Centrifugo thread channel.
+    await _emit_task_sse(
+        thread_id, task_id, node_id, node_name, task_name,
+        status="completed",
+        payload={"output": result},
     )
     return result
 
@@ -231,10 +239,13 @@ async def _emit_task_sse(
     status: str,
     payload: dict[str, Any],
 ) -> None:
-    """Emit a task_status SSE event (fire-and-forget wrapper).
+    """Emit a task_status SSE event and await ACK before returning.
 
-    Called as an ``asyncio.create_task`` background coroutine from
-    ``delegate_completion`` so it does not block the graph runner.
+    Called from ``delegate_completion`` (awaited, not as a background task)
+    so that task:completed / task:failed is published and ACKed before
+    ``complete_node`` fires its own node-level SSE.  This enforces
+    task → node → subgraph → next_node ordering on the shared Centrifugo
+    thread channel.
 
     Args:
         thread_id: LangGraph thread UUID.
@@ -310,7 +321,7 @@ async def delegate_stream(
     async_result = celery_engine.send_task(
         "backend.celery_task.workers.tasks.stream_task.run_stream",
         args=[thread_id, task_id, task_name, node_name, payload],
-        queue=get_ondemand_queue(thread_id),
+        queue=get_stream_queue(thread_id),
     )
     result = await _await_result(
         async_result, thread_id, task_id, _STREAM_TIMEOUT

@@ -20,14 +20,16 @@ const NodeCircle: React.FC<Props> = ({ node, pos, isSelected, onSelect }) => {
   const r = node.type === 'Subgraph' ? SUBGRAPH_RADIUS : NODE_RADIUS;
   const color = nodeColor(node.status) ?? COLOR_GRAPH_FALLBACK_NODE;
   const label = node.node_name.replace(/_/g, ' ');
+  const isPlaceholder = !!node.is_topology_only;
 
   return (
     <g style={{ cursor: 'pointer' }} onClick={onSelect}>
       <circle
         cx={pos.x} cy={pos.y} r={r}
-        fill={color} fillOpacity={0.85}
+        fill={color} fillOpacity={isPlaceholder ? 0.25 : 0.85}
         stroke={isSelected ? COLOR_GRAPH_SELECTED_RING : color}
         strokeWidth={isSelected ? 3 : 1.5}
+        strokeDasharray={isPlaceholder ? '4 3' : undefined}
         filter={isSelected ? `drop-shadow(0 0 6px ${COLOR_GRAPH_SELECTED_GLOW})` : undefined}
       />
       {node.status === 'running' && (

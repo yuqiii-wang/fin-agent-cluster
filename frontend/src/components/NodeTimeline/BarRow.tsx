@@ -5,7 +5,7 @@ import {
   COLOR_PARALLEL_ACTIVE, COLOR_PARALLEL_INACTIVE,
   COLOR_SUBGRAPH_INDICATOR_DIM, COLOR_SURFACE_BASE,
   COLOR_TEXT_ACTIVE, COLOR_TEXT_BRIGHT, COLOR_TEXT_DIM, COLOR_TEXT_FAINT, COLOR_TEXT_MUTED,
-  COLOR_TICK_MAIN,
+  COLOR_TICK_MAIN, COLOR_STATUS_DARK_FALLBACK,
 } from '../../constants/styleColors';
 import { AXIS_TICKS, BAR_H, LABEL_W, NARROW_PCT } from './constants';
 import { buildOverlapRects, formatMs } from './utils';
@@ -13,7 +13,7 @@ import type { EffectiveSpan } from './utils';
 import TaskGantt from './TaskGantt';
 import type { NodeInfo, TaskInfo } from '../../types';
 
-const sdark   = (s: string) => STATUS_DARK[s]   ?? '#2d2d2d';
+const sdark   = (s: string) => STATUS_DARK[s]   ?? COLOR_STATUS_DARK_FALLBACK;
 const sbright = (s: string) => STATUS_BRIGHT[s] ?? COLOR_TEXT_MUTED;
 
 interface Props {

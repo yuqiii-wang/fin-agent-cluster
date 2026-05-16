@@ -79,7 +79,6 @@ class NodeType(StrEnum):
     """
 
     WORKFLOW = "Workflow"
-    REFERENCE = "Reference"
     SUBGRAPH = "Subgraph"
 
 

@@ -29,6 +29,19 @@ class ThreadCancelledError(RuntimeError):
         self.thread_id = thread_id
 
 
+class NodeCancelledError(RuntimeError):
+    """Raised when a specific node is cancelled externally (API ``cancel_node``).
+
+    Detected by polling a per-node Redis cancel flag inside ``_await_result``.
+    ``BaseNode.__call__`` catches this and returns a ``cancelled`` state delta
+    instead of re-raising, so the other parallel branches continue unaffected.
+    """
+
+    def __init__(self, node_id: str) -> None:
+        super().__init__(f"Node '{node_id}' was cancelled")
+        self.node_id = node_id
+
+
 __all__ = [
     "LIFECYCLE_THREAD_NOT_FOUND",
     "LIFECYCLE_NODE_NOT_FOUND",
@@ -39,5 +52,6 @@ __all__ = [
     "LIFECYCLE_SSE_ERROR",
     "LIFECYCLE_CHECKPOINT_NOT_FOUND",
     "LIFECYCLE_REEXPLORE_FAILED",
+    "NodeCancelledError",
     "ThreadCancelledError",
 ]

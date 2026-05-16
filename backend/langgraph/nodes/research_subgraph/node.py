@@ -24,6 +24,13 @@ Execution pattern
     merge_node runs with a ``MergeInput`` constructed from the two
     parallel outputs — this is intra-subgraph task output chaining.
 
+Data flow
+---------
+``build_input`` reads query_node's output from ``fin_agents.node_executions``
+via the PG replica (``read_node_output``).  ResearchSubgraphInput mirrors
+QueryNodeOutput (intent, symbols, filters) — the regional analyze node is
+the graph topology predecessor but the data dependency is on query_node.
+
 Agent upgrade path
 ------------------
 ``orchestrate`` can be replaced with an LLM agent that uses read_stats,
@@ -40,7 +47,7 @@ from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel,
 
 from backend.db.postgres.types import NodeType
 from backend.langgraph.nodes.base.node import BaseNode, ChildNode
-from backend.langgraph.lifecycle import make_task_id
+from backend.langgraph.lifecycle import make_task_id, read_node_output
 from backend.langgraph.nodes.base.models import NodeContext, TaskContext, TaskOutput
 from backend.langgraph.nodes.base.task import NodeTask
 from backend.langgraph.nodes.research_subgraph.models import (
@@ -146,14 +153,24 @@ class ResearchSubgraph(BaseNode[ResearchSubgraphInput, ResearchSubgraphOutput]):
     node_name = "research_subgraph"
     node_type = NodeType.SUBGRAPH
     tasks: list[NodeTask] = [read_stats, read_news, merge_results]
+    _prev_node_names: list[str] = ["apac_analyze_node", "emea_analyze_node", "amer_analyze_node"]
 
     _stats_node: _StatsNode = _StatsNode()
     _news_node: _NewsNode = _NewsNode()
     _merge_node: _MergeNode = _MergeNode()
 
-    def build_input(self, state: GraphState) -> ResearchSubgraphInput:
-        """Read query_node output from state["query_analysis"]."""
-        return ResearchSubgraphInput.model_validate(state.get("query_analysis", {}))
+    async def build_input(self, state: GraphState) -> ResearchSubgraphInput:
+        """Read query_node output from the PG replica.
+
+        ResearchSubgraphInput mirrors QueryNodeOutput (intent, symbols, filters).
+        The graph topology predecessor is a regional analyze node, but the
+        data dependency is on query_node's output.
+        """
+        query_node_id = self._find_node_id_by_name(state, "query_node")
+        qa: dict = {}
+        if query_node_id:
+            qa = await read_node_output(query_node_id)
+        return ResearchSubgraphInput.model_validate(qa)
 
     def build_chain(
         self, ctx: NodeContext
@@ -229,12 +246,8 @@ class ResearchSubgraph(BaseNode[ResearchSubgraphInput, ResearchSubgraphOutput]):
         )
 
     def get_state_updates(self, output: ResearchSubgraphOutput) -> dict[str, Any]:
-        """Fan out subgraph output into three separate state slices."""
-        return {
-            "stats_data": output.stats_data,
-            "news_data": output.news_data,
-            "merged_research": output.merged_research,
-        }
+        """No state updates — output stored in node_executions via lifecycle."""
+        return {}
 
 
 # Module-level callable registered with LangGraph StateGraph.
