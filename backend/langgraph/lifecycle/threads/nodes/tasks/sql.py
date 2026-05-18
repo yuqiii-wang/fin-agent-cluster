@@ -1,13 +1,13 @@
 """SQL query constants for task-level lifecycle operations."""
 
-# Params: (task_id, thread_id, node_id, node_name, task_name, fencing_token)
+# Params: (task_id, thread_id, node_id, node_name, task_name, view_type, stats_views, fencing_token)
 # ON CONFLICT DO NOTHING because task_id is a UUID4 — duplicates cannot
 # occur in normal operation; the guard is a safety net.
 _INSERT_TASK = """
     INSERT INTO fin_agents.tasks
-        (task_id, thread_id, node_id, node_name, task_name, status,
+        (task_id, thread_id, node_id, node_name, task_name, view_type, stats_views, status,
          created_at, updated_at, fencing_token)
-    VALUES (%s, %s, %s, %s, %s, 'running', NOW(), NOW(), %s)
+    VALUES (%s, %s, %s, %s, %s, %s::fin_agents.task_view_types, %s, 'running', NOW(), NOW(), %s)
     ON CONFLICT (task_id) DO NOTHING
 """
 

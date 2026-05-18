@@ -8,10 +8,18 @@ export interface ReadStatsInput {
   interval: string;
 }
 
+/** Pandas split-orient DataFrame serialisation. */
+export interface DfSplit {
+  index: string[];
+  columns: string[];
+  data: number[][];
+}
+
 export interface ReadStatsOutput {
   symbol: string;
   interval: string;
-  records: Record<string, unknown>[];
+  /** Pandas split-orient dict produced by matrix_to_split(). */
+  df_split: DfSplit;
 }
 
 export interface ReadNewsInput {

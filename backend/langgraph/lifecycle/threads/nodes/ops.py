@@ -116,6 +116,9 @@ async def upsert_node(
     prev_node_ids: list[str] | None = None,
     is_forked: bool = False,
     forked_from_version: int | None = None,
+    view_type: str = "Json",
+    view_schema: dict[str, Any] | None = None,
+    stats_views: list[str] | None = None,
 ) -> None:
     """Persist a node execution row (INSERT or UPDATE to running).
 
@@ -154,11 +157,17 @@ async def upsert_node(
         is_forked:           ``True`` for the first node of a re-explore fork branch.
         forked_from_version: Version that this fork branched from; set on the
             is_forked node and all sibling nodes in the same version.
+        view_type:           ``fin_agents.node_view_types`` value for this node
+            (``"Json"``, ``"Mirror"``, ``"Hybrid"``, etc.).
+        view_schema:         Per-field rendering schema used with ``Mirror`` and
+            ``Hybrid`` view types.  ``Mirror``: ``{"task_id": "<id>"}``.  ``Hybrid``:
+            ``{"<field>": "<view_type>" | {"type": "Mirror", "task_id": "<id>"}}""}``.
     """
     from backend.main_thread.context import get_fencing_token
     fencing_token = get_fencing_token()
 
     prev_ids = prev_node_ids or []
+    views = stats_views or []
     # Infer parallel_branch from node_name when group is set but branch omitted.
     effective_branch = parallel_branch or (node_name if parallel_group else None)
 
@@ -171,7 +180,8 @@ async def upsert_node(
                     node_id, thread_id, version, node_type, parent_node_id,
                     node_name, checkpoint_id, prev_ids,
                     parallel_group, effective_branch, fencing_token,
-                    is_forked, forked_from_version,
+                    is_forked, forked_from_version, view_type,
+                    json.dumps(view_schema or {}), views,
                 ),
             )
             await conn.execute(
@@ -317,32 +327,73 @@ async def _complete_node_internal(
 
 
 async def read_node_output(node_id: str) -> dict[str, Any]:
-    """Read the execution output for a completed node from the PG replica.
+    """Read the execution output for a completed node.
 
-    Downstream nodes call this instead of passing data through GraphState.
-    Always reads from the replica connection to alleviate primary DB load.
+    Queries the read replica first.  Falls back to the primary when the
+    replica has not yet synced a recently-completed node (status still shows
+    as ``running`` or ``pending`` due to replication lag).
+
+    Only returns output when the node ``status`` is ``completed``.  Returns
+    an empty dict when the node is still in-flight, failed, or cancelled so
+    that callers do not proceed on an incomplete predecessor.
+
+    For Mirror nodes the stored output is ``{"task_id": "..."}`` — this
+    function transparently resolves the reference by fetching the
+    corresponding row from ``fin_agents.task_executions``.
 
     Args:
         node_id: UUID5-derived node ID.
 
     Returns:
-        The ``output`` JSONB dict from ``fin_agents.node_executions``.
-        Returns an empty dict if no row exists.
+        The resolved ``output`` JSONB dict.
+        Returns an empty dict if the node is not completed or no row exists.
     """
+    _QUERY = """
+        SELECT n.status, n.view_type, ne.output
+        FROM fin_agents.node_executions ne
+        JOIN fin_agents.nodes n ON n.node_id = ne.node_id
+        WHERE ne.node_id = %s
+    """
+
+    async def _query_row(readonly: bool):
+        async with raw_conn(readonly=readonly) as conn:
+            cur = await conn.execute(_QUERY, (node_id,))
+            return await cur.fetchone()
+
     try:
-        async with raw_conn(readonly=True) as conn:
-            cur = await conn.execute(
-                "SELECT output FROM fin_agents.node_executions WHERE node_id = %s",
-                (node_id,),
-            )
-            row = await cur.fetchone()
-        return row["output"] if row else {}
+        row = await _query_row(readonly=True)
+        # Replica may lag behind primary for recently-completed nodes;
+        # fall back to primary if the row is absent or still in-flight.
+        if row is None or row["status"] in ("running", "pending"):
+            row = await _query_row(readonly=False)
     except Exception as exc:
         logger.error(
             "[%s] read_node_output DB error node_id=%s: %s",
             LIFECYCLE_DB_ERROR, node_id, exc,
         )
         raise
+
+    if not row or row["status"] != "completed":
+        return {}
+
+    if row["view_type"] == "Mirror" and row["output"] and "task_id" in row["output"]:
+        task_id = row["output"]["task_id"]
+        try:
+            async with raw_conn(readonly=True) as conn:
+                cur = await conn.execute(
+                    "SELECT output FROM fin_agents.task_executions WHERE task_id = %s",
+                    (task_id,),
+                )
+                task_row = await cur.fetchone()
+            return task_row["output"] if task_row else {}
+        except Exception as exc:
+            logger.error(
+                "[%s] read_node_output DB error node_id=%s task_id=%s: %s",
+                LIFECYCLE_DB_ERROR, node_id, task_id, exc,
+            )
+            raise
+
+    return row["output"] or {}
 
 
 async def get_latest_sibling_node_version(

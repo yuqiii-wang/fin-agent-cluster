@@ -69,7 +69,7 @@ const StreamViewer: React.FC<StreamViewerProps> = ({
 
   const [localTokens, setLocalTokens] = useState<string[]>([]);
   const [localDone, setLocalDone] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLocalTokens([]);
@@ -101,7 +101,8 @@ const StreamViewer: React.FC<StreamViewerProps> = ({
   }, [isLive]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = scrollContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [localTokens.length]);
 
   const live = isLive || (shouldSubscribe && !localDone);
@@ -124,6 +125,7 @@ const StreamViewer: React.FC<StreamViewerProps> = ({
           />
         </div>
         <div
+          ref={scrollContainerRef}
           style={{
             ...mdBoxBase,
             maxHeight,
@@ -135,7 +137,6 @@ const StreamViewer: React.FC<StreamViewerProps> = ({
           }}
         >
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{liveText}</ReactMarkdown>
-          <div ref={bottomRef} />
         </div>
       </div>
     );
@@ -143,13 +144,19 @@ const StreamViewer: React.FC<StreamViewerProps> = ({
 
   // Completed stream — read thinking from task.output (backend-extracted).
   const thinking = task?.output?.thinking as string | undefined;
-  const answer = task?.output?.answer as string | undefined;
+  const answerRaw = task?.output?.answer;
+  const answer = answerRaw !== undefined && answerRaw !== null ? answerRaw : undefined;
 
   const handleOutputClick = onViewData
     ? () => {
         const parts: string[] = [];
         if (thinking) parts.push(`### Thinking\n\n${thinking}`);
-        if (answer) parts.push(`### Answer\n\n${answer}`);
+        if (answer !== undefined) {
+          const answerText = typeof answer === 'string'
+            ? answer
+            : '```json\n' + JSON.stringify(answer, null, 2) + '\n```';
+          parts.push(`### Answer\n\n${answerText}`);
+        }
         onViewData(`${task?.task_name ?? 'stream'} · Output`, parts.join('\n\n---\n\n') || '(no output)');
       }
     : undefined;

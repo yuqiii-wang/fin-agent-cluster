@@ -29,9 +29,9 @@ from langchain_core.runnables import Runnable, RunnableLambda
 
 from backend.db.postgres.types import NodeType
 from backend.langgraph.lifecycle import read_node_output
-from backend.langgraph.nodes.base.node import BaseNode
-from backend.langgraph.nodes.base.models import NodeContext, TaskOutput
-from backend.langgraph.nodes.base.task import NodeTask
+from backend.langgraph.models.node import BaseNode
+from backend.langgraph.models.models import NodeContext, TaskOutput
+from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.regional_analyze_nodes.models import (
     RegionalAnalyzeInput,
     RegionalAnalyzeOutput,

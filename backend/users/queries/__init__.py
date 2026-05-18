@@ -12,6 +12,7 @@ from backend.users.queries.status import (
     get_node_executions,
     get_version_graph,
     get_query_tasks,
+    get_task_by_id,
 )
 from backend.users.queries.lifecycle import (
     ack_query,
@@ -30,6 +31,7 @@ __all__ = [
     "get_node_executions",
     "get_query_status",
     "get_query_tasks",
+    "get_task_by_id",
     "get_version_graph",
     "re_explore_node",
     "resume_query",

@@ -12,12 +12,15 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Descriptions, Space, Tag, Tooltip, Typography } from 'antd';
 import { ArrowLeftOutlined, BranchesOutlined, StopOutlined } from '@ant-design/icons';
+import { viewTypeToMode } from '../DataViewer/index';
 import TaskDetail from './TaskDetail';
 import SubgraphNode from './SubgraphNode';
 import { COLOR_SURFACE_RAISED, COLOR_TEXT_SECONDARY } from '../../constants/styleColors';
 import { STATUS_HEX, STATUS_TAG_COLOR } from '../../constants/statusColors';
 import { isWorkActive, TERMINAL_WORK_STATUSES } from '../../constants/lifecycleStatus';
+
 import type { NodeInfo, TaskInfo } from '../../types';
+import type { DataViewerMode } from '../DataViewer/index';
 
 const { Title, Text } = Typography;
 
@@ -32,7 +35,7 @@ interface Props {
   /** Active version being viewed; used to mark shared nodes from older versions. */
   activeVersion?: number;
   /** Called when the user wants to inspect data in the bottom DataViewer panel. */
-  onViewData?: (label: string, data: unknown) => void;
+  onViewData?: (label: string, data: unknown, opts?: { mode?: DataViewerMode; viewSchema?: Record<string, string>; fieldList?: boolean; nodeContext?: 'input' | 'output' }) => void;
   /** Called when the user clicks a child node (subgraph navigation). */
   onSelectNode?: (nodeId: string) => void;
   /** Called when the user cancels the node. */
@@ -164,7 +167,7 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
           {node.input && (
             <Button
               size="small"
-              onClick={() => onViewData?.(`${node.node_name} · Input`, node.input)}
+              onClick={() => onViewData?.(`${node.node_name} · Input`, node.input, { nodeContext: 'input' })}
             >
               Input
             </Button>
@@ -172,7 +175,12 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
           {node.output && (
             <Button
               size="small"
-              onClick={() => onViewData?.(`${node.node_name} · Output`, node.output)}
+              onClick={() => onViewData?.(`${node.node_name} · Output`, node.output, {
+                mode: viewTypeToMode(node.view_type),
+                viewSchema: node.view_schema as Record<string, string> | undefined,
+                fieldList: true,
+                nodeContext: 'output',
+              })}
             >
               Output
             </Button>
@@ -197,7 +205,14 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
                 background: hoveredTaskId === t.task_id ? COLOR_SURFACE_RAISED : 'transparent',
                 transition: 'background 0.15s',
               }}
-              onClick={() => setView({ type: 'task', taskId: t.task_id })}
+              onClick={() => {
+                setView({ type: 'task', taskId: t.task_id });
+                if (t.output) {
+                  onViewData?.(`${t.task_name} · Output`, t.output, {
+                    mode: viewTypeToMode(t.view_type),
+                  });
+                }
+              }}
               onMouseEnter={() => setHoveredTaskId(t.task_id)}
               onMouseLeave={() => setHoveredTaskId(null)}
             >

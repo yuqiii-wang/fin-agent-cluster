@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from backend.api.graph.topology import GraphTopologyResponse
 from backend.langgraph.lifecycle.ids import strip_node_suffix
@@ -87,7 +87,10 @@ class TaskInfo(BaseModel):
     node_name: str
     task_name: str
     status: str
+    view_type: str = "ToolCall"
+    stats_views: list[str] = Field(default_factory=list)
     is_streaming: bool = False
+    view_schema: Optional[dict[str, Any]] = None
     input: Optional[dict[str, Any]] = None
     output: Optional[dict[str, Any]] = None
     created_at: Optional[datetime] = None
@@ -125,6 +128,10 @@ class NodeExecutionInfo(BaseModel):
     # Fork-point metadata
     is_forked: bool = False
     forked_from_version: Optional[int] = None
+    # View rendering hints
+    view_type: str = "Json"
+    view_schema: dict[str, Any] = Field(default_factory=dict)
+    stats_views: list[str] = Field(default_factory=list)
     # Execution payloads (sourced from JOIN with node_executions)
     input: Optional[dict[str, Any]] = None
     output: Optional[dict[str, Any]] = None

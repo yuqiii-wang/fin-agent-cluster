@@ -172,22 +172,24 @@ export function useConcurrencyThread({
         // and let checkDrain() set the terminal status only after all in-flight
         // ACK confirmations have arrived. This prevents the SSE connection from
         // being torn down before ack_confirmed events for the final burst reach us.
-        // checkDrain() is called immediately to handle the history-replay fast path
-        // where all ACKs are already confirmed by the time 'done' fires.
+        // NOTE: do NOT call checkDrain() here — the terminal event's own ACK has
+        // not been registered in sentAckKeysRef yet. Calling checkDrain() at this
+        // point would see sentSize == confirmedSize (equal) and immediately trigger
+        // done=true, tearing down the connection before the terminal event's ACK
+        // publish completes (causing one perpetually missing ACK). checkDrain() is
+        // called at the bottom of the handler (after ACK registration) and also in
+        // the early-return paths below to cover retry and history-replay cases.
         if (ev.event === 'done') {
           wantsCloseRef.current = true;
           terminalStatusRef.current = 'completed';
-          checkDrain();
         } else if (ev.event === 'thread_failed') {
           wantsCloseRef.current = true;
           terminalStatusRef.current = 'failed';
-          checkDrain();
         } else if (ev.event === 'thread_status') {
           const s = ev.status as string | undefined;
           if (s === 'cancelled') {
             wantsCloseRef.current = true;
             terminalStatusRef.current = 'cancelled';
-            checkDrain();
           }
         } else if (ev.event === 'node_status' || ev.event === 'task_status') {
           // Infer thread-level 'running' from the first active node/task event,
@@ -199,7 +201,7 @@ export function useConcurrencyThread({
             const latency = Date.now() - submitTime;
             onUpdateRef.current(threadId, { latencyToConclusion: latency });
           }
-          if (ev.event === 'task_status' && ev.task_name === 'stream_conclusion') {
+          if (ev.event === 'task_status' && ev.view_type === 'Streaming') {
             const s = ev.status as string | undefined;
             if (s && (isWorkActive(s) || isWorkTerminal(s))) {
               onUpdateRef.current(threadId, { streamTaskStatus: s as import('./types').ThreadRow['streamTaskStatus'] });
@@ -218,8 +220,17 @@ export function useConcurrencyThread({
 
         // Deduplicate sending: history can replay the same event multiple times
         // (backend retries with the same ack_key). Only send one publish per key.
-        if (confirmedKeysRef.current.has(ackKey)) return;
-        if (sentAckKeysRef.current.has(ackKey)) return;
+        // Call checkDrain() before returning so that terminal events which arrive
+        // as retries or history-replays (already in sent/confirmed sets) still
+        // trigger the drain gate correctly.
+        if (confirmedKeysRef.current.has(ackKey)) {
+          if (wantsCloseRef.current) checkDrain();
+          return;
+        }
+        if (sentAckKeysRef.current.has(ackKey)) {
+          if (wantsCloseRef.current) checkDrain();
+          return;
+        }
         sentAckKeysRef.current.add(ackKey);
 
         acksSentRef.current += 1;
@@ -249,7 +260,9 @@ export function useConcurrencyThread({
           sentAckKeysRef.current.delete(ackKey);
           checkDrain();
         });
-        // Check drain immediately: handles the terminal-event + all-confirmed fast path.
+        // Check drain after ACK is registered: handles both the normal case
+        // (terminal event's ACK now in sentAckKeysRef so drain waits for it)
+        // and the fast path where all ACKs are already confirmed.
         checkDrain();
       });
 

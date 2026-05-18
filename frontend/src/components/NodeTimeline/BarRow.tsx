@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { STATUS_BRIGHT, STATUS_DARK } from '../../constants/statusColors';
 import {
   COLOR_BORDER_STRONG, COLOR_OVERLAP_BORDER, COLOR_OVERLAP_FILL,
@@ -7,9 +7,9 @@ import {
   COLOR_TEXT_ACTIVE, COLOR_TEXT_BRIGHT, COLOR_TEXT_DIM, COLOR_TEXT_FAINT, COLOR_TEXT_MUTED,
   COLOR_TICK_MAIN, COLOR_STATUS_DARK_FALLBACK,
 } from '../../constants/styleColors';
-import { AXIS_TICKS, BAR_H, LABEL_W, NARROW_PCT } from './constants';
+import { AXIS_TICKS, BAR_H, GAP_VISUAL_PCT, LABEL_W, NARROW_PCT } from './constants';
 import { buildOverlapRects, formatMs } from './utils';
-import type { EffectiveSpan } from './utils';
+import type { EffectiveSpan, GapSegment } from './utils';
 import TaskGantt from './TaskGantt';
 import type { NodeInfo, TaskInfo } from '../../types';
 
@@ -38,7 +38,77 @@ interface Props {
   onNodeClick: (node: NodeInfo) => void;
   /** Collapses all expanded subgraphs/tasks; only provided when something is expanded. */
   onCollapseAll?: () => void;
+  /** Compressed time-gap segments to render as shaded squares over each bar track. */
+  gaps?: GapSegment[];
 }
+
+/** Renders BAR_H × BAR_H shaded squares over each compressed time gap. */
+const GapSquares: React.FC<{
+  gaps: GapSegment[];
+  pct: (ms: number) => number;
+}> = ({ gaps, pct }) => {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  return (
+    <>
+      {gaps.map((gap, i) => {
+        const midPct    = pct(gap.gapStart) + GAP_VISUAL_PCT / 2;
+        const skippedMs = gap.gapEnd - gap.gapStart;
+        const isHov     = hoveredIdx === i;
+        return (
+          <div
+            key={i}
+            onMouseEnter={() => setHoveredIdx(i)}
+            onMouseLeave={() => setHoveredIdx(null)}
+            style={{
+              position: 'absolute',
+              top: 0, height: BAR_H, width: BAR_H,
+              left: `calc(${midPct}% - ${BAR_H / 2}px)`,
+              background: `repeating-linear-gradient(
+                -45deg,
+                rgba(140,140,140,0.18),
+                rgba(140,140,140,0.18) 3px,
+                transparent 3px,
+                transparent 8px
+              )`,
+              border: `1px solid rgba(160,160,160,${isHov ? '0.6' : '0.3'})`,
+              borderRadius: 2,
+              boxSizing: 'border-box',
+              zIndex: 10,
+              cursor: 'default',
+              transition: 'border-color 0.12s',
+            }}
+          >
+            {isHov && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: BAR_H + 4,
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  background: 'rgba(24,24,24,0.95)',
+                  border: '1px solid rgba(160,160,160,0.4)',
+                  borderRadius: 3,
+                  padding: '3px 7px',
+                  fontSize: 10,
+                  color: 'rgba(210,210,210,0.95)',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                  zIndex: 20,
+                  lineHeight: 1.5,
+                }}
+              >
+                {formatMs(skippedMs)} skipped
+                {gap.forkVersion != null && (
+                  <><br />re-explore v{gap.forkVersion}{gap.forkNodeName ? ` · ${gap.forkNodeName}` : ''}</>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+};
 
 /** Renders one horizontal track for a subset of nodes (used for both shrunken and per-lane views). */
 const NodeTrack: React.FC<{
@@ -143,6 +213,7 @@ const BarRow: React.FC<Props> = ({
   nodeTaskMap, childrenMap, effectiveSpans,
   pct, tMin, onSelectNode, onNodeClick,
   onCollapseAll,
+  gaps,
 }) => {
   const hovNode = rowNodes.find(n => n.node_id === hoveredNodeId);
 
@@ -173,6 +244,7 @@ const BarRow: React.FC<Props> = ({
     expandedParallelRows, onToggleParallelRow,
     nodeTaskMap, childrenMap, effectiveSpans,
     pct, tMin, onSelectNode, onNodeClick,
+    gaps,
   };
 
   const trackSharedProps = {
@@ -230,8 +302,9 @@ const BarRow: React.FC<Props> = ({
                   >
                     {nodeLabel}
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, position: 'relative' }}>
                     <NodeTrack nodes={[node]} {...trackSharedProps} />
+                    {gaps && gaps.length > 0 && <GapSquares gaps={gaps} pct={pct} />}
                   </div>
                 </div>
                 {/* inline task Gantt for leaf nodes */}
@@ -290,8 +363,9 @@ const BarRow: React.FC<Props> = ({
               </span>
             ) : labelText}
           </div>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, position: 'relative' }}>
             <NodeTrack nodes={rowNodes} overlapRects={overlapRects} {...trackSharedProps} />
+            {gaps && gaps.length > 0 && <GapSquares gaps={gaps} pct={pct} />}
           </div>
         </div>
       )}

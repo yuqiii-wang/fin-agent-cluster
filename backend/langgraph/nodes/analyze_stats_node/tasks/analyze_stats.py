@@ -7,21 +7,20 @@ LangGraph layer (``_analyze_stats_task``):
     ``delegate_completion``, and calls ``complete_task`` on success / failure.
 
 Celery layer (``_handler``):
-    Computes key OHLCV-based metrics from the stats_data produced by
-    research_subgraph: period return, annualised volatility, trend
-    direction, and a human-readable narrative summary.
+    Reconstructs the pandas DataFrame from the ``df_split`` (split orient) stored
+    in ``ReadStatsOutput``, then delegates metric computation to
+    :func:`~backend.quant.stats.metrics.compute_metrics`.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from langgraph.func import task
 
 from backend.langgraph.lifecycle import complete_task, create_task
-from backend.langgraph.nodes.base.models import TaskInput, TaskOutput
-from backend.langgraph.nodes.base.task import NodeTask
+from backend.langgraph.models.models import TaskInput, TaskOutput
+from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.analyze_stats_node.models import AnalyzeStatsInput, AnalyzeStatsOutput
 from backend.celery_task.workers.task_delegation import delegate_completion
 
@@ -30,48 +29,13 @@ logger = logging.getLogger(__name__)
 _TASK_NAME = "analyze_stats"
 
 
-def _compute_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Derive key OHLCV metrics from a list of bar records.
-
-    Args:
-        records: List of OHLCV dicts, each expected to have a ``close`` key.
-
-    Returns:
-        Dict with ``return_pct``, ``volatility``, ``trend``, ``bar_count``.
-    """
-    closes = [float(r["close"]) for r in records if "close" in r]
-    if len(closes) < 2:
-        return {"return_pct": 0.0, "volatility": 0.0, "trend": "unknown", "bar_count": len(closes)}
-
-    returns = [(closes[i] - closes[i - 1]) / closes[i - 1] for i in range(1, len(closes))]
-    period_return = (closes[-1] - closes[0]) / closes[0] * 100
-
-    import statistics
-    volatility = statistics.stdev(returns) * 100 if len(returns) > 1 else 0.0
-
-    # Simple trend: compare last third vs first third averages
-    third = max(1, len(closes) // 3)
-    early_avg = sum(closes[:third]) / third
-    late_avg = sum(closes[-third:]) / third
-    if late_avg > early_avg * 1.01:
-        trend = "uptrend"
-    elif late_avg < early_avg * 0.99:
-        trend = "downtrend"
-    else:
-        trend = "sideways"
-
-    return {
-        "return_pct": round(period_return, 4),
-        "volatility": round(volatility, 4),
-        "trend": trend,
-        "bar_count": len(closes),
-        "first_close": round(closes[0], 4),
-        "last_close": round(closes[-1], 4),
-    }
-
-
 async def _handler(payload: dict) -> dict:
     """Analyse OHLCV stats data and produce key metrics + narrative.
+
+    Reads ``df_split`` from ``stats_data`` (the serialised ``ReadStatsOutput``),
+    delegates metric computation to
+    :func:`~backend.quant.stats.metrics.compute_metrics`, and builds a
+    human-readable narrative.
 
     Args:
         payload: Serialised ``AnalyzeStatsInput`` dict.
@@ -79,12 +43,14 @@ async def _handler(payload: dict) -> dict:
     Returns:
         Serialised ``AnalyzeStatsOutput`` dict.
     """
+    from backend.quant.stats.metrics import compute_metrics
+
     inp = AnalyzeStatsInput.model_validate(payload)
     stats_data = inp.stats_data
     symbol = stats_data.get("symbol", "")
-    records: list[dict[str, Any]] = stats_data.get("records", [])
+    df_split: dict = stats_data.get("df_split", {})
 
-    metrics = _compute_metrics(records)
+    metrics = compute_metrics(df_split)
     trend = metrics.get("trend", "unknown")
     ret = metrics.get("return_pct", 0.0)
     vol = metrics.get("volatility", 0.0)
@@ -119,7 +85,7 @@ async def _analyze_stats_task(
     ctx = task_input.ctx
     payload = task_input.content.model_dump()
 
-    await create_task(ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload)
+    await create_task(ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload, view_type="Stats")
     try:
         result = await delegate_completion(
             ctx.thread_id, ctx.task_id, ctx.node_id, ctx.node_name, ctx.task_name, payload
@@ -127,7 +93,7 @@ async def _analyze_stats_task(
     except Exception as exc:
         await complete_task(
             ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name,
-            failed=True, error=str(exc),
+            failed=True, error=str(exc), view_type="Stats",
         )
         raise
     output = AnalyzeStatsOutput.model_validate(result)

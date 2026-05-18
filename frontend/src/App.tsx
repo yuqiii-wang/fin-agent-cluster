@@ -119,7 +119,7 @@ const AppInner: React.FC = () => {
   const activeLive = activeId ? (liveInfo[activeId] ?? null) : null;
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
       <Header
         style={{
           display: 'flex',
@@ -136,7 +136,7 @@ const AppInner: React.FC = () => {
         <UserButton />
       </Header>
 
-      <Layout>
+      <Layout style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <Sider
           width={240}
           style={{

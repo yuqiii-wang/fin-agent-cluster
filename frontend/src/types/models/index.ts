@@ -1,5 +1,6 @@
 export type { AnalyzeQueryInput, AnalyzeQueryOutput } from './query';
 export type {
+  DfSplit,
   ReadStatsInput,
   ReadStatsOutput,
   ReadNewsInput,

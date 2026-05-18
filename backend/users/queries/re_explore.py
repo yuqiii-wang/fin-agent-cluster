@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from langgraph.errors import InvalidUpdateError
+
 from backend.db.postgres import raw_conn
 from backend.users.schemas import QueryResponse
 from backend.users.queries.status import get_query_status
@@ -170,7 +172,33 @@ async def re_explore_node(
     if input_override:
         state_update.update(input_override)
 
-    updated_config = await graph.aupdate_state(fork_config, state_update)
+    # Use as_node=None so LangGraph infers the predecessor from versions_seen,
+    # which keeps fork_point_name in `next` and lets ainvoke actually run it.
+    # Using as_node=fork_point_name would mark the fork-point as "already run",
+    # moving `next` past it and skipping its Python code entirely.
+    #
+    # For fan-in nodes (e.g. conclusion_node where both parallel predecessors
+    # ran at the same step), LangGraph raises "Ambiguous update" because
+    # versions_seen has two nodes at the same channel version.  In that case
+    # we pick one direct predecessor from the graph topology.
+    try:
+        updated_config = await graph.aupdate_state(fork_config, state_update)
+    except InvalidUpdateError as e:
+        if "Ambiguous" not in str(e):
+            raise
+        # Build predecessor map from compiled graph topology
+        _edges = graph.get_graph().edges
+        _predecessors = [
+            edge.source
+            for edge in _edges
+            if edge.target == fork_point_name
+            and edge.source not in ("__start__", "__end__")
+        ]
+        if not _predecessors:
+            raise
+        updated_config = await graph.aupdate_state(
+            fork_config, state_update, as_node=_predecessors[0]
+        )
 
     async with raw_conn() as conn:
         await conn.execute(

@@ -28,9 +28,9 @@ from typing import Any, ClassVar
 
 from backend.db.postgres.types import NodeType
 from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel
-from backend.langgraph.nodes.base.node import BaseNode
-from backend.langgraph.nodes.base.models import NodeContext, TaskOutput
-from backend.langgraph.nodes.base.task import NodeTask
+from backend.langgraph.models.node import BaseNode
+from backend.langgraph.models.models import NodeContext, TaskOutput
+from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.query_node.models import QueryNodeInput, QueryNodeOutput
 from backend.langgraph.nodes.query_node.tasks.analyze_query import analyze_query
 from backend.langgraph.nodes.query_node.tasks.capture_time import capture_time

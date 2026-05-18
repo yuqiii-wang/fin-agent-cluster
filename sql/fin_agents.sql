@@ -10,8 +10,18 @@ CREATE TYPE fin_agents.work_status AS ENUM ('pending', 'running', 'completed', '
 DROP TYPE IF EXISTS fin_agents.node_types CASCADE;
 CREATE TYPE fin_agents.node_types AS ENUM ('Workflow', 'Subgraph');
 
-DROP TYPE IF EXISTS fin_agents.task_types CASCADE;
-CREATE TYPE fin_agents.task_types AS ENUM ('Streaming', 'WebRequest', 'Computation', 'ToolCall');
+-- Task-level view types: one concrete rendering mode per task.
+-- Mirror and Hybrid are node-level concerns only.
+DROP TYPE IF EXISTS fin_agents.task_view_types CASCADE;
+CREATE TYPE fin_agents.task_view_types AS ENUM ('Streaming', 'WebRequest', 'Stats', 'ToolCall', 'Markdown', 'Json');
+
+-- Node-level view types: includes Mirror (delegates to a task's output) and
+-- Hybrid (multiple fields each with their own view type).
+DROP TYPE IF EXISTS fin_agents.node_view_types CASCADE;
+CREATE TYPE fin_agents.node_view_types AS ENUM ( 'Stats', 'Markdown', 'Json', 'Mirror', 'Hybrid');
+
+DROP TYPE IF EXISTS fin_agents.stats_view_types CASCADE;
+CREATE TYPE fin_agents.stats_view_types AS ENUM ( 'DataFrame', 'CandleStick', 'LineChart', 'BarChart', 'PieChart');
 
 
 CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
@@ -30,7 +40,6 @@ CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
 
 CREATE INDEX IF NOT EXISTS fin_agents_user_queries_user_id_idx ON fin_agents.user_queries (user_id);
 CREATE INDEX IF NOT EXISTS fin_agents_user_queries_created_at_idx ON fin_agents.user_queries (created_at DESC);
-
 
 
 -- Dedup guard — same-minute resubmission guard.
@@ -116,6 +125,15 @@ CREATE TABLE IF NOT EXISTS fin_agents.nodes (
     -- For the is_forked node: equals the source node's version at fork time.
     -- For non-forked nodes within the same version: also set to the source version
     -- so the API can return the full branch lineage without extra joins.
+    view_type     fin_agents.node_view_types NOT NULL DEFAULT 'Json',
+    -- Per-field view type schema for Hybrid and Mirror nodes.
+    -- Mirror: {"task_id": "<task_id>"}
+    -- Hybrid: {"<field>": "<view_type>" | {"type": "Mirror", "task_id": "<task_id>"}}
+    -- Simple: {}
+    view_schema   JSONB NOT NULL DEFAULT '{}',
+    -- Ordered list of stats_view_types values for Stats nodes.
+    -- Values are fin_agents.stats_view_types enum names stored as text.
+    stats_views   TEXT[] NOT NULL DEFAULT '{}',
     forked_from_version INTEGER,
     started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     elapsed_ms          INTEGER NOT NULL DEFAULT 0,
@@ -154,7 +172,10 @@ CREATE TABLE IF NOT EXISTS fin_agents.tasks (
     node_id       TEXT REFERENCES fin_agents.nodes (node_id) ON DELETE CASCADE,
     node_name     TEXT NOT NULL,
     task_name     TEXT NOT NULL,
-    type          fin_agents.task_types NOT NULL DEFAULT 'ToolCall',
+    view_type     fin_agents.task_view_types NOT NULL DEFAULT 'Json',
+    -- Ordered list of stats_view_types values applicable to this task (Stats view only).
+    -- Values are fin_agents.stats_view_types enum names stored as text for driver compatibility.
+    stats_views   TEXT[] NOT NULL DEFAULT '{}',
     status        fin_agents.work_status NOT NULL DEFAULT 'pending',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),

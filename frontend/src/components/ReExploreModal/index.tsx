@@ -1,13 +1,20 @@
 /**
  * ReExploreModal — modal dialog for re-exploring a graph node with optional input override.
  *
- * Shows the node's current input as an editable JSON block.
- * If the user submits without changes, a warning notice is shown.
- * On confirm, calls onConfirm with the edited input (or undefined if unchanged).
+ * For regular (non-conditional) nodes, shows the node's current input as an editable JSON
+ * block and forks directly from that node.
+ *
+ * For conditional topology-only nodes, the fork must come from the actual predecessor node
+ * that made the routing decision.  The modal shows which node will be forked, lets the user
+ * edit that node's input, and — when multiple parallel-branch predecessors exist — provides
+ * a dropdown so the user can choose which branch endpoint to fork from.
+ *
+ * onConfirm is always called with the actual node ID of the fork point (never a
+ * topology- placeholder) so the backend request is always an end-lifecycle node.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Button, Modal, Space, Tag, Typography } from 'antd';
+import { Alert, Button, Modal, Select, Space, Tag, Typography } from 'antd';
 import { BranchesOutlined } from '@ant-design/icons';
 import { COLOR_BORDER_BASE, COLOR_DANGER, COLOR_SURFACE_BASE, COLOR_TEXT_BODY } from '../../constants/styleColors';
 import type { NodeInfo } from '../../types';
@@ -16,12 +23,19 @@ const { Text, Paragraph } = Typography;
 
 interface Props {
   open: boolean;
+  /** The node the user clicked Re-explore on (may be a conditional topology-only placeholder). */
   node: NodeInfo | null;
   loading: boolean;
-  onConfirm: (inputOverride?: Record<string, unknown>) => void;
+  /**
+   * Actual predecessor nodes to fork from, resolved from the graph topology for
+   * conditional topology-only nodes.  When there is more than one candidate
+   * (parallel branches all routing to this conditional node) a dropdown is shown.
+   * Undefined for regular non-conditional nodes — fork happens from node itself.
+   */
+  prevNodes?: NodeInfo[];
+  /** Called with the actual node ID to fork from and an optional input override. */
+  onConfirm: (forkNodeId: string, inputOverride?: Record<string, unknown>) => void;
   onCancel: () => void;
-  /** Condition labels for conditional not-yet-run nodes (from topology edges). */
-  conditions?: string[];
 }
 
 function jsonEqual(a: unknown, b: unknown): boolean {
@@ -32,21 +46,40 @@ function jsonEqual(a: unknown, b: unknown): boolean {
   }
 }
 
-const ReExploreModal: React.FC<Props> = ({ open, node, loading, onConfirm, onCancel, conditions }) => {
-  const originalInput = node?.input ?? null;
+const ReExploreModal: React.FC<Props> = ({ open, node, loading, prevNodes, onConfirm, onCancel }) => {
+  // Which prev-node branch the user has selected (for the multi-branch dropdown).
+  // null means "use the first/only prev node".
+  const [selectedPrevNodeId, setSelectedPrevNodeId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [parseError, setParseError] = useState<string | null>(null);
   const [sameInputWarning, setSameInputWarning] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Reset editor state when modal opens with a new node.
+  // The prev node currently in focus (for conditional nodes) or null (regular nodes).
+  const activePrevNode: NodeInfo | null = prevNodes
+    ? (prevNodes.find(n => n.node_id === selectedPrevNodeId) ?? prevNodes[0] ?? null)
+    : null;
+
+  // The actual node whose checkpoint we will fork from.
+  const forkNode: NodeInfo | null = activePrevNode ?? node;
+  const originalInput = forkNode?.input ?? null;
+  const hasInput = !!originalInput && Object.keys(originalInput).length > 0;
+
+  // Reset editor state when the modal opens for a different node or when the
+  // selected prev node changes.
   useEffect(() => {
-    if (open && node) {
-      const text = node.input ? JSON.stringify(node.input, null, 2) : '{}';
+    if (open && forkNode) {
+      const text = forkNode.input ? JSON.stringify(forkNode.input, null, 2) : '{}';
       setEditText(text);
       setParseError(null);
       setSameInputWarning(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, node?.node_id, selectedPrevNodeId]);
+
+  // Reset the branch selection whenever the modal opens for a new target node.
+  useEffect(() => {
+    if (open) setSelectedPrevNodeId(null);
   }, [open, node?.node_id]);
 
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -56,6 +89,7 @@ const ReExploreModal: React.FC<Props> = ({ open, node, loading, onConfirm, onCan
   }, []);
 
   const handleConfirm = useCallback(() => {
+    if (!forkNode) return;
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(editText);
@@ -74,11 +108,11 @@ const ReExploreModal: React.FC<Props> = ({ open, node, loading, onConfirm, onCan
 
     // If empty object and no original input, pass undefined (no override).
     const override = Object.keys(parsed).length === 0 ? undefined : parsed;
-    onConfirm(override);
-  }, [editText, originalInput, sameInputWarning, onConfirm]);
+    onConfirm(forkNode.node_id, override);
+  }, [forkNode, editText, originalInput, sameInputWarning, onConfirm]);
 
-  const isTopologyOnly = !!node?.is_topology_only;
-  const hasInput = !!node?.input && Object.keys(node.input).length > 0;
+  const isConditionalTarget = prevNodes !== undefined;
+  const noPrevNodesFound = isConditionalTarget && prevNodes.length === 0;
 
   return (
     <Modal
@@ -99,39 +133,61 @@ const ReExploreModal: React.FC<Props> = ({ open, node, loading, onConfirm, onCan
             type="primary"
             icon={<BranchesOutlined />}
             loading={loading}
-            onClick={isTopologyOnly ? () => onConfirm(undefined) : handleConfirm}
-            danger={!isTopologyOnly && sameInputWarning}
+            onClick={handleConfirm}
+            disabled={!forkNode || noPrevNodesFound}
+            danger={sameInputWarning}
           >
-            {!isTopologyOnly && sameInputWarning ? 'Confirm anyway' : 'Re-explore'}
+            {sameInputWarning ? 'Confirm anyway' : 'Re-explore'}
           </Button>
         </Space>
       }
       width={560}
       destroyOnHidden
     >
-      {isTopologyOnly ? (
-        <>
-          <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-            This node has not run. It will execute when the following condition is met:
+      {/* ── Conditional-node header ─────────────────────────────────────── */}
+      {isConditionalTarget && (
+        <div style={{ marginBottom: 16 }}>
+          <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+            <Text strong>{node?.node_name}</Text> has not run — the graph will be forked
+            from the node that made the routing decision.
           </Paragraph>
-          {conditions?.length ? (
-            <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {conditions.map((c, i) => (
-                <Tag key={i} color="blue">{c}</Tag>
-              ))}
+
+          {noPrevNodesFound ? (
+            <Alert
+              type="error"
+              message="No predecessor node found for this conditional branch."
+              showIcon
+            />
+          ) : prevNodes.length > 1 ? (
+            <div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                Select which branch endpoint to fork from:
+              </Text>
+              <Select
+                value={activePrevNode?.node_id}
+                onChange={setSelectedPrevNodeId}
+                style={{ width: '100%' }}
+                options={prevNodes.map(n => ({ label: n.node_name, value: n.node_id }))}
+              />
             </div>
           ) : (
-            <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-              No condition labels available.
+            <div>
+              <Text type="secondary" style={{ fontSize: 12 }}>Forking from: </Text>
+              <Tag color="blue">{activePrevNode?.node_name}</Tag>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Input editor (same UI for both conditional and regular nodes) ── */}
+      {forkNode && !noPrevNodesFound && (
+        <>
+          {isConditionalTarget && activePrevNode && (
+            <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+              <Text strong>{activePrevNode.node_name}</Text> will be re-explored from its checkpoint.
             </Paragraph>
           )}
-          <Paragraph type="secondary" style={{ fontSize: 12 }}>
-            Re-exploring forks the graph just before the routing decision, allowing this
-            branch to run if conditions are met.
-          </Paragraph>
-        </>
-      ) : (
-        <>
+
           {!hasInput ? (
             <Paragraph type="secondary" style={{ marginBottom: 12 }}>
               This node takes no explicit input — it reads directly from the graph state.

@@ -65,8 +65,8 @@ from backend.langgraph.lifecycle import (
     make_task_id,
     upsert_node,
 )
-from backend.langgraph.nodes.base.models import NodeContext, TaskContext, TaskInput, TaskOutput
-from backend.langgraph.nodes.base.task import NodeTask
+from backend.langgraph.models.models import NodeContext, TaskContext, TaskInput, TaskOutput
+from backend.langgraph.models.task import NodeTask
 
 I = TypeVar("I")
 O = TypeVar("O")
@@ -95,6 +95,11 @@ class BaseNode(ABC, Generic[I, O]):
 
     node_name: ClassVar[str]
     node_type: ClassVar[NodeType]
+    view_type: ClassVar[str] = "Json"
+    # Per-field rendering schema for Mirror/Hybrid nodes.
+    # Mirror: {"task_id": "<task_id>"}
+    # Hybrid: {"<field>": "<view_type>" | {"type": "Mirror", "task_id": "<task_id>"}}
+    view_schema: ClassVar[dict[str, Any]] = {}
     tasks: ClassVar[list[NodeTask]]
     _prev_node_names: ClassVar[list[str]] = []
     parallel_group: ClassVar[str | None] = None
@@ -253,6 +258,8 @@ class BaseNode(ABC, Generic[I, O]):
             parallel_branch=effective_branch,
             version=version,
             prev_node_ids=[parent_ctx.node_id],
+            view_type=self.view_type,
+            view_schema=self.view_schema,
         )
         try:
             results = await self.orchestrate(ctx, node_input)
@@ -266,11 +273,16 @@ class BaseNode(ABC, Generic[I, O]):
             )
             raise
         node_output = self.build_output(results)
+        stored_output = (
+            {"task_id": ctx.task_ids[-1]}
+            if self.view_type == "Mirror" and ctx.task_ids
+            else node_output.model_dump()
+        )
         await complete_node(
             thread_id=thread_id,
             node_id=node_id,
             node_name=self.node_name,
-            output_data=node_output.model_dump(),
+            output_data=stored_output,
         )
         return node_output
 
@@ -427,6 +439,8 @@ class BaseNode(ABC, Generic[I, O]):
             parallel_branch=self.parallel_branch,
             is_forked=is_forked,
             forked_from_version=forked_from_version,
+            view_type=self.view_type,
+            view_schema=self.view_schema,
         )
 
         # --- Parallel-cancel check: auto-cancel merge nodes whose required
@@ -469,12 +483,16 @@ class BaseNode(ABC, Generic[I, O]):
             )
             raise
         node_output = self.build_output(results)
-
+        stored_output = (
+            {"task_id": ctx.task_ids[-1]}
+            if self.view_type == "Mirror" and ctx.task_ids
+            else node_output.model_dump()
+        )
         await complete_node(
             thread_id=thread_id,
             node_id=node_id,
             node_name=self.node_name,
-            output_data=node_output.model_dump(),
+            output_data=stored_output,
         )
 
         # Update NodeRecord with completed status and accumulated task_ids.

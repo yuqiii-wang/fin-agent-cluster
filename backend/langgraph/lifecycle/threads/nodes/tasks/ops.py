@@ -32,6 +32,9 @@ async def create_task(
     task_id: str,
     task_name: str,
     input_data: dict[str, Any],
+    *,
+    view_type: str = "ToolCall",
+    stats_views: list[str] | None = None,
 ) -> None:
     """Persist a new task row and emit a ``task_status: running`` SSE event.
 
@@ -40,23 +43,28 @@ async def create_task(
     ``append_node_task_id`` to record the task_id on the node row.
 
     Args:
-        thread_id:  LangGraph thread UUID.
-        node_id:    UUID5-derived owning node ID.
-        node_name:  Human-readable node name.
-        task_id:    Unique task UUID (from ``make_task_id``).
-        task_name:  Handler key (e.g. ``"analyze_query"``).
-        input_data: Serialisable input payload for the task.
+        thread_id:    LangGraph thread UUID.
+        node_id:      UUID5-derived owning node ID.
+        node_name:    Human-readable node name.
+        task_id:      Unique task UUID (from ``make_task_id``).
+        task_name:    Handler key (e.g. ``"analyze_query"``).
+        input_data:   Serialisable input payload for the task.
+        view_type:    ``fin_agents.task_view_types`` value (default ``"ToolCall"``).
+                      Pass ``"Streaming"`` for LLM streaming tasks.
+        stats_views:  Ordered list of applicable stats view type names (Stats tasks only).
+                      E.g. ``["DataFrame", "CandleStick"]``.
     """
     from backend.langgraph.lifecycle.threads.nodes.ops import append_node_task_id
     from backend.main_thread.context import get_fencing_token
 
     fencing_token = get_fencing_token()
+    views = stats_views or []
     t0 = time.monotonic()
     try:
         async with raw_conn() as conn:
             await conn.execute(
                 _INSERT_TASK,
-                (task_id, thread_id, node_id, node_name, task_name, fencing_token),
+                (task_id, thread_id, node_id, node_name, task_name, view_type, views, fencing_token),
             )
             await conn.execute(
                 _INSERT_TASK_EXECUTION,
@@ -79,6 +87,8 @@ async def create_task(
         thread_id, task_id, task_name, node_id, node_name,
         status="running",
         payload={"input": input_data},
+        view_type=view_type,
+        stats_views=views,
     )
     logger.debug(
         "[lifecycle:task] running SSE done task_id=%s sse_ms=%.0f",
@@ -94,6 +104,7 @@ async def complete_task(
     task_name: str,
     output_data: dict[str, Any] | None = None,
     *,
+    view_type: str = "ToolCall",
     failed: bool = False,
     error: str | None = None,
 ) -> None:
@@ -157,6 +168,7 @@ async def complete_task(
         thread_id, task_id, task_name, node_id, node_name,
         status=status,
         payload={"output": out},
+        view_type=view_type,
     )
     logger.debug(
         "[lifecycle:task] %s SSE done task_id=%s sse_ms=%.0f total_ms=%.0f",

@@ -54,12 +54,18 @@ class ReadStatsOutput(BaseModel):
     Attributes:
         symbol: The primary ticker that was fetched.
         interval: The bar interval used.
-        records: List of OHLCV record dicts.
+        df_split: Pandas ``orient="split"`` dict:
+            ``{"index": [timestamp_str, ...], "columns": ["open", "high", ...], "data": [[...], ...]}``.
+            Reconstructed as ``pd.DataFrame(**df_split, index=pd.DatetimeIndex(df_split["index"]))``.
+        stats_views: Ordered list of view types the DataViewer should offer for this output
+            (e.g. ``["DataFrame", "CandleStick"]``).  Embedded in the output so both
+            task and node output views can render the dropdown without separate metadata.
     """
 
     symbol: str
     interval: str
-    records: list[dict[str, Any]] = Field(default_factory=list)
+    df_split: dict[str, Any] = Field(default_factory=dict)
+    stats_views: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

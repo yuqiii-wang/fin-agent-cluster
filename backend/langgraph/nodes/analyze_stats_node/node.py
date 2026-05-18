@@ -25,9 +25,9 @@ from typing import Any, ClassVar
 from backend.db.postgres.types import NodeType
 from langchain_core.runnables import Runnable, RunnableLambda
 from backend.langgraph.lifecycle import read_node_output
-from backend.langgraph.nodes.base.node import BaseNode
-from backend.langgraph.nodes.base.models import NodeContext, TaskOutput
-from backend.langgraph.nodes.base.task import NodeTask
+from backend.langgraph.models.node import BaseNode
+from backend.langgraph.models.models import NodeContext, TaskOutput
+from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.analyze_stats_node.models import AnalyzeStatsInput, AnalyzeStatsOutput
 from backend.langgraph.nodes.analyze_stats_node.tasks.analyze_stats import analyze_stats
 from backend.langgraph.state import GraphState
@@ -38,6 +38,7 @@ class AnalyzeStatsNode(BaseNode[AnalyzeStatsInput, AnalyzeStatsOutput]):
 
     node_name = "analyze_stats_node"
     node_type = NodeType.WORKFLOW
+    view_type = "Mirror"
     tasks: ClassVar[list[NodeTask]] = [analyze_stats]
     _prev_node_names: ClassVar[list[str]] = ["research_subgraph"]
     parallel_group: ClassVar[str | None] = "analysis"

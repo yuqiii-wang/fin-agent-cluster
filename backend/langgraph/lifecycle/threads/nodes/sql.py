@@ -2,7 +2,7 @@
 
 # Params: (node_id, thread_id, version, type, parent_node_id,
 #          node_name, checkpoint_id, prev_node_ids, parallel_group, parallel_branch,
-#          fencing_token, is_forked, forked_from_version)
+#          fencing_token, is_forked, forked_from_version, view_type, view_schema, stats_views)
 #
 # ON CONFLICT rules:
 #   • If the incoming fencing_token is LOWER than stored → zombie write; reject.
@@ -16,9 +16,9 @@ _UPSERT_NODE = """
         (node_id, thread_id, version, type, parent_node_id, node_name,
          status, checkpoint_id, prev_node_ids, next_node_ids, task_ids,
          started_at, updated_at, parallel_group, parallel_branch, fencing_token,
-         is_forked, forked_from_version)
+         is_forked, forked_from_version, view_type, view_schema, stats_views)
     VALUES (%s, %s, %s, %s, %s, %s, 'running', %s, %s, '{}', '{}', NOW(), NOW(), %s, %s, %s,
-            %s, %s)
+            %s, %s, %s::fin_agents.node_view_types, %s::jsonb, %s)
     ON CONFLICT (node_id) DO UPDATE
     SET status              = CASE
                                 WHEN excluded.fencing_token < fin_agents.nodes.fencing_token

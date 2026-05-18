@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # Maximum wall-clock seconds to wait for a non-streaming Celery result.
 _COMPLETION_TIMEOUT = 120
 # Maximum wall-clock seconds to wait for the streaming conclusion result.
-_STREAM_TIMEOUT = 300
+_STREAM_TIMEOUT = 1800
 # How often (seconds) the await loop checks the Redis cancel flag.
 _CANCEL_POLL_INTERVAL = 0.5
 

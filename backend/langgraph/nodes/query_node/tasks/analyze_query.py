@@ -28,8 +28,8 @@ import re
 from langgraph.func import task
 
 from backend.langgraph.lifecycle import complete_task, create_task
-from backend.langgraph.nodes.base.models import TaskInput, TaskOutput
-from backend.langgraph.nodes.base.task import NodeTask
+from backend.langgraph.models.models import TaskInput, TaskOutput
+from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.query_node.models import QueryNodeInput, QueryNodeOutput
 from backend.celery_task.workers.task_delegation import delegate_completion
 

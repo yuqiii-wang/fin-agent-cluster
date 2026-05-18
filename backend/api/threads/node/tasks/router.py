@@ -13,8 +13,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path
 
-from backend.users.queries import cancel_task_by_uuid, get_query_status, get_query_tasks
-from backend.users.schemas import QueryResponse, SessionStatus
+from backend.users.queries import cancel_task_by_uuid, get_query_tasks, get_task_by_id
+from backend.users.schemas import SessionStatus, TaskInfo
 
 router = APIRouter()
 
@@ -33,10 +33,10 @@ async def list_tasks_route(thread_id: TThreadId) -> SessionStatus:
     return await get_query_tasks(thread_id)
 
 
-@router.get("/{thread_id}/tasks/{task_id}", response_model=QueryResponse, tags=["task"])
-async def get_task_route(thread_id: TThreadId, task_id: TTaskId) -> QueryResponse:
-    """Get the status of a specific task within a thread."""
-    return await get_query_status(thread_id)
+@router.get("/{thread_id}/tasks/{task_id}", response_model=TaskInfo, tags=["task"])
+async def get_task_route(thread_id: TThreadId, task_id: TTaskId) -> TaskInfo:
+    """Get the full status and output of a specific task, with view metadata."""
+    return await get_task_by_id(thread_id, task_id)
 
 
 @router.post("/{thread_id}/tasks/{task_id}/cancel", tags=["task"])

@@ -44,6 +44,12 @@ export async function getTasks(threadId: string): Promise<TaskInfo[]> {
   return Array.isArray(data) ? data : (data.tasks ?? []);
 }
 
+export async function getTask(threadId: string, taskId: string): Promise<TaskInfo> {
+  const res = await fetch(`${BASE}/threads/${threadId}/tasks/${taskId}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Get task failed: ${res.status}`);
+  return res.json();
+}
+
 export async function getLlmToken(threadId: string): Promise<CentrifugoTokenResponse> {
   const res = await fetch(`${BASE}/auth/centrifugo/llm-token?thread_id=${threadId}`, {
     headers: authHeaders(),

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from backend.db.postgres import raw_conn
 from backend.users.schemas import (
     NodeExecutionInfo,
@@ -16,7 +18,7 @@ from backend.users.queries._sql import (
     _GET_VERSION_FORK_NODE,
     _LIST_NODES_BY_VERSION,
     _LIST_TASKS,
-    _STREAMING_TASK_NAMES,
+    _GET_TASK_BY_ID,
 )
 from backend.users.queries._helpers import _row_to_query_response, _row_to_node_info
 
@@ -114,23 +116,73 @@ async def get_query_tasks(thread_id: str) -> SessionStatus:
         cur = await conn.execute(_LIST_TASKS, (thread_id,))
         rows = await cur.fetchall()
 
-    tasks = [
-        TaskInfo(
-            task_id=r["task_id"],
-            thread_id=r["thread_id"],
-            node_id=r["node_id"],
-            node_name=r["node_name"],
-            task_name=r["task_name"],
-            status=r["status"],
-            is_streaming=r["task_name"] in _STREAMING_TASK_NAMES,
-            input=r["input"],
-            output=r["output"],
-            created_at=r["created_at"],
-            updated_at=r["updated_at"],
-        )
-        for r in rows
-    ]
+    tasks = [_build_task_info(r) for r in rows]
     return SessionStatus(thread=thread, tasks=tasks)
+
+
+def _build_task_info(r: Any) -> TaskInfo:
+    """Convert a DB row to :class:`TaskInfo`, enriching completed streaming tasks.
+
+    For streaming tasks that have completed, overrides ``view_type`` to ``"Hybrid"``
+    and sets ``view_schema`` so the frontend renders thinking as Markdown and
+    the answer as Json.
+
+    Args:
+        r: A psycopg3 row mapping with the columns from ``_LIST_TASKS`` / ``_GET_TASK_BY_ID``.
+
+    Returns:
+        :class:`TaskInfo` with proper view metadata.
+    """
+    view_type: str = r["view_type"] or "ToolCall"
+    stats_views: list[str] = list(r["stats_views"]) if r["stats_views"] else []
+    is_streaming: bool = view_type == "Streaming"
+    view_schema: dict | None = None
+
+    if is_streaming and r["status"] == "completed" and r["output"]:
+        view_type = "Hybrid"
+        view_schema = {"thinking": "Markdown", "answer": "Json"}
+
+    return TaskInfo(
+        task_id=r["task_id"],
+        thread_id=r["thread_id"],
+        node_id=r["node_id"],
+        node_name=r["node_name"],
+        task_name=r["task_name"],
+        status=r["status"],
+        view_type=view_type,
+        stats_views=stats_views,
+        is_streaming=is_streaming,
+        view_schema=view_schema,
+        input=r["input"],
+        output=r["output"],
+        created_at=r["created_at"],
+        updated_at=r["updated_at"],
+    )
+
+
+async def get_task_by_id(thread_id: str, task_id: str) -> TaskInfo:
+    """Fetch a single task by its UUID, enriching completed streaming tasks.
+
+    Args:
+        thread_id: LangGraph thread UUID (scoping guard).
+        task_id:   Task execution UUID.
+
+    Returns:
+        :class:`TaskInfo` for the task.
+
+    Raises:
+        HTTPException 404: If the task is not found under this thread.
+    """
+    from fastapi import HTTPException
+
+    async with raw_conn(readonly=True) as conn:
+        cur = await conn.execute(_GET_TASK_BY_ID, (thread_id, task_id))
+        row = await cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found in thread {thread_id}")
+
+    return _build_task_info(row)
 
 
 __all__ = [
@@ -138,4 +190,5 @@ __all__ = [
     "get_node_executions",
     "get_version_graph",
     "get_query_tasks",
+    "get_task_by_id",
 ]

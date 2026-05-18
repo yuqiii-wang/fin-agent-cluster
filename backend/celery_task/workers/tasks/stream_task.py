@@ -22,6 +22,7 @@ token-streaming tier → WebSocket channel ``thread:{thread_id}`` → UI.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -80,10 +81,12 @@ async def _run_stream_async(
         task_id:    Governance UUID of the owning ``fin_agents.tasks`` row.
         task_name:  Human label, e.g. ``"stream_conclusion"``.
         node_name:  Owning node name, e.g. ``"conclusion_node"``.
-        payload:    Dict containing at minimum ``"merged_research"`` context.
+        payload:    Serialised ``ConclusionNodeInput`` dict.
 
     Returns:
-        ``{"answer": str, "total_tokens": int, "latency_ms": int}``
+        ``{"thinking": str | None, "answer": dict, "total_tokens": int, "latency_ms": int}``
+        where ``answer`` is a structured JSON dict with keys:
+        summary, recommendation, confidence, key_points, risk_factors.
     """
     from backend.db.redis.streams.publisher import stream_token, stream_token_batch
     from backend.centrifugo_mq.client import has_app_viewers, has_thread_viewers
@@ -91,12 +94,30 @@ async def _run_stream_async(
     from backend.centrifugo_mq.errors import STREAM_START_NACK
     from langchain_core.messages import HumanMessage
 
-    query = payload.get("query", {})
-    merged = payload.get("merged_research", {})
-    context_text = merged.get("summary", "No research context available.")
+    query = payload.get("query", "")
+    stats_analysis = payload.get("stats_analysis", "")
+    stats_key_metrics = payload.get("stats_key_metrics", {})
+    news_sentiment = payload.get("news_sentiment", "")
+    news_highlights: list[str] = payload.get("news_highlights", [])
+
+    highlights_text = "\n".join(f"- {h}" for h in news_highlights) if news_highlights else "No highlights."
+    metrics_text = json.dumps(stats_key_metrics, indent=2) if stats_key_metrics else "N/A"
+
     prompt = (
-        f"Based on the following market research, provide a concise analysis "
-        f"and conclusion for the user's query.\n\nResearch:\n{context_text}"
+        f"You are a quantitative financial analyst. Based on the market research below, "
+        f"produce a structured conclusion for the query.\n\n"
+        f"Query: {query}\n\n"
+        f"Statistical Analysis:\n{stats_analysis or 'Not available.'}\n\n"
+        f"Key Metrics:\n{metrics_text}\n\n"
+        f"News Sentiment:\n{news_sentiment or 'Not available.'}\n\n"
+        f"News Highlights:\n{highlights_text}\n\n"
+        f"Respond ONLY with a JSON object (no markdown fences, no extra text) with exactly "
+        f"these fields:\n"
+        f'{{"summary": "<2-3 sentence overall conclusion>", '
+        f'"recommendation": "<Buy|Sell|Hold>", '
+        f'"confidence": "<High|Medium|Low>", '
+        f'"key_points": ["<point1>", "<point2>", ...], '
+        f'"risk_factors": ["<risk1>", "<risk2>", ...]}}'
     )
 
     # Build the LLM based on settings.
@@ -268,7 +289,20 @@ async def _run_stream_async(
         "[stream_task] completed thread_id=%s task_name=%s tokens=%d latency_ms=%d viewers=%s",
         thread_id, task_name, total_tokens, latency_ms, viewers_present,
     )
-    return {"thinking": thinking_text, "answer": answer_text, "total_tokens": total_tokens, "latency_ms": latency_ms}
+
+    # ── Parse answer_text as structured JSON ──────────────────────────────────
+    # The prompt instructs the LLM to return a JSON object.  Try to parse it;
+    # on failure wrap the raw text so downstream processing has a consistent dict.
+    try:
+        answer_dict: dict[str, Any] = json.loads(answer_text)
+    except (json.JSONDecodeError, TypeError):
+        logger.error(
+            "[stream_task] answer JSON parse failed thread_id=%s task_id=%s; storing raw text",
+            thread_id, task_id,
+        )
+        answer_dict = {"raw": answer_text}
+
+    return {"thinking": thinking_text, "answer": answer_dict, "total_tokens": total_tokens, "latency_ms": latency_ms}
 
 
 # ---------------------------------------------------------------------------

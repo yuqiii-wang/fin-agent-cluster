@@ -7,6 +7,7 @@ export interface SseEvent {
   node_name?: string;
   task_id?: string;
   task_name?: string;
+  view_type?: string;
   status?: string;
   token?: string;
   seq?: number;

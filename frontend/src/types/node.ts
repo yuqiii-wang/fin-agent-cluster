@@ -28,6 +28,16 @@ export interface NodeInfo {
   forked_from_version?: number | null;
   /** IDs of predecessor nodes (from source version for forked nodes). */
   prev_node_ids: string[];
+  /** Node-level view type: Json | Stats | WebRequest | Streaming | Markdown | Mirror | Hybrid. */
+  view_type?: string;
+  /**
+   * Per-field rendering schema.
+   * Mirror: empty (task_id is in output).
+   * Hybrid: { fieldName: "ViewType" | "Mirror" }.
+   */
+  view_schema?: Record<string, unknown>;
+  /** Ordered list of stats_view_types for Stats view nodes. */
+  stats_views?: string[];
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   started_at?: string;

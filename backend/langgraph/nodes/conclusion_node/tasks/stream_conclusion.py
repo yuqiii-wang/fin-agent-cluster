@@ -20,13 +20,14 @@ Celery layer (``_handler``):
 
 from __future__ import annotations
 
+import json
 import logging
 
 from langgraph.func import task
 
 from backend.langgraph.lifecycle import complete_task, create_task
-from backend.langgraph.nodes.base.models import TaskInput, TaskOutput
-from backend.langgraph.nodes.base.task import NodeTask
+from backend.langgraph.models.models import TaskInput, TaskOutput
+from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.conclusion_node.models import ConclusionNodeInput, ConclusionNodeOutput
 from backend.celery_task.workers.task_delegation import delegate_stream
 
@@ -75,7 +76,7 @@ async def _stream_conclusion_task(
     ctx = task_input.ctx
     payload = task_input.content.model_dump()
 
-    await create_task(ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload)
+    await create_task(ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload, view_type="Streaming")
     try:
         result = await delegate_stream(
             thread_id=ctx.thread_id,
@@ -84,16 +85,36 @@ async def _stream_conclusion_task(
             node_name=ctx.node_name,
             payload=payload,
         )
-        output = ConclusionNodeOutput.model_validate(result)
+        # result["answer"] is a dict (parsed JSON) returned by the streaming worker.
+        # Defensively parse it if the worker returned a raw string (e.g. old worker version).
+        raw_answer = result.get("answer", {})
+        if isinstance(raw_answer, str):
+            try:
+                answer_dict = json.loads(raw_answer)
+            except (json.JSONDecodeError, TypeError):
+                logger.error(
+                    "[stream_conclusion] answer JSON parse failed task_id=%s; storing raw text",
+                    ctx.task_id,
+                )
+                answer_dict = {"raw": raw_answer}
+        else:
+            answer_dict = raw_answer
+        output = ConclusionNodeOutput(
+            answer=answer_dict,
+            thinking=result.get("thinking"),
+            total_tokens=result.get("total_tokens", 0),
+            latency_ms=result.get("latency_ms", 0),
+        )
         await complete_task(
             ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name,
             output_data=output.model_dump(),
+            view_type="Streaming",
         )
         return TaskOutput(ctx=ctx, content=output)
     except Exception as exc:
         await complete_task(
             ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name,
-            failed=True, error=str(exc),
+            failed=True, error=str(exc), view_type="Streaming",
         )
         raise
 

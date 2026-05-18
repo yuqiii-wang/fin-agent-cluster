@@ -251,6 +251,8 @@ class BaseTaskSseNotification(BaseModel, Generic[T]):
     node_id: str = ""
     node_name: str = ""
     task_name: str = ""
+    view_type: str = "ToolCall"
+    stats_views: list[str] = Field(default_factory=list)
     event: str
     status: str
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -259,14 +261,16 @@ class BaseTaskSseNotification(BaseModel, Generic[T]):
     def to_notify_payload(self) -> dict[str, Any]:
         """Return the flat payload dict for centrifugo_mq task notify().
 
-        Includes *status*, *task_name*, *node_id*, and *node_name* at the top
-        level alongside the spread *content* fields.  ``thread_id``,
+        Includes *status*, *task_name*, *view_type*, *stats_views*, *node_id*, and *node_name*
+        at the top level alongside the spread *content* fields.  ``thread_id``,
         ``task_id``, and ``event`` are injected by ``notify()`` itself and are
         excluded here.
         """
         return {
             "status": self.status,
             "task_name": self.task_name,
+            "view_type": self.view_type,
+            "stats_views": self.stats_views,
             "node_id": self.node_id,
             "node_name": strip_node_suffix(self.node_name),
             **_content_to_dict(self.content),

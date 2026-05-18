@@ -2,6 +2,17 @@ import type { NodeInfo, TaskInfo } from '../../types';
 
 export interface EffectiveSpan { startMs: number; endMs: number; elapsedMs: number; }
 
+export interface GapSegment {
+  /** ms relative to tMin where the gap starts (end of preceding activity). */
+  gapStart: number;
+  /** ms relative to tMin where the gap ends (start of next activity). */
+  gapEnd: number;
+  /** If this gap precedes a re-explore branch, the fork version number. */
+  forkVersion?: number;
+  /** Fork node name shown in the hover tooltip. */
+  forkNodeName?: string;
+}
+
 export function buildNodeTaskMap(tasks: TaskInfo[]): Map<string, TaskInfo[]> {
   const map = new Map<string, TaskInfo[]>();
   for (const t of tasks) {

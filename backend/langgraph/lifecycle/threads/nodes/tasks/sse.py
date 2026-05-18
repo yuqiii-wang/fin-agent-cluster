@@ -16,6 +16,8 @@ async def emit_task_sse(
     node_name: str,
     status: str,
     payload: dict[str, Any],
+    view_type: str = "ToolCall",
+    stats_views: list[str] | None = None,
 ) -> None:
     """Publish a ``task_status`` SSE event (fire-and-forget on error)."""
     try:
@@ -25,6 +27,8 @@ async def emit_task_sse(
             thread_id=thread_id,
             task_id=task_id,
             task_name=task_name,
+            view_type=view_type,
+            stats_views=stats_views or [],
             node_id=node_id,
             node_name=node_name,
             event="task_status",

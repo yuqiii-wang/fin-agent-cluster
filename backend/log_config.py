@@ -79,6 +79,7 @@ _COMPONENT_LABELS: list[tuple[str, str]] = [
     ("backend.llm",                                  "LLM"),
     ("backend.resources.news",                       "Resources/News"),
     ("backend.resources.stats",                      "Resources/Stats"),
+    ("backend.quant.stats",                          "Quant/Stats"),
     ("backend.resources",                            "Resources"),
     ("backend.celery_task.workers",                  "Stream/Workers"),
     ("backend.celery_task",                          "Streaming"),

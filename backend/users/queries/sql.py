@@ -42,7 +42,7 @@ _LIST_NODES = """
     SELECT n.node_id, n.thread_id, n.node_name, n.status, n.type,
            n.parent_node_id, n.parallel_group,
            n.version, n.checkpoint_id, n.prev_node_ids, n.next_node_ids, n.task_ids,
-           n.is_forked, n.forked_from_version,
+           n.is_forked, n.forked_from_version, n.view_type, n.view_schema,
            ne.input, ne.output,
            n.started_at, n.elapsed_ms, n.updated_at
     FROM fin_agents.nodes n
@@ -55,7 +55,7 @@ _GET_VERSION_FORK_NODE = """
     SELECT n.node_id, n.thread_id, n.node_name, n.status, n.type,
            n.parent_node_id, n.parallel_group,
            n.version, n.checkpoint_id, n.prev_node_ids, n.next_node_ids, n.task_ids,
-           n.is_forked, n.forked_from_version,
+           n.is_forked, n.forked_from_version, n.view_type, n.view_schema,
            ne.input, ne.output,
            n.started_at, n.elapsed_ms, n.updated_at
     FROM fin_agents.nodes n
@@ -70,7 +70,7 @@ _LIST_NODES_BY_VERSION = """
     SELECT n.node_id, n.thread_id, n.node_name, n.status, n.type,
            n.parent_node_id, n.parallel_group,
            n.version, n.checkpoint_id, n.prev_node_ids, n.next_node_ids, n.task_ids,
-           n.is_forked, n.forked_from_version,
+           n.is_forked, n.forked_from_version, n.view_type, n.view_schema,
            ne.input, ne.output,
            n.started_at, n.elapsed_ms, n.updated_at
     FROM fin_agents.nodes n
@@ -82,7 +82,7 @@ _LIST_NODES_BY_VERSION = """
 
 _LIST_TASKS = """
     SELECT t.task_id, t.thread_id, t.node_id, t.node_name, t.task_name,
-           t.status, te.input, te.output, t.created_at, t.updated_at
+           t.view_type, t.status, te.input, te.output, t.created_at, t.updated_at
     FROM fin_agents.tasks t
     LEFT JOIN fin_agents.task_executions te ON te.task_id = t.task_id
     WHERE t.thread_id = %s
@@ -113,9 +113,6 @@ _ACTIVE_TOP_LEVEL_NODE_COUNT = """
       AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
 """
 
-# Task names whose output is delivered as a live LLM token stream.
-_STREAMING_TASK_NAMES: frozenset[str] = frozenset({"stream_conclusion"})
-
 __all__ = [
     "_INSERT_QUERY_IMMEDIATE",
     "_SET_STATUS_RUNNING",
@@ -129,5 +126,4 @@ __all__ = [
     "_ACTIVE_TASK_COUNT_IN_NODE",
     "_ACTIVE_SIBLING_NODE_COUNT",
     "_ACTIVE_TOP_LEVEL_NODE_COUNT",
-    "_STREAMING_TASK_NAMES",
 ]

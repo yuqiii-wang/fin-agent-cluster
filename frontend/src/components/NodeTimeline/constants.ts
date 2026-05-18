@@ -4,3 +4,5 @@ export const TASK_H     = 14;
 /** % of total width below which the elapsed label is moved to the label area. */
 export const NARROW_PCT = 8;
 export const AXIS_TICKS = [0, 0.25, 0.5, 0.75, 1];
+/** Visual width (%) of the track allocated to each compressed time-gap square. */
+export const GAP_VISUAL_PCT = 2.5;

@@ -8,29 +8,28 @@
  * Narrow sections (< NARROW_PCT % of track) omit the inline elapsed label;
  * it is shown instead in the left label area on hover.
  *
- * When ``forkNode`` is provided (for re-explore version views), a large
- * wall-clock gap between the shared nodes and the new branch is visually
- * compressed: the gap collapses to a narrow dashed separator line.
+ * All large wall-clock gaps (> GAP_THRESHOLD_MS) in the current view are
+ * auto-detected and compressed into narrow shaded rectangles.  This handles
+ * both the fork-branch gap and internal gaps from slow parallel nodes.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { NodeInfo, TaskInfo } from '../../types';
-import { COLOR_SURFACE_CARD, COLOR_TEXT_ACTIVE, COLOR_TEXT_FAINT, COLOR_TEXT_MUTED, COLOR_TEXT_SECONDARY } from '../../constants/styleColors';
+import { COLOR_TEXT_ACTIVE, COLOR_TEXT_FAINT } from '../../constants/styleColors';
 import { buildChildrenMap, buildEffectiveSpans, buildNodeTaskMap, buildOverlapRects, formatMs } from './utils';
-import { AXIS_TICKS, LABEL_W } from './constants';
+import type { GapSegment } from './utils';
+import { AXIS_TICKS, GAP_VISUAL_PCT, LABEL_W } from './constants';
 import BarRow from './BarRow';
 
-/** Gap threshold in ms above which the timeline compresses the re-explore gap. */
-const RE_EXPLORE_GAP_THRESHOLD_MS = 2_000;
-/** Visual width (%) allocated to the compressed gap separator. */
-const GAP_VISUAL_PCT = 2;
+/** Gap threshold in ms above which the timeline auto-compresses the gap. */
+const GAP_THRESHOLD_MS = 2_000;
 
 interface Props {
   nodes: NodeInfo[];
   tasks: TaskInfo[];
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
-  /** When set, the timeline shows a dashed separator at the fork point and
+  /** When set, the timeline shows a shaded separator at the fork point and
    *  compresses any large wall-clock gap between shared and new branch nodes. */
   forkNode?: NodeInfo | null;
 }
@@ -47,7 +46,6 @@ function NodeTimeline({ nodes, tasks, selectedNodeId, onSelectNode, forkNode }: 
   const [expandedTaskNodeId, setExpandedTaskNodeId] = useState<string | null>(null);
   /** Set of row keys whose parallel nodes are shown in separate lanes. */
   const [expandedParallelRows, setExpandedParallelRows] = useState<Set<string>>(new Set());
-  const [forkLineHovered, setForkLineHovered]       = useState(false);
 
   const handleToggleParallelRow = useCallback((key: string) => {
     setExpandedParallelRows(prev => {
@@ -98,69 +96,105 @@ function NodeTimeline({ nodes, tasks, selectedNodeId, onSelectNode, forkNode }: 
     };
   }, [effectiveSpans]);
 
-  // ── Re-explore gap compression ───────────────────────────────────────────
+  // ── Multi-gap compression ──────────────────────────────────────────────
   //
-  // When viewing a forked version, compute whether the wall-clock gap between
-  // shared nodes and the new branch is large enough to compress visually.
-  const gapInfo = useMemo(() => {
-    if (!forkNode || !forkNode.started_at) return null;
-    const forkVersion = forkNode.version ?? 0;
-    const forkStartMs = new Date(forkNode.started_at).getTime();
-
-    // Find the end of the latest shared node (any node with version < forkVersion).
-    let sharedEndMs = -Infinity;
-    for (const n of activeNodes) {
-      if ((n.version ?? 0) >= forkVersion) continue;
-      const sp = effectiveSpans.get(n.node_id);
-      if (sp) sharedEndMs = Math.max(sharedEndMs, sp.endMs);
+  // Detect every large wall-clock gap in the current view (between any two
+  // consecutive "clusters" of activity) and compress each one to a narrow
+  // shaded rectangle.  This handles both the fork-branch gap AND any internal
+  // gap caused by a slow parallel node that ran much later than its siblings.
+  const gaps = useMemo((): GapSegment[] => {
+    const intervals: [number, number][] = [];
+    for (const [, sp] of effectiveSpans) {
+      intervals.push([sp.startMs - tMin, sp.endMs - tMin]);
     }
-    if (sharedEndMs === -Infinity) return null;
+    if (intervals.length <= 1) return [];
 
-    const gapMs = forkStartMs - sharedEndMs;
-    if (gapMs <= RE_EXPLORE_GAP_THRESHOLD_MS) return null;
+    // Sort and merge overlapping / touching intervals.
+    intervals.sort((a, b) => a[0] - b[0]);
+    const merged: [number, number][] = [[...intervals[0]]];
+    for (const [s, e] of intervals.slice(1)) {
+      const last = merged[merged.length - 1];
+      if (s <= last[1] + 1) {
+        last[1] = Math.max(last[1], e);
+      } else {
+        merged.push([s, e]);
+      }
+    }
 
-    // Relative to tMin
-    const sharedEndRel = sharedEndMs - tMin;
-    const forkStartRel = forkStartMs - tMin;
-    const sharedDuration = sharedEndRel;
-    const newDuration = totalMs - forkStartRel;
+    // Find gaps between consecutive merged intervals.
+    const result: GapSegment[] = [];
+    for (let i = 0; i < merged.length - 1; i++) {
+      const gapStart = merged[i][1];
+      const gapEnd   = merged[i + 1][0];
+      if (gapEnd - gapStart > GAP_THRESHOLD_MS) {
+        result.push({ gapStart, gapEnd });
+      }
+    }
 
-    if (sharedDuration <= 0 || newDuration <= 0) return null;
+    // Annotate the gap that immediately precedes the re-explore fork branch.
+    if (forkNode?.started_at) {
+      const forkStartRel = new Date(forkNode.started_at).getTime() - tMin;
+      // Find the gap whose gapEnd is closest to forkStartRel and comes before it.
+      let bestIdx = -1, bestDist = Infinity;
+      for (let i = 0; i < result.length; i++) {
+        if (forkStartRel >= result[i].gapStart) {
+          const dist = Math.abs(result[i].gapEnd - forkStartRel);
+          if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+        }
+      }
+      if (bestIdx >= 0) {
+        result[bestIdx].forkVersion  = forkNode.version ?? 0;
+        result[bestIdx].forkNodeName = forkNode.node_name;
+      }
+    }
 
-    const effectiveTotal = sharedDuration + newDuration;
-    const section1Width = (sharedDuration / effectiveTotal) * (100 - GAP_VISUAL_PCT);
-    const section2Start = section1Width + GAP_VISUAL_PCT;
-    const section2Width = 100 - section2Start;
-    const dashLinePct   = section1Width + GAP_VISUAL_PCT / 2;
+    return result;
+  }, [effectiveSpans, tMin, forkNode]);
 
-    return { sharedEndRel, forkStartRel, section1Width, section2Start, section2Width, dashLinePct };
-  }, [forkNode, activeNodes, effectiveSpans, tMin, totalMs]);
-
-  // Build the (possibly segmented) pct mapper.
+  // Build the (possibly multi-segmented) pct mapper.
+  // For positions: pct(ms) maps a time offset (relative to tMin) to a [0,100] %.
+  // For widths: pct(duration) gives the same value as pct(end)-pct(start) for any
+  // bar that does not span a gap, because all actual-content segments share the
+  // same global scale factor (1/totalActualMs * availableWidth).
   const pct = useCallback((ms: number): number => {
-    if (!gapInfo) return (ms / totalMs) * 100;
-    const { sharedEndRel, forkStartRel, section1Width, section2Start, section2Width } = gapInfo;
-    if (ms <= sharedEndRel) {
-      return sharedEndRel > 0 ? (ms / sharedEndRel) * section1Width : 0;
-    }
-    if (ms < forkStartRel) {
-      const gapFrac = (ms - sharedEndRel) / Math.max(forkStartRel - sharedEndRel, 1);
-      return section1Width + gapFrac * GAP_VISUAL_PCT;
-    }
-    const newDuration = totalMs - forkStartRel;
-    const newFrac = newDuration > 0 ? (ms - forkStartRel) / newDuration : 0;
-    return section2Start + newFrac * section2Width;
-  }, [gapInfo, totalMs]);
+    if (gaps.length === 0) return (ms / totalMs) * 100;
 
-  // Filter axis ticks so none fall inside the compressed gap region (they'd overlap).
+    const totalGapMs    = gaps.reduce((acc, g) => acc + (g.gapEnd - g.gapStart), 0);
+    const totalActualMs = Math.max(totalMs - totalGapMs, 1);
+    const availableWidth = 100 - gaps.length * GAP_VISUAL_PCT;
+
+    let pos     = 0;
+    let prevEnd = 0;
+    for (const gap of gaps) {
+      const segMs = gap.gapStart - prevEnd;
+      if (ms <= gap.gapStart) {
+        const inSeg = ms - prevEnd;
+        if (segMs <= 0) return pos;
+        return pos + (inSeg / totalActualMs) * availableWidth;
+      }
+      if (segMs > 0) pos += (segMs / totalActualMs) * availableWidth;
+      if (ms < gap.gapEnd) {
+        const frac = (ms - gap.gapStart) / Math.max(gap.gapEnd - gap.gapStart, 1);
+        return pos + frac * GAP_VISUAL_PCT;
+      }
+      pos    += GAP_VISUAL_PCT;
+      prevEnd = gap.gapEnd;
+    }
+    // After all gaps — last segment.
+    const inSeg = ms - prevEnd;
+    const segMs = totalMs - prevEnd;
+    if (segMs <= 0) return pos;
+    return pos + (inSeg / totalActualMs) * availableWidth;
+  }, [gaps, totalMs]);
+
+  // Filter axis ticks so none fall inside any compressed gap region.
   const visibleTicks = useMemo(() => {
-    if (!gapInfo) return AXIS_TICKS;
-    const { sharedEndRel, forkStartRel } = gapInfo;
+    if (gaps.length === 0) return AXIS_TICKS;
     return AXIS_TICKS.filter(f => {
       const ms = f * totalMs;
-      return ms <= sharedEndRel || ms >= forkStartRel;
+      return !gaps.some(g => ms > g.gapStart && ms < g.gapEnd);
     });
-  }, [gapInfo, totalMs]);
+  }, [gaps, totalMs]);
 
   const isExpanded = expandedSubgraphs.size > 0 || expandedTaskNodeId !== null || expandedParallelRows.size > 0;
 
@@ -212,6 +246,7 @@ function NodeTimeline({ nodes, tasks, selectedNodeId, onSelectNode, forkNode }: 
         rowNodes={roots}
         indent={0}
         fallbackLabel="nodes"
+        gaps={gaps}
         hoveredNodeId={hoveredNodeId}
         setHoveredNodeId={setHoveredNodeId}
         hoveredTaskId={hoveredTaskId}
@@ -229,48 +264,6 @@ function NodeTimeline({ nodes, tasks, selectedNodeId, onSelectNode, forkNode }: 
         onNodeClick={handleNodeClick}
         onCollapseAll={isExpanded ? handleCollapseAll : undefined}
       />
-
-      {/* ── Re-explore gap separator ─────────────────────────────────────── */}
-      {gapInfo && (
-        <div
-          title={forkLineHovered ? undefined : `re-explore v${forkNode?.version ?? ''}`}
-          onMouseEnter={() => setForkLineHovered(true)}
-          onMouseLeave={() => setForkLineHovered(false)}
-          style={{
-            position: 'absolute',
-            top: 0, bottom: 0,
-            // Account for the label width column — the bar track starts after LABEL_W.
-            left: `calc(${LABEL_W}px + (100% - ${LABEL_W}px) * ${gapInfo.dashLinePct / 100})`,
-            width: forkLineHovered ? 2 : 1,
-            background: 'transparent',
-            borderLeft: `${forkLineHovered ? 2 : 1}px dashed ${COLOR_TEXT_MUTED}`,
-            pointerEvents: 'auto',
-            cursor: 'default',
-            zIndex: 10,
-            transition: 'border-width 0.1s',
-          }}
-        >
-          {forkLineHovered && (
-            <div
-              style={{
-                position: 'absolute',
-                top: 4,
-                left: 6,
-                background: COLOR_SURFACE_CARD,
-                border: `1px solid ${COLOR_TEXT_FAINT}`,
-                borderRadius: 4,
-                padding: '2px 6px',
-                fontSize: 11,
-                color: COLOR_TEXT_SECONDARY,
-                whiteSpace: 'nowrap',
-                pointerEvents: 'none',
-              }}
-            >
-              re-explore v{forkNode?.version ?? ''} · {forkNode?.node_name ?? ''}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

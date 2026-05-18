@@ -41,15 +41,15 @@ order; ``_StatsNode``, ``_NewsNode``, and ``_MergeNode`` remain unchanged.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, ClassVar
 
 from langchain_core.runnables import Runnable, RunnableLambda, RunnableParallel, RunnablePassthrough
 
 from backend.db.postgres.types import NodeType
-from backend.langgraph.nodes.base.node import BaseNode, ChildNode
+from backend.langgraph.models.node import BaseNode, ChildNode
 from backend.langgraph.lifecycle import make_task_id, read_node_output
-from backend.langgraph.nodes.base.models import NodeContext, TaskContext, TaskOutput
-from backend.langgraph.nodes.base.task import NodeTask
+from backend.langgraph.models.models import NodeContext, TaskContext, TaskOutput
+from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.research_subgraph.models import (
     ResearchSubgraphInput,
     ResearchSubgraphOutput,
@@ -78,6 +78,7 @@ class _StatsNode(ChildNode[ReadStatsInput, ReadStatsOutput]):
 
     node_name = "stats_node"
     node_type = NodeType.WORKFLOW
+    view_type = "Mirror"
     tasks: list[NodeTask] = [read_stats]
 
     def build_chain(self, ctx: NodeContext) -> Runnable[ReadStatsInput, dict[str, TaskOutput]]:
@@ -99,6 +100,7 @@ class _NewsNode(ChildNode[ReadNewsInput, ReadNewsOutput]):
 
     node_name = "news_node"
     node_type = NodeType.WORKFLOW
+    view_type = "Mirror"
     tasks: list[NodeTask] = [read_news]
 
     def build_chain(self, ctx: NodeContext) -> Runnable[ReadNewsInput, dict[str, TaskOutput]]:
@@ -152,6 +154,12 @@ class ResearchSubgraph(BaseNode[ResearchSubgraphInput, ResearchSubgraphOutput]):
 
     node_name = "research_subgraph"
     node_type = NodeType.SUBGRAPH
+    view_type = "Hybrid"
+    view_schema: ClassVar[dict] = {
+        "stats_data": "Stats",
+        "news_data": "WebRequest",
+        "merged_research": "Json",
+    }
     tasks: list[NodeTask] = [read_stats, read_news, merge_results]
     _prev_node_names: list[str] = ["apac_analyze_node", "emea_analyze_node", "amer_analyze_node"]
 
