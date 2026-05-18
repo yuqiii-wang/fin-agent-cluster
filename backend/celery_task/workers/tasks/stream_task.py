@@ -38,6 +38,23 @@ from backend.celery_task.celery_engine import celery_engine
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Stream prompt builder registry
+# ---------------------------------------------------------------------------
+# Maps task_name → callable(payload: dict) -> str.
+# Tasks that run via delegate_stream register their prompt builders here.
+# Populated lazily on first use to avoid circular imports at module load time.
+_STREAM_PROMPT_BUILDERS: dict[str, Any] = {}
+
+
+def _get_stream_prompt_builders() -> dict[str, Any]:
+    """Lazily load and merge all registered stream prompt builders."""
+    if _STREAM_PROMPT_BUILDERS:
+        return _STREAM_PROMPT_BUILDERS
+    from backend.langgraph.nodes.query_node.tasks import STREAM_PROMPT_BUILDERS as _QPB
+    _STREAM_PROMPT_BUILDERS.update(_QPB)
+    return _STREAM_PROMPT_BUILDERS
+
 def _extract_thinking_answer(text: str) -> tuple[str | None, str]:
     """Split a ``<think>…</think>`` prefix from the rest of the response.
 
@@ -65,6 +82,157 @@ def _extract_thinking_answer(text: str) -> tuple[str | None, str]:
         stripped[:120],
     )
     return None, text
+
+
+async def _run_stream_with_prompt(
+    thread_id: str,
+    task_id: str,
+    task_name: str,
+    node_name: str,
+    payload: dict[str, Any],
+    prompt: str,
+) -> dict[str, Any]:
+    """Generic streaming runner for builder-registered tasks.
+
+    Unlike ``_run_stream_async`` (which is tightly coupled to
+    ``stream_conclusion``), this function accepts a pre-built *prompt* string
+    and always uses the Ollama LLM.  The streaming infrastructure (batching,
+    Centrifugo publishing, DB persistence) is identical to the conclusion path.
+
+    Args:
+        thread_id:  LangGraph thread UUID.
+        task_id:    Governance UUID of the ``fin_agents.tasks`` row.
+        task_name:  Task label for SSE events and DB rows.
+        node_name:  Owning node name.
+        payload:    Original serialised task input (stored in DB for reference).
+        prompt:     Pre-built LLM prompt string.
+
+    Returns:
+        ``{"thinking": str | None, "answer": dict, "total_tokens": int, "latency_ms": int}``
+    """
+    from backend.db.redis.streams.publisher import stream_token, stream_token_batch
+    from backend.centrifugo_mq.client import has_app_viewers, has_thread_viewers
+    from backend.centrifugo_mq.sse_notification.thread import notify as notify_thread
+    from backend.centrifugo_mq.errors import STREAM_START_NACK
+    from backend.db.postgres.connection import raw_conn
+    from backend.llm.factory import get_llm
+    from langchain_core.messages import HumanMessage
+
+    llm = get_llm("ollama")
+    provider = "ollama"
+    from backend.config import get_settings
+    model_name = get_settings().OLLAMA_LLM_MODEL
+
+    viewers_present = (
+        await has_app_viewers(thread_id)
+        and await has_thread_viewers(thread_id)
+    )
+
+    acked = await notify_thread(
+        thread_id,
+        "stream_start",
+        {"task_id": task_id, "task_name": task_name, "node_name": node_name},
+        dedup_key=f"stream_start:{task_id}",
+        retry_interval=5.0,
+        max_retries=3,
+    )
+    if not acked:
+        logger.error(
+            "[%s] stream_start NACK thread_id=%s task_id=%s",
+            STREAM_START_NACK, thread_id, task_id,
+        )
+
+    messages = [HumanMessage(content=prompt)]
+    full_answer = ""
+    total_tokens = 0
+    seq = 0
+    t0 = time.perf_counter()
+    batch: list[dict[str, Any]] = []
+    batch_t0 = time.perf_counter()
+
+    async for chunk in llm.astream(messages):
+        token: str = chunk.content  # type: ignore[union-attr]
+        if not token:
+            continue
+        full_answer += token
+        total_tokens += 1
+        seq += 1
+
+        if viewers_present:
+            batch.append({
+                "event": "token",
+                "thread_id": thread_id,
+                "task_id": task_id,
+                "task_name": task_name,
+                "node_name": node_name,
+                "token": token,
+                "seq": seq,
+            })
+            elapsed_ms = (time.perf_counter() - batch_t0) * 1_000
+            if len(batch) >= _BATCH_MAX_SIZE or elapsed_ms >= _BATCH_FLUSH_MS:
+                await stream_token_batch(thread_id, batch)
+                batch.clear()
+                batch_t0 = time.perf_counter()
+
+    if viewers_present and batch:
+        await stream_token_batch(thread_id, batch)
+        batch.clear()
+
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+    thinking_text, answer_text = _extract_thinking_answer(full_answer)
+
+    prompts_text: str | None = None
+    entry_ids: list[Any] = []
+    if viewers_present:
+        from backend.db.redis.streams.reader import recover_task_tokens, delete_stream_entries
+        text_by_column, entry_ids = await recover_task_tokens(thread_id, task_id)
+        prompts_text = text_by_column.get("prompts")
+
+    event_id = str(uuid.uuid4())
+    async with raw_conn() as conn:
+        await conn.execute(
+            """
+            INSERT INTO fin_agents.llm_responses
+                (event_id, thread_id, task_id, provider, model,
+                 task_name, node_name, prompts, thinking, answer,
+                 output_tokens, total_tokens, latency_ms)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (event_id) DO NOTHING
+            """,
+            (
+                event_id, thread_id, task_id, provider, model_name,
+                task_name, node_name, prompts_text, thinking_text, answer_text,
+                total_tokens, total_tokens, latency_ms,
+            ),
+        )
+
+    if viewers_present:
+        await stream_token(
+            thread_id,
+            {
+                "event": "stream_end",
+                "thread_id": thread_id,
+                "task_id": task_id,
+                "task_name": task_name,
+                "node_name": node_name,
+                "total_tokens": total_tokens,
+                "total_seq": seq,
+            },
+        )
+        if entry_ids:
+            from backend.db.redis.streams.reader import delete_stream_entries
+            await delete_stream_entries(thread_id, entry_ids)
+
+    try:
+        answer_dict: dict[str, Any] = json.loads(answer_text)
+    except (json.JSONDecodeError, TypeError):
+        logger.error(
+            "[stream_task] answer JSON parse failed thread_id=%s task_id=%s; storing raw text",
+            thread_id, task_id,
+        )
+        answer_dict = {"raw": answer_text}
+
+    return {"thinking": thinking_text, "answer": answer_dict, "total_tokens": total_tokens, "latency_ms": latency_ms}
 
 
 async def _run_stream_async(
@@ -333,6 +501,14 @@ def run_stream(
     Returns:
         ``{"answer": str, "total_tokens": int, "latency_ms": int}``
     """
+    builders = _get_stream_prompt_builders()
+    if task_name in builders:
+        return asyncio.run(
+            _run_stream_with_prompt(
+                thread_id, task_id, task_name, node_name, payload,
+                prompt=builders[task_name](payload),
+            )
+        )
     return asyncio.run(
         _run_stream_async(thread_id, task_id, task_name, node_name, payload)
     )

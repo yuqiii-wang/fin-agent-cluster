@@ -1,8 +1,13 @@
 """backend.langgraph.compiled — process-wide compiled LangGraph instance.
 
-Pre-compiles the fin-analysis graph with a pooled ``AsyncPostgresSaver``
+Pre-compiles the appropriate graph with a pooled ``AsyncPostgresSaver``
 checkpointer once at startup so individual query handlers avoid the
 per-invocation rebuild cost (~5–20 ms) and cold DB connect overhead.
+
+Graph selection
+---------------
+* ``Settings.TEST_MODE == True``  → mock graph (full multi-node pipeline)
+* ``Settings.TEST_MODE == False`` → fin-trading graph (production)
 
 Usage::
 
@@ -23,7 +28,10 @@ _compiled_graph: Any | None = None
 
 
 async def init_compiled_graph() -> None:
-    """Compile the fin-analysis graph with the pooled checkpointer and cache it.
+    """Compile the selected graph with the pooled checkpointer and cache it.
+
+    Chooses between the mock graph (``Settings.TEST_MODE=True``) and the
+    production fin-trading graph based on the current settings.
 
     Must be called once during FastAPI lifespan startup after connection pools
     are open.  Subsequent calls are no-ops.
@@ -32,16 +40,28 @@ async def init_compiled_graph() -> None:
     if _compiled_graph is not None:
         return
 
+    from backend.config import get_settings
     from backend.db.postgres.checkpointer import ensure_setup, get_pool_checkpointer
-    from backend.langgraph.graph import build_graph_builder
+
+    settings = get_settings()
 
     # Ensure checkpointer tables exist cluster-wide (Redis-locked, idempotent).
     await ensure_setup()
 
     pg_checkpointer = get_pool_checkpointer()
 
+    if settings.TEST_MODE:
+        from backend.langgraph.graphs.mock_graph import build_graph_builder
+        label = "mock_graph"
+    else:
+        from backend.langgraph.graphs.fin_trading_graph import build_graph_builder
+        label = "fin_trading_graph"
+
     _compiled_graph = build_graph_builder().compile(checkpointer=pg_checkpointer)
-    logger.info("[langgraph.compiled] graph compiled with pooled AsyncPostgresSaver")
+    logger.info(
+        "[langgraph.compiled] graph compiled: %s (test_mode=%s)",
+        label, settings.TEST_MODE,
+    )
 
 
 def get_compiled_graph() -> Any:

@@ -6,17 +6,19 @@
  * Main area: QueryForm or ThreadView depending on selection.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ConfigProvider, Layout, theme, Typography } from 'antd';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useHistory } from './hooks/useHistory';
 import { useCentrifugoPresence } from './hooks/useCentrifugoPresence';
 import { useBackgroundSseStatus } from './hooks/useBackgroundSseStatus';
 import QueryForm from './components/QueryForm';
+import MainQuery from './components/MainQuery';
 import ThreadView from './components/ThreadView';
 import ConcurrencyTest from './components/ConcurrencyTest';
 import UserButton from './components/UserButton';
 import UserHistory from './components/UserHistory';
+import { fetchSystemConfig } from './api/system';
 import type { GraphTopology, QueryResponse, SseInfo, ThreadSummary } from './types';
 import { setThreadViewer } from './api/threads';
 
@@ -49,6 +51,14 @@ const AppInner: React.FC = () => {
   const { user } = useAuth();
   const { history, prepend, reload, updateEntry } = useHistory(user?.id);
   useCentrifugoPresence({ userId: user?.id });
+
+  const [testMode, setTestMode] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetchSystemConfig()
+      .then((cfg) => setTestMode(cfg.test_mode))
+      .catch(() => setTestMode(false));
+  }, []);
 
   // Session-local cache of Centrifugo bootstrap tokens, keyed by thread_id.
   const [liveInfo, setLiveInfo] = useState<Record<string, LiveThreadInfo>>({});
@@ -88,7 +98,7 @@ const AppInner: React.FC = () => {
     for (const r of results) {
       setLiveInfo((prev) => ({
         ...prev,
-        [r.thread_id]: { sseInfo: r.sse ?? null, llmInfo: r.llm ?? null },
+        [r.thread_id]: { sseInfo: r.sse ?? null, llmInfo: r.llm ?? null, topology: null },
       }));
       prepend({
         thread_id: r.thread_id,
@@ -167,7 +177,11 @@ const AppInner: React.FC = () => {
           }}
         >
           {showForm || (!activeEntry && !concurrencyResults) ? (
-            <QueryForm onSubmit={handleSubmit} onConcurrencySubmit={handleConcurrencySubmit} />
+            testMode === false ? (
+              <MainQuery onSubmit={handleSubmit} />
+            ) : (
+              <QueryForm onSubmit={handleSubmit} onConcurrencySubmit={handleConcurrencySubmit} />
+            )
           ) : concurrencyResults ? (
             <ConcurrencyTest
               initialResults={concurrencyResults}

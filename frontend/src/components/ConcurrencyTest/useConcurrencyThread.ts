@@ -130,7 +130,7 @@ export function useConcurrencyThread({
           getTasks(threadId)
             .then((tasks) => {
               if (cancelled) return;
-              const streamTask = tasks.find((t) => t.task_name === 'stream_conclusion');
+              const streamTask = tasks.find((t) => t.is_streaming);
               if (streamTask?.status) {
                 onUpdateRef.current(threadId, { streamTaskStatus: streamTask.status as WorkStatusValue });
               }

@@ -14,6 +14,9 @@ redis[asyncio]==6.4.0
 # Async task queue (Redis Streams workers)
 celery[redis,gevent]==5.6.3
 
+# Ollama LLM provider
+langchain-ollama==1.1.0
+
 # LangChain / LangGraph
 langgraph==1.1.10
 langgraph-checkpoint-postgres==3.0.5
@@ -42,3 +45,6 @@ pypdf==6.10.2
 
 # YAML — used by kong-api-gateway/build.py to merge declarative config fragments
 PyYAML==6.0.2
+
+# Ollama CLI client (for running Ollama LLM in a local container)
+ollama=0.6.2

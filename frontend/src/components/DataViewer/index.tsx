@@ -17,13 +17,14 @@ import MarkdownViewer from './MarkdownViewer';
 import StreamViewer from './StreamViewer';
 import StatsDataFrame from './StatsDataFrame';
 import StatsViewer, { StatsViewSelect } from './StatsViewer';
+import WebRequestViewer from './WebRequestViewer';
 import type { StreamViewerProps } from './StreamViewer';
 import type { DfSplit } from './StatsDataFrame';
 import type { TaskInfo } from '../../types';
 
 const { Text } = Typography;
 
-export type DataViewerMode = 'json' | 'stream' | 'markdown' | 'dataframe' | 'mirror' | 'hybrid';
+export type DataViewerMode = 'json' | 'stream' | 'markdown' | 'dataframe' | 'mirror' | 'hybrid' | 'webrequest';
 
 /** Map a backend view_type string to a DataViewerMode. */
 export function viewTypeToMode(viewType: string | undefined): DataViewerMode {
@@ -33,6 +34,7 @@ export function viewTypeToMode(viewType: string | undefined): DataViewerMode {
     case 'Markdown': return 'markdown';
     case 'Mirror': return 'mirror';
     case 'Hybrid': return 'hybrid';
+    case 'WebRequest': return 'webrequest';
     default: return 'json';
   }
 }
@@ -149,6 +151,10 @@ function FieldViewer({
         style={style}
       />
     );
+  }
+
+  if (mode === 'webrequest') {
+    return <WebRequestViewer data={fieldData} maxHeight={maxHeight} style={style} />;
   }
 
   return <JsonViewer data={fieldData} maxHeight={maxHeight} style={style} />;
@@ -323,6 +329,10 @@ const DataViewer: React.FC<DataViewerProps> = ({
 
   if (mode === 'json') {
     return <JsonViewer data={data} maxHeight={maxHeight} style={style} />;
+  }
+
+  if (mode === 'webrequest') {
+    return <WebRequestViewer data={data} maxHeight={maxHeight} style={style} />;
   }
 
   if (mode === 'markdown') {

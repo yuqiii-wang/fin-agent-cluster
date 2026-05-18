@@ -85,3 +85,20 @@ async def system_health() -> SystemHealthResponse:
         healthy_count=healthy_count,
         instances=results,
     )
+
+
+class SystemConfigResponse(BaseModel):
+    """Server-side configuration flags exposed to the frontend."""
+
+    test_mode: bool
+
+
+@router.get("/config", response_model=SystemConfigResponse)
+async def system_config() -> SystemConfigResponse:
+    """Return server-side configuration flags.
+
+    The frontend fetches this once at startup to decide which UI mode to
+    render (test mode vs production mode).
+    """
+    settings = get_settings()
+    return SystemConfigResponse(test_mode=settings.TEST_MODE)

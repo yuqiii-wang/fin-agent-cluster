@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     CELERY_STREAM_WORKER_CONCURRENCY: int = 8
     # Port this specific main thread instance is bound to.
 
+    # ── Test mode ─────────────────────────────────────────────────────────────
+    # When True, the mock graph (full multi-node pipeline) is used instead of
+    # the production fin-trading graph.  Set via --test flag in run.py.
+    TEST_MODE: bool = False
+
     # ── Thread ownership lock (Redis) ─────────────────────────────────────────
     # TTL (seconds) for the per-thread Redis ownership lock.
     # Must exceed the longest expected graph run so the lock is not lost mid-run.
@@ -57,6 +62,10 @@ class Settings(BaseSettings):
     # Example: HTTP_PROXY=http://127.0.0.1:7890
     # Leave unset to connect directly.
     HTTP_PROXY: Optional[str] = None
+
+    # ── Ollama LLM ────────────────────────────────────────────────────────────
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_LLM_MODEL: str = "qwen3.5-27b-instruct"
 
     # ── API Gateway ──────────────────────────────────────────────
     # Internal HTTP URL of nginx-api (plain HTTP, no TLS required for
