@@ -35,6 +35,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Generic, TypeVar
 
+from pydantic import BaseModel
+
 I = TypeVar("I")
 O = TypeVar("O")
 
@@ -59,6 +61,41 @@ class NodeTask(Generic[I, O]):
     output_type: type[O]
     task_fn: Callable  # @task-decorated; awaited by BaseNode.run_task()
     handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+    def __post_init__(self) -> None:
+        """Validate that input_type and output_type are Pydantic BaseModel subclasses."""
+        if not (isinstance(self.input_type, type) and issubclass(self.input_type, BaseModel)):
+            raise TypeError(
+                f"NodeTask '{self.name}': input_type must be a Pydantic BaseModel subclass, "
+                f"got {self.input_type!r}"
+            )
+        if not (isinstance(self.output_type, type) and issubclass(self.output_type, BaseModel)):
+            raise TypeError(
+                f"NodeTask '{self.name}': output_type must be a Pydantic BaseModel subclass, "
+                f"got {self.output_type!r}"
+            )
+
+    def get_input(self, payload: dict[str, Any]) -> I:
+        """Parse and validate payload dict into the task's input Pydantic model.
+
+        Args:
+            payload: Raw dict to deserialise.
+
+        Returns:
+            Validated instance of ``input_type``.
+        """
+        return self.input_type.model_validate(payload)  # type: ignore[return-value]
+
+    def get_output(self, data: dict[str, Any]) -> O:
+        """Parse and validate data dict into the task's output Pydantic model.
+
+        Args:
+            data: Raw dict to deserialise.
+
+        Returns:
+            Validated instance of ``output_type``.
+        """
+        return self.output_type.model_validate(data)  # type: ignore[return-value]
 
 
 __all__ = ["NodeTask"]

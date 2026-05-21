@@ -11,7 +11,7 @@ export interface ThreadRow {
    * connecting | received | running | completed | failed | cancelled match the backend.
    */
   status: QueryStatusValue;
-  /** Status of the stream_conclusion task under conclusion_node. */
+  /** Status of the stream_llm task under conclusion_node. */
   streamTaskStatus: WorkStatusValue | null;
   /** Whether the LLM-streaming Centrifugo MQ subscription is established. */
   llmMqConnected: boolean;

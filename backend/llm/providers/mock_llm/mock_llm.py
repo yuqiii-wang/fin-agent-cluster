@@ -28,8 +28,16 @@ class MockLLM(BaseChatModel):
 
     Emits AAPL-related tokens at the configured rate for the configured duration.
     Defaults to 30 tok/s for 10 s when not overridden.
+
+    Attributes:
+        provider:  Always ``"mock"`` — read by stream infrastructure for DB storage.
+        model:     Always ``"mock"`` — read by stream infrastructure for DB storage.
+        tokens_per_sec: Token emission rate.
+        duration_secs:  Total stream duration in seconds.
     """
 
+    provider: str = "mock"
+    model: str = "mock"
     tokens_per_sec: float = SEMANTIC_TOKENS_PER_SEC
     duration_secs: float = float(SEMANTIC_DURATION_SECS)
 

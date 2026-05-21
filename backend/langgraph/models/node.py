@@ -52,9 +52,10 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar, get_args
 
 from langchain_core.runnables import Runnable, RunnableLambda
+from pydantic import BaseModel
 
 from backend.langgraph.state import GraphState, NodeRecord
 from backend.db.postgres.types import NodeType
@@ -104,6 +105,74 @@ class BaseNode(ABC, Generic[I, O]):
     _prev_node_names: ClassVar[list[str]] = []
     parallel_group: ClassVar[str | None] = None
     parallel_branch: ClassVar[str | None] = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Enforce that concrete subclasses parameterise BaseNode with Pydantic BaseModel types."""
+        super().__init_subclass__(**kwargs)
+        for base in getattr(cls, "__orig_bases__", []):
+            args = get_args(base)
+            if not args or len(args) < 2:
+                continue
+            i_type, o_type = args[0], args[1]
+            # Skip TypeVar params — class is still abstract/generic.
+            if isinstance(i_type, TypeVar) or isinstance(o_type, TypeVar):
+                continue
+            if isinstance(i_type, type) and not issubclass(i_type, BaseModel):
+                raise TypeError(
+                    f"{cls.__name__}: input type '{i_type.__name__}' must be a Pydantic BaseModel subclass"
+                )
+            if isinstance(o_type, type) and not issubclass(o_type, BaseModel):
+                raise TypeError(
+                    f"{cls.__name__}: output type '{o_type.__name__}' must be a Pydantic BaseModel subclass"
+                )
+
+    @classmethod
+    def _get_node_type_args(cls) -> tuple[type[BaseModel], type[BaseModel]]:
+        """Resolve the concrete (InputType, OutputType) from the Generic parameters.
+
+        Walks the MRO so multi-level inheritance is handled correctly.
+
+        Returns:
+            Two-tuple of (InputType, OutputType) Pydantic model classes.
+
+        Raises:
+            TypeError: When no concrete type args can be found.
+        """
+        for klass in cls.__mro__:
+            for base in getattr(klass, "__orig_bases__", []):
+                args = get_args(base)
+                if not args or len(args) < 2:
+                    continue
+                i_type, o_type = args[0], args[1]
+                if isinstance(i_type, type) and isinstance(o_type, type):
+                    return i_type, o_type  # type: ignore[return-value]
+        raise TypeError(
+            f"{cls.__name__} does not provide concrete Generic[InputType, OutputType] type args"
+        )
+
+    def get_input(self, data: dict[str, Any]) -> I:
+        """Parse and validate a data dict into the node's input Pydantic model.
+
+        Args:
+            data: Raw dict to deserialise.
+
+        Returns:
+            Validated instance of the node's input type.
+        """
+        input_type, _ = type(self)._get_node_type_args()
+        return input_type.model_validate(data)  # type: ignore[return-value]
+
+    def get_output(self, data: dict[str, Any]) -> O:
+        """Parse and validate a data dict into the node's output Pydantic model.
+
+        Args:
+            data: Raw dict to deserialise.
+
+        Returns:
+            Validated instance of the node's output type.
+        """
+        _, output_type = type(self)._get_node_type_args()
+        return output_type.model_validate(data)  # type: ignore[return-value]
 
     @staticmethod
     def _find_node_id_by_name(state: GraphState, node_name: str) -> str | None:
@@ -167,7 +236,10 @@ class BaseNode(ABC, Generic[I, O]):
         """Build TaskInput envelope and invoke the @task fn.
 
         Stamps a fresh ``task_id``, appends it to ``ctx.task_ids``, and
-        invokes the task function.
+        invokes the task function.  If a paused task for this (node_id,
+        task_name) exists from a prior run, its ``task_id`` is reused so
+        :func:`~backend.celery_task.workers.task_delegation.delegate_stream`
+        can locate the saved snapshot and dispatch compact_and_continue.
 
         Args:
             node_task: The ``NodeTask`` whose ``task_fn`` to invoke.
@@ -177,14 +249,59 @@ class BaseNode(ABC, Generic[I, O]):
         Returns:
             ``TaskOutput`` with the same ``TaskContext`` and typed content.
         """
-        task_id = make_task_id()
+        from backend.langgraph.lifecycle.threads.nodes.tasks.ops import (
+            get_existing_task_for_node,
+            get_task_full,
+            reset_task_for_retry,
+        )
+        from backend.langgraph.lifecycle.pause_flag import clear_task_pause_flag
+
+        existing = await get_existing_task_for_node(ctx.thread_id, ctx.node_id, node_task.name)
+        if existing and existing["status"] == "completed":
+            # Task was already completed by _run_retry_background; reuse the stored
+            # output without re-running so the resumed graph can reach complete_node.
+            task_id = existing["task_id"]
+            task_row = await get_task_full(ctx.thread_id, task_id)
+            output_data = task_row.get("output") if task_row else None
+            if output_data is not None:
+                ctx.task_ids.append(task_id)
+                task_ctx = TaskContext(
+                    **ctx.model_dump(),
+                    task_id=task_id,
+                    task_name=node_task.name,
+                )
+                # Streaming tasks store output wrapped in StreamingTaskOutput
+                # {"thinking": ..., "answer": {...}}.  Unwrap to get the
+                # task-specific result dict before validating.
+                raw = output_data.get("answer", output_data) if isinstance(output_data.get("answer"), dict) else output_data
+                return TaskOutput(
+                    ctx=task_ctx,
+                    content=node_task.output_type.model_validate(raw),
+                )
+            # output is missing; reset and re-run normally.
+            await reset_task_for_retry(ctx.thread_id, task_id)
+        elif existing and existing["status"] in ("paused", "failed"):
+            task_id = existing["task_id"]
+            await reset_task_for_retry(ctx.thread_id, task_id)
+            if existing["status"] == "paused":
+                await clear_task_pause_flag(task_id)
+        else:
+            task_id = make_task_id()
         ctx.task_ids.append(task_id)
         task_ctx = TaskContext(
             **ctx.model_dump(),
             task_id=task_id,
             task_name=node_task.name,
         )
-        return await node_task.task_fn(TaskInput(ctx=task_ctx, content=content))
+        result = await node_task.task_fn(TaskInput(ctx=task_ctx, content=content))
+        # LangGraph @task may return a checkpoint-cached result where the generic
+        # TaskOutput[T].content was deserialized as a plain dict instead of the
+        # concrete Pydantic model.  Re-validate here to guarantee callers always
+        # receive a typed model instance.
+        if isinstance(result.content, dict):
+            raw = result.content.get("answer", result.content) if isinstance(result.content.get("answer"), dict) else result.content
+            result = TaskOutput(ctx=result.ctx, content=node_task.output_type.model_validate(raw))
+        return result
 
     def _task_as_runnable(self, task: NodeTask, ctx: NodeContext) -> RunnableLambda:
         """Wrap a NodeTask as a LangChain ``RunnableLambda`` chain step."""
@@ -261,8 +378,18 @@ class BaseNode(ABC, Generic[I, O]):
             view_type=self.view_type,
             view_schema=self.view_schema,
         )
+        from backend.langgraph.lifecycle.errors import TaskPausedError
         try:
             results = await self.orchestrate(ctx, node_input)
+        except TaskPausedError:
+            # Task was paused by user — set node to 'pause' with is_last_paused_by_server=False
+            # so the startup recovery won't auto-resume it.
+            from backend.langgraph.lifecycle import pause_node as _pause_node  # noqa: PLC0415
+            await _pause_node(
+                thread_id, node_id, self.node_name,
+                is_last_paused_by_server=False,
+            )
+            raise
         except Exception as exc:
             await complete_node(
                 thread_id=thread_id,
@@ -317,7 +444,7 @@ class BaseNode(ABC, Generic[I, O]):
         from backend.db.postgres import raw_conn
         from backend.langgraph.lifecycle import cancel_node as _lc_cancel_node
         from backend.langgraph.lifecycle import cancel_thread as _lc_cancel_thread
-        from backend.main_thread.cancel_flag import set_cancel_flag
+        from backend.langgraph.lifecycle.cancel_flag import set_cancel_flag
 
         # 1. Cancel in lifecycle (DB → 'cancelled', SSE emitted).
         try:
@@ -375,7 +502,7 @@ class BaseNode(ABC, Generic[I, O]):
         cancelled via the API.  Returns a ``cancelled`` state delta without
         raising so the other parallel branches continue unaffected.
         """
-        from backend.langgraph.lifecycle.errors import NodeCancelledError
+        from backend.langgraph.lifecycle.errors import NodeCancelledError, TaskPausedError
 
         thread_id: str = state["thread_id"]
         version: int = state.get("fork_generation", 0)  # type: ignore[assignment]
@@ -472,6 +599,15 @@ class BaseNode(ABC, Generic[I, O]):
             cancelled_record = self._build_node_record(node_id, version, prev_node_ids, "cancelled")
             cancelled_record["task_ids"] = list(ctx.task_ids)
             return {"nodes": {node_id: cancelled_record}}
+        except TaskPausedError:
+            # Task was paused by user — set node to 'pause' with is_last_paused_by_server=False
+            # so the startup recovery won't auto-resume it.
+            from backend.langgraph.lifecycle import pause_node as _pause_node  # noqa: PLC0415
+            await _pause_node(
+                thread_id, node_id, self.node_name,
+                is_last_paused_by_server=False,
+            )
+            raise
         except Exception as exc:
             # Mark node failed in DB and update NodeRecord status.
             await complete_node(

@@ -327,7 +327,7 @@ def _start_celery_cluster(
     analyze_query, read_stats, read_news, merge_results — each <500ms).
 
     Stream workers consume ``celery_stream_*`` queues (slow tasks:
-    stream_conclusion — holds a slot for the full LLM stream, e.g. 10s).
+    stream_llm — holds a slot for the full LLM stream, e.g. 10s).
 
     Keeping the pools separate means fast completion tasks are never blocked
     waiting for stream slots and vice versa.  Peak streaming concurrency =
@@ -449,6 +449,12 @@ if __name__ == "__main__":
         # an empty broker. A missing worker causes ~64 s task queue delays and
         # a subsequent "node already terminal" race on recovery.
         _wait_for_ondemand_workers()
+
+    # Preload the Ollama model into GPU memory in the background; startup
+    # continues immediately without waiting for warmup to finish.
+    import threading
+    from backend.llm.providers.ollama.warmup import warmup_ollama
+    threading.Thread(target=warmup_ollama, daemon=True, name="ollama-warmup").start()
 
     log_config_path = _write_log_config(get_logging_config())
     atexit.register(lambda: os.unlink(log_config_path) if os.path.exists(log_config_path) else None)

@@ -16,7 +16,7 @@ __all__ = ["ConclusionNodeInput"]
 
 
 class ConclusionNodeInput(BaseModel):
-    """Typed input for ``conclusion_node`` and its ``stream_conclusion`` task.
+    """Typed input for ``conclusion_node`` and its ``stream_llm`` task.
 
     Attributes:
         stats_analysis: Narrative from analyze_stats_node (return, volatility, trend).

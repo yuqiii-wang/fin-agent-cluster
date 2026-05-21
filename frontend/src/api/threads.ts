@@ -153,6 +153,67 @@ export async function cancelTask(threadId: string, taskId: string, nodeId?: stri
   if (!res.ok) throw new Error(`Cancel task failed: ${res.status}`);
 }
 
+export async function pauseTask(threadId: string, taskId: string): Promise<void> {
+  const res = await fetch(`${BASE}/threads/${threadId}/tasks/${taskId}/pause`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Pause task failed: ${res.status}`);
+}
+
+export async function retryTask(
+  threadId: string,
+  taskId: string,
+  mode: 'restart' | 'compact_and_continue' = 'restart',
+): Promise<TaskInfo> {
+  const res = await fetch(`${BASE}/threads/${threadId}/tasks/${taskId}/retry`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Retry task failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function retryFreshTask(threadId: string, taskId: string): Promise<TaskInfo> {
+  const res = await fetch(`${BASE}/threads/${threadId}/tasks/${taskId}/retry-fresh`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Retry fresh task failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function retryRestartTask(threadId: string, taskId: string): Promise<TaskInfo> {
+  const res = await fetch(`${BASE}/threads/${threadId}/tasks/${taskId}/retry-restart`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Retry restart task failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function continueTask(threadId: string, taskId: string): Promise<TaskInfo> {
+  const res = await fetch(`${BASE}/threads/${threadId}/tasks/${taskId}/continue`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Continue task failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 /**
  * Fork the graph at the checkpoint just before nodeId ran and re-execute.
  *

@@ -1,19 +1,32 @@
 """Tasks for query_node."""
 
-from backend.langgraph.nodes.query_node.tasks.analyze_query import analyze_query
+from backend.langgraph.nodes.query_node.tasks.analyze_query import (
+    analyze_query,
+    STREAM_PROMPT_BUILDERS as _AQ_BUILDERS,
+)
 from backend.langgraph.nodes.query_node.tasks.get_stock_from_web_if_not_seen import get_stock_from_web_if_not_seen
 from backend.langgraph.nodes.query_node.tasks.analyze_stock_from_web_if_not_seen import (
     analyze_stock_from_web_if_not_seen,
-    STREAM_PROMPT_BUILDERS,
+    STREAM_PROMPT_BUILDERS as _AWSN_BUILDERS,
 )
-from backend.langgraph.nodes.query_node.tasks.get_stock_region import get_stock_region
-from backend.langgraph.nodes.query_node.tasks.get_stock_industry_peers import get_stock_industry_peers
+from backend.langgraph.nodes.query_node.tasks.get_stock_region import (
+    get_stock_region,
+    STREAM_PROMPT_BUILDERS as _GSR_BUILDERS,
+)
+from backend.langgraph.nodes.query_node.tasks.get_stock_industry_peers import (
+    get_stock_industry_peers,
+    STREAM_PROMPT_BUILDERS as _GSIP_BUILDERS,
+)
 
 HANDLERS: dict = {
-    analyze_query.name: analyze_query.handler,
     get_stock_from_web_if_not_seen.name: get_stock_from_web_if_not_seen.handler,
-    get_stock_region.name: get_stock_region.handler,
-    get_stock_industry_peers.name: get_stock_industry_peers.handler,
+}
+
+STREAM_PROMPT_BUILDERS: dict = {
+    **_AQ_BUILDERS,
+    **_AWSN_BUILDERS,
+    **_GSR_BUILDERS,
+    **_GSIP_BUILDERS,
 }
 
 __all__ = [

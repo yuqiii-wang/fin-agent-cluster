@@ -86,6 +86,7 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
           <TaskDetail
             key={task.task_id}
             task={task}
+            nodeStatus={node.status}
             threadId={threadId}
             liveStream={tokenStreams[task.task_id]}
             onViewData={onViewData}
@@ -193,7 +194,13 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
           <Text strong style={{ fontSize: 12, color: COLOR_TEXT_SECONDARY, display: 'block', marginBottom: 6 }}>
             TASKS ({nodeTasks.length})
           </Text>
-          {nodeTasks.map((t) => (
+          {nodeTasks.map((t) => {
+            // Only the status tag label/colour is adjusted: a paused task whose
+            // node has since completed is labelled "completed" (green).  All
+            // other affordances (border, timeline, cancel button) continue to
+            // use the real status so they stay in the "paused" / orange state.
+            const tagStatus = t.status === 'paused' && node.status === 'completed' ? 'completed' : t.status;
+            return (
             <div
               key={t.task_id}
               style={{
@@ -218,8 +225,8 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Text style={{ flex: 1, fontSize: 12 }}>{t.task_name}</Text>
-                <Tag color={STATUS_TAG_COLOR[t.status] ?? 'default'} style={{ fontSize: 10 }}>
-                  {t.status}
+                <Tag color={STATUS_TAG_COLOR[tagStatus] ?? 'default'} style={{ fontSize: 10 }}>
+                  {tagStatus}
                 </Tag>
                 {hoveredTaskId === t.task_id && isWorkActive(t.status) && onCancelTask && (
                   <Button
@@ -228,11 +235,14 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
                     icon={<StopOutlined />}
                     loading={cancellingId === t.task_id}
                     onClick={(e) => { e.stopPropagation(); onCancelTask(t.task_id, t.node_id); }}
-                  />
+                  >
+                    Cancel
+                  </Button>
                 )}
               </div>
             </div>
-          ))}
+          );
+          })}
         </>
       )}
 

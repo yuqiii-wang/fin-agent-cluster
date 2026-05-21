@@ -42,6 +42,26 @@ class NodeCancelledError(RuntimeError):
         self.node_id = node_id
 
 
+class TaskPausedError(RuntimeError):
+    """Raised when a streaming task is paused by the user.
+
+    Detected by ``_await_result`` when the Celery stream worker returns
+    ``{"paused": True, "thinking": "..."}`` after detecting the Redis
+    task-pause flag.  The partial thinking is preserved so a subsequent
+    ``compact_and_continue`` retry can start from where the LLM left off.
+
+    ``BaseNode.__call__`` re-raises this unchanged (without calling
+    ``complete_node(failed=True)``) so the node stays in ``running`` state.
+    ``executor.py`` treats it like ``ThreadCancelledError`` (just returns),
+    keeping the thread ``running`` and waiting for the user to retry.
+    """
+
+    def __init__(self, task_id: str, snapshot: str = "") -> None:
+        super().__init__(f"Task '{task_id}' was paused")
+        self.task_id = task_id
+        self.snapshot = snapshot
+
+
 __all__ = [
     "LIFECYCLE_THREAD_NOT_FOUND",
     "LIFECYCLE_NODE_NOT_FOUND",
@@ -53,5 +73,6 @@ __all__ = [
     "LIFECYCLE_CHECKPOINT_NOT_FOUND",
     "LIFECYCLE_REEXPLORE_FAILED",
     "NodeCancelledError",
+    "TaskPausedError",
     "ThreadCancelledError",
 ]

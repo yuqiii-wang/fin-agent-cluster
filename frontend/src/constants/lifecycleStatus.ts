@@ -11,7 +11,7 @@
  *   Terminal : completed  | failed   | cancelled
  *
  * Node/task-level (work_status):
- *   Active   : pending | running
+ *   Active   : pending | running | paused
  *   Terminal : completed | failed | cancelled | wrong
  */
 
@@ -41,6 +41,7 @@ export const TERMINAL_QUERY_STATUSES = new Set([
 export const ACTIVE_WORK_STATUSES = new Set([
   'pending',
   'running',
+  'paused',
 ] as const);
 
 /** Statuses meaning the node/task has reached an end state. */
@@ -75,6 +76,7 @@ export type TerminalQueryStatus = 'completed' | 'failed' | 'cancelled';
 export type WorkStatusValue =
   | 'pending'
   | 'running'
+  | 'paused'
   | 'completed'
   | 'failed'
   | 'cancelled'

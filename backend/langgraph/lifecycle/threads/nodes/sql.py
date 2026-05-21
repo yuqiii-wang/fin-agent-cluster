@@ -39,6 +39,14 @@ _UPSERT_NODE = """
                                 ELSE EXCLUDED.checkpoint_id
                               END,
         fencing_token       = GREATEST(excluded.fencing_token, fin_agents.nodes.fencing_token),
+        is_last_paused_by_server = CASE
+                                WHEN excluded.fencing_token < fin_agents.nodes.fencing_token
+                                THEN fin_agents.nodes.is_last_paused_by_server
+                                WHEN fin_agents.nodes.status IN
+                                     ('completed', 'failed', 'cancelled', 'wrong')
+                                THEN fin_agents.nodes.is_last_paused_by_server
+                                ELSE TRUE
+                              END,
         parallel_group      = EXCLUDED.parallel_group,
         parallel_branch     = COALESCE(fin_agents.nodes.parallel_branch, EXCLUDED.parallel_branch),
         is_forked           = CASE
@@ -110,6 +118,34 @@ _CANCEL_NODE_SELF = """
     WHERE node_id  = %s
       AND thread_id = %s
       AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+    RETURNING node_id, node_name
+"""
+
+# Pause a node when all its tasks are paused (no remaining running tasks).
+# is_last_paused_by_server=TRUE for server shutdown, FALSE for user-initiated pause.
+# Params: (is_last_paused_by_server, node_id, thread_id, fencing_token)
+_PAUSE_NODE = """
+    UPDATE fin_agents.nodes
+    SET status                   = 'paused',
+        is_last_paused_by_server = %s,
+        updated_at               = NOW()
+    WHERE node_id      = %s
+      AND thread_id    = %s
+      AND status       = 'running'
+      AND fencing_token = %s
+    RETURNING node_id, node_name
+"""
+
+# Resume a paused node back to running when the user continues its task.
+# No fencing token guard since this is called from outside the graph run (API layer).
+# Params: (node_id, thread_id)
+_RESUME_NODE = """
+    UPDATE fin_agents.nodes
+    SET status     = 'running',
+        updated_at = NOW()
+    WHERE node_id   = %s
+      AND thread_id = %s
+      AND status    = 'paused'
     RETURNING node_id, node_name
 """
 
@@ -193,6 +229,8 @@ __all__ = [
     "_APPEND_NODE_TASK_ID",
     "_UPDATE_NODE_NEXT_IDS",
     "_CANCEL_NODE_SELF",
+    "_PAUSE_NODE",
+    "_RESUME_NODE",
     "_CANCEL_ACTIVE_TASKS_BY_NODE",
     "_REFRESH_OWN_PARALLEL_SNAPSHOT",
     "_PROPAGATE_TO_PARALLEL_SIBLINGS",

@@ -84,7 +84,13 @@ _LIST_TASKS = """
     SELECT t.task_id, t.thread_id, t.node_id, t.node_name, t.task_name,
            t.view_type, t.status, te.input, te.output, t.created_at, t.updated_at
     FROM fin_agents.tasks t
-    LEFT JOIN fin_agents.task_executions te ON te.task_id = t.task_id
+    LEFT JOIN LATERAL (
+        SELECT input, output
+        FROM fin_agents.task_executions
+        WHERE task_id = t.task_id
+        ORDER BY retry_num DESC
+        LIMIT 1
+    ) te ON TRUE
     WHERE t.thread_id = %s
     ORDER BY t.created_at
 """

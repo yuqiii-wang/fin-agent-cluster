@@ -33,7 +33,18 @@ async def recover_running_threads() -> None:
 
     async with raw_conn(readonly=True) as conn:
         cur = await conn.execute(
-            "SELECT thread_id, query FROM fin_agents.user_queries WHERE status = 'running'"
+            """
+            SELECT uq.thread_id, uq.query
+            FROM fin_agents.user_queries uq
+            WHERE uq.status = 'running'
+              AND EXISTS (
+                  SELECT 1
+                  FROM fin_agents.nodes n
+                  WHERE n.thread_id = uq.thread_id
+                    AND n.status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+                    AND n.is_last_paused_by_server = TRUE
+              )
+            """
         )
         rows = await cur.fetchall()
 
@@ -78,4 +89,61 @@ async def recover_running_threads() -> None:
             )
 
 
-__all__ = ["recover_running_threads"]
+async def cleanup_stale_celery_tasks() -> None:
+    """Revoke all Celery tasks still running from a previous process and purge queues.
+
+    Must be called before :func:`recover_running_threads` so that zombie
+    workers from the previous process are killed before the graph re-dispatches
+    fresh Celery tasks for recovered threads.
+
+    Strategy
+    --------
+    1. Inspect every connected worker for *active* (running) tasks and revoke
+       each one with ``terminate=True``.  This sends SIGTERM to the worker
+       process handling the task.
+    2. Purge the Celery queues (remove *pending* tasks that were queued by the
+       old process but not yet picked up by a worker).
+
+    The inspect call is synchronous and blocking so it runs in a thread-pool
+    executor.  A 5-second timeout prevents startup from hanging if workers are
+    temporarily unreachable.
+    """
+    import asyncio
+    from backend.celery_task.celery_engine import celery_engine
+
+    def _do_cleanup() -> tuple[int, int]:
+        """Blocking work: inspect, revoke, and purge.  Returns (revoked, purged)."""
+        try:
+            active_by_worker = celery_engine.control.inspect(timeout=5).active() or {}
+        except Exception:  # noqa: BLE001
+            active_by_worker = {}
+
+        revoked = 0
+        for _worker, tasks in active_by_worker.items():
+            for task_info in tasks:
+                celery_task_id = task_info.get("id")
+                if celery_task_id:
+                    try:
+                        celery_engine.control.revoke(celery_task_id, terminate=True)
+                        revoked += 1
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        try:
+            purged = celery_engine.control.purge() or 0
+        except Exception:  # noqa: BLE001
+            purged = 0
+
+        return revoked, purged
+
+    revoked, purged = await asyncio.to_thread(_do_cleanup)
+    if revoked or purged:
+        logger.error(
+            "[main_thread.startup] cleanup: revoked %d active Celery task(s),"
+            " purged %d pending task(s) from previous process",
+            revoked,
+            purged,
+        )
+
+
+__all__ = ["recover_running_threads", "cleanup_stale_celery_tasks"]

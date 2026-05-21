@@ -1,0 +1,665 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "datasource", "id": "loki", "name": "Loki", "version": "1.0.0" }
+  ],
+  "id": null,
+  "uid": "fin-sse-audit",
+  "title": "Fin Trading — SSE Notification Audit",
+  "description": "ACK/NACK rates and latency for SSE notifications by scope (thread/node/task) and event type. Also provides log drill-down by thread_id, node_id, and task_id.",
+  "tags": ["sse", "centrifugo", "audit", "fin-trading"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "editable": true,
+
+  "templating": {
+    "list": [
+      {
+        "name": "scope",
+        "label": "Scope",
+        "type": "custom",
+        "query": "thread,node,task",
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": { "value": "$__all", "text": "All" },
+        "options": [
+          { "selected": true, "text": "All", "value": "$__all" },
+          { "selected": false, "text": "thread", "value": "thread" },
+          { "selected": false, "text": "node", "value": "node" },
+          { "selected": false, "text": "task", "value": "task" }
+        ]
+      },
+      {
+        "name": "event",
+        "label": "Event",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(sse_notification_publish_total, event)",
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": {},
+        "refresh": 2,
+        "sort": 1
+      },
+      {
+        "name": "thread_id",
+        "label": "Thread ID",
+        "type": "textbox",
+        "current": { "value": "" },
+        "query": ""
+      },
+      {
+        "name": "node_id",
+        "label": "Node ID",
+        "type": "textbox",
+        "current": { "value": "" },
+        "query": ""
+      },
+      {
+        "name": "task_id",
+        "label": "Task ID",
+        "type": "textbox",
+        "current": { "value": "" },
+        "query": ""
+      }
+    ]
+  },
+
+  "panels": [
+
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overview — ACK Rates",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "Overall ACK % (all scopes)",
+      "description": "Percentage of SSE notifications that received a frontend ACK across all scopes and events in the selected time window.",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "yellow", "value": 80 },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 * sum(increase(sse_notification_ack_total[5m])) / clamp_min(sum(increase(sse_notification_attempt_total[5m])), 1)",
+          "legendFormat": "ACK %"
+        }
+      ]
+    },
+
+    {
+      "id": 3,
+      "type": "gauge",
+      "title": "ACK % — thread scope",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "yellow", "value": 80 },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 * sum(increase(sse_notification_ack_total{scope=\"thread\"}[5m])) / clamp_min(sum(increase(sse_notification_attempt_total{scope=\"thread\"}[5m])), 1)",
+          "legendFormat": "Thread ACK %"
+        }
+      ]
+    },
+
+    {
+      "id": 4,
+      "type": "gauge",
+      "title": "ACK % — node scope",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "yellow", "value": 80 },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 * sum(increase(sse_notification_ack_total{scope=\"node\"}[5m])) / clamp_min(sum(increase(sse_notification_attempt_total{scope=\"node\"}[5m])), 1)",
+          "legendFormat": "Node ACK %"
+        }
+      ]
+    },
+
+    {
+      "id": 5,
+      "type": "gauge",
+      "title": "ACK % — task scope",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "yellow", "value": 80 },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 * sum(increase(sse_notification_ack_total{scope=\"task\"}[5m])) / clamp_min(sum(increase(sse_notification_attempt_total{scope=\"task\"}[5m])), 1)",
+          "legendFormat": "Task ACK %"
+        }
+      ]
+    },
+
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "ACK % over time — by scope",
+      "description": "Rolling 5-minute ACK percentage per scope. Drop below 95% warrants investigation.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 * sum by (scope) (increase(sse_notification_ack_total[5m])) / clamp_min(sum by (scope) (increase(sse_notification_attempt_total[5m])), 1)",
+          "legendFormat": "{{scope}}"
+        }
+      ]
+    },
+
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "NACK rate — by scope & reason",
+      "description": "NACKs per minute by scope and reason (explicit_nack = frontend rejected; exhausted = all retries timed out).",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*exhausted.*" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": ".*explicit_nack.*" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (scope, reason) (rate(sse_notification_nack_total[5m]))",
+          "legendFormat": "{{scope}} / {{reason}}"
+        }
+      ]
+    },
+
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Per-Event Breakdown",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "collapsed": false
+    },
+
+    {
+      "id": 9,
+      "type": "table",
+      "title": "ACK % by scope × event",
+      "description": "ACK percentage for each (scope, event) combination over the last 5 minutes. Highlight rows below 90% to find specific failing events.",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percent" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "ACK %" },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": 0 },
+                    { "color": "yellow", "value": 80 },
+                    { "color": "green", "value": 95 }
+                  ]
+                }
+              },
+              { "id": "custom.displayMode", "value": "color-background" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": [{ "displayName": "ACK %", "desc": false }]
+      },
+      "transformations": [
+        { "id": "merge", "options": {} },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": { "Value": "ACK %", "scope": "Scope", "event": "Event" }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 * sum by (scope, event) (increase(sse_notification_ack_total{scope=~\"$scope\", event=~\"$event\"}[5m])) / clamp_min(sum by (scope, event) (increase(sse_notification_attempt_total{scope=~\"$scope\", event=~\"$event\"}[5m])), 1)",
+          "legendFormat": "{{scope}} / {{event}}",
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    },
+
+    {
+      "id": 10,
+      "type": "table",
+      "title": "NACK count by scope × event × reason",
+      "description": "Total NACKs per event in the selected time window.",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "NACKs" },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": 0 },
+                    { "color": "yellow", "value": 1 },
+                    { "color": "red", "value": 5 }
+                  ]
+                }
+              },
+              { "id": "custom.displayMode", "value": "color-background" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": [{ "displayName": "NACKs", "desc": true }]
+      },
+      "transformations": [
+        { "id": "merge", "options": {} },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": { "Value": "NACKs", "scope": "Scope", "event": "Event", "reason": "Reason" }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (scope, event, reason) (increase(sse_notification_nack_total{scope=~\"$scope\", event=~\"$event\"}[5m]))",
+          "legendFormat": "{{scope}} / {{event}} / {{reason}}",
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    },
+
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Publish Volume & Retry Pressure",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+      "collapsed": false
+    },
+
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Publish rate vs ACK rate (all scopes)",
+      "description": "Gap between published and ACKed indicates retry pressure or dropped events.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(sse_notification_publish_total{scope=~\"$scope\"}[1m]))",
+          "legendFormat": "published/s"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(sse_notification_ack_total{scope=~\"$scope\"}[1m]))",
+          "legendFormat": "ack/s"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(sse_notification_nack_total{scope=~\"$scope\"}[1m]))",
+          "legendFormat": "nack/s"
+        }
+      ]
+    },
+
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Retry pressure — attempts per publish",
+      "description": "Ratio of attempts to first publishes. 1.0 = no retries. High values mean the frontend is often not ACKing on the first try.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (scope) (rate(sse_notification_attempt_total{scope=~\"$scope\"}[5m])) / clamp_min(sum by (scope) (rate(sse_notification_publish_total{scope=~\"$scope\"}[5m])), 0.001)",
+          "legendFormat": "{{scope}}"
+        }
+      ]
+    },
+
+    {
+      "id": 14,
+      "type": "row",
+      "title": "ACK Latency",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "collapsed": false
+    },
+
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "ACK latency p50 / p95 / p99 (all scopes)",
+      "description": "End-to-end time from first publish to frontend ACK receipt.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(sse_notification_ack_latency_seconds_bucket{scope=~\"$scope\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(sse_notification_ack_latency_seconds_bucket{scope=~\"$scope\"}[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(sse_notification_ack_latency_seconds_bucket{scope=~\"$scope\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "ACK latency p95 — by scope",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (scope, le) (rate(sse_notification_ack_latency_seconds_bucket{scope=~\"$scope\"}[5m])))",
+          "legendFormat": "p95 {{scope}}"
+        }
+      ]
+    },
+
+    {
+      "id": 17,
+      "type": "row",
+      "title": "Log Drill-Down — Thread / Node / Task",
+      "description": "Filter by thread_id, node_id, or task_id to inspect individual SSE notification ACK/NACK log lines. Use the template variables at the top.",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 44 },
+      "collapsed": false
+    },
+
+    {
+      "id": 18,
+      "type": "logs",
+      "title": "SSE thread-scope logs (filter by Thread ID)",
+      "description": "Logs for [sse:thread] lines. Set the Thread ID variable above to narrow to a single thread.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 45 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"fin-trading\"} |= \"[sse:thread]\" |= \"$thread_id\"",
+          "queryType": "range",
+          "maxLines": 200
+        }
+      ]
+    },
+
+    {
+      "id": 19,
+      "type": "logs",
+      "title": "SSE node-scope logs (filter by Thread ID / Node ID)",
+      "description": "Logs for [sse:node] lines. Set Thread ID and/or Node ID variables above to narrow results.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 55 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"fin-trading\"} |= \"[sse:node]\" |= \"$thread_id\" |= \"$node_id\"",
+          "queryType": "range",
+          "maxLines": 200
+        }
+      ]
+    },
+
+    {
+      "id": 20,
+      "type": "logs",
+      "title": "SSE task-scope logs (filter by Thread ID / Task ID)",
+      "description": "Logs for [sse:task] lines. Set Thread ID and/or Task ID variables above to narrow results.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 65 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"fin-trading\"} |= \"[sse:task]\" |= \"$thread_id\" |= \"$task_id\"",
+          "queryType": "range",
+          "maxLines": 200
+        }
+      ]
+    },
+
+    {
+      "id": 21,
+      "type": "logs",
+      "title": "CENTRIFUGO_003 errors — NACK/exhausted",
+      "description": "All CENTRIFUGO_003 error log lines across all scopes. These fire when the frontend never ACKs within the retry budget.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 75 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"fin-trading\"} |= \"CENTRIFUGO_003\" |= \"$thread_id\"",
+          "queryType": "range",
+          "maxLines": 300
+        }
+      ]
+    }
+  ]
+}

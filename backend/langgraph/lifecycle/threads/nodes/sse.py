@@ -33,6 +33,8 @@ async def emit_node_sse(
             event=notif.event,
             payload=notif.to_notify_payload(),
             dedup_key=f"node:{node_id}:{status}",
+            # Running is informational — do not block the graph waiting for ack.
+            require_ack=(status != "running"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(

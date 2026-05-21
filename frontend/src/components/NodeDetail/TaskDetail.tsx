@@ -12,18 +12,24 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Descriptions, Space, Spin, Tag, Typography } from 'antd';
-import { StopOutlined } from '@ant-design/icons';
+import { CaretRightOutlined, RetweetOutlined, StopOutlined } from '@ant-design/icons';
 import { viewTypeToMode } from '../DataViewer';
 import { STATUS_TAG_COLOR } from '../../constants/statusColors';
 import { isWorkActive } from '../../constants/lifecycleStatus';
-import { getTask } from '../../api/threads';
+import { continueTask, getTask, retryFreshTask, retryRestartTask } from '../../api/threads';
+import { getCachedTaskOutput, setCachedTaskOutput, evictCachedTaskOutput } from '../../cache';
 import type { TaskInfo } from '../../types';
 import type { DataViewerMode } from '../DataViewer/index';
 
 const { Title, Text } = Typography;
 
+/** Terminal task statuses that allow retry. */
+const RETRYABLE_STATUSES = new Set(['completed', 'failed', 'cancelled', 'paused']);
+
 interface Props {
   task: TaskInfo;
+  /** Status of the parent node — used to derive effective display status for paused tasks. */
+  nodeStatus?: string;
   threadId: string;
   /** Live token text forwarded from the thread-level centrifugo-llm subscription (unused — stream opens in output panel). */
   liveStream?: string;
@@ -35,24 +41,32 @@ interface Props {
   cancellingId?: string | null;
 }
 
-const TaskDetail: React.FC<Props> = ({ task, threadId, onViewData, onCancelTask, cancellingId }) => {
+const TaskDetail: React.FC<Props> = ({ task, nodeStatus, threadId, onViewData, onCancelTask, cancellingId }) => {
   const [fetchingTask, setFetchingTask] = useState(false);
   const [localTask, setLocalTask] = useState<TaskInfo | null>(null);
   const [isHeaderHovered, setIsHeaderHovered] = useState(false);
+  const [retryingMode, setRetryingMode] = useState<string | null>(null);
+  const [retryCooldown, setRetryCooldown] = useState(false);
+  const retryCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchedTaskIdRef = useRef<string | null>(null);
   const openedStreamRef = useRef<string | null>(null);
 
   // Reset when navigating to a different task.
   useEffect(() => {
     setFetchingTask(false);
-    setLocalTask(null);
+    setRetryingMode(null);
     fetchedTaskIdRef.current = null;
     openedStreamRef.current = null;
-  }, [task.task_id]);
+    // Seed localTask from cache so completed streaming tasks display immediately.
+    const cached = getCachedTaskOutput(threadId, task.task_id);
+    setLocalTask(cached ?? null);
+  }, [task.task_id, threadId]);
 
-  // Open stream in the output panel when the task goes live.
+  // Open stream in the output panel when the task is live or paused (so buttons
+  // remain visible after navigating away and back to a paused streaming task).
   useEffect(() => {
-    if (!task.is_streaming || task.status !== 'running') return;
+    if (!task.is_streaming) return;
+    if (task.status !== 'running' && task.status !== 'paused') return;
     if (openedStreamRef.current === task.task_id) return;
     openedStreamRef.current = task.task_id;
     onViewData?.(`${task.task_name} · Stream`, undefined, {
@@ -62,13 +76,25 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, onViewData, onCancelTask,
   }, [task.is_streaming, task.status, task.task_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch full output from DB when the streaming task completes (driven by SSE status update).
+  // Cache-first: if the output was already fetched in this session, skip the backend call.
   useEffect(() => {
     if (!task.is_streaming || task.status !== 'completed') return;
+    const cached = getCachedTaskOutput(threadId, task.task_id);
+    if (cached) {
+      setLocalTask(cached);
+      onViewData?.(`${cached.task_name} · Output`, cached.output, {
+        mode: viewTypeToMode(cached.view_type),
+        viewSchema: cached.view_schema,
+        fieldList: true,
+      });
+      return;
+    }
     if (fetchedTaskIdRef.current === task.task_id) return;
     fetchedTaskIdRef.current = task.task_id;
     setFetchingTask(true);
     getTask(threadId, task.task_id)
       .then((t) => {
+        setCachedTaskOutput(threadId, t);
         setLocalTask(t);
         onViewData?.(`${t.task_name} · Output`, t.output, {
           mode: viewTypeToMode(t.view_type),
@@ -80,8 +106,50 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, onViewData, onCancelTask,
       .finally(() => setFetchingTask(false));
   }, [task.is_streaming, task.status, task.task_id, threadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleRetry = async () => {
+    setRetryingMode('retry');
+    setRetryCooldown(true);
+    if (retryCooldownRef.current) clearTimeout(retryCooldownRef.current);
+    retryCooldownRef.current = setTimeout(() => setRetryCooldown(false), 5000);
+    try {
+      // Streaming tasks may still have a live Celery worker; use retry-fresh
+      // which pauses first if needed.  Completion tasks are already terminal
+      // so retry-restart restarts directly without coordination overhead.
+      if (task.is_streaming) {
+        await retryFreshTask(threadId, task.task_id);
+      } else {
+        await retryRestartTask(threadId, task.task_id);
+      }
+      setLocalTask(null);
+      evictCachedTaskOutput(threadId, task.task_id);
+      fetchedTaskIdRef.current = null;
+      openedStreamRef.current = null;
+    } finally {
+      setRetryingMode(null);
+    }
+  };
+
+  const handleContinue = async () => {
+    setRetryingMode('continue');
+    setRetryCooldown(true);
+    if (retryCooldownRef.current) clearTimeout(retryCooldownRef.current);
+    retryCooldownRef.current = setTimeout(() => setRetryCooldown(false), 5000);
+    try {
+      await continueTask(threadId, task.task_id);
+      setLocalTask(null);
+      evictCachedTaskOutput(threadId, task.task_id);
+      fetchedTaskIdRef.current = null;
+      openedStreamRef.current = null;
+    } finally {
+      setRetryingMode(null);
+    }
+  };
+
   const isLive = !!task.is_streaming && task.status === 'running';
   const streamCompleted = !!task.is_streaming && task.status === 'completed';
+  const isRetryable = RETRYABLE_STATUSES.has(task.status);
+  // If the task was paused but the parent node has completed, display as completed.
+  const effectiveStatus = task.status === 'paused' && nodeStatus === 'completed' ? 'completed' : task.status;
 
   // Resolved task for display: prefer freshly fetched localTask for completed streaming tasks.
   const displayTask = localTask ?? task;
@@ -94,7 +162,7 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, onViewData, onCancelTask,
         onMouseLeave={() => setIsHeaderHovered(false)}
       >
         <Title level={5} style={{ margin: 0 }}>{task.task_name}</Title>
-        <Tag color={STATUS_TAG_COLOR[task.status] ?? 'default'}>{task.status}</Tag>
+        <Tag color={STATUS_TAG_COLOR[effectiveStatus] ?? 'default'}>{effectiveStatus}</Tag>
         {isWorkActive(task.status) && onCancelTask && isHeaderHovered && (
           <Button
             size="small"
@@ -103,7 +171,34 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, onViewData, onCancelTask,
             loading={cancellingId === task.task_id}
             onClick={() => onCancelTask(task.task_id, task.node_id)}
             style={{ marginLeft: 'auto' }}
-          />
+          >
+            Cancel
+          </Button>
+        )}
+        {isRetryable && isHeaderHovered && (
+          task.status === 'paused' ? (
+            <Button
+              size="small"
+              icon={<CaretRightOutlined />}
+              loading={retryingMode !== null}
+              disabled={retryCooldown}
+              onClick={handleContinue}
+              style={{ marginLeft: 'auto' }}
+            >
+              Resume
+            </Button>
+          ) : (
+            <Button
+              size="small"
+              icon={<RetweetOutlined />}
+              loading={retryingMode !== null}
+              disabled={retryCooldown}
+              onClick={handleRetry}
+              style={{ marginLeft: isWorkActive(task.status) ? 0 : 'auto' }}
+            >
+              Retry
+            </Button>
+          )
         )}
       </div>
 
@@ -157,3 +252,4 @@ const TaskDetail: React.FC<Props> = ({ task, threadId, onViewData, onCancelTask,
 };
 
 export default TaskDetail;
+

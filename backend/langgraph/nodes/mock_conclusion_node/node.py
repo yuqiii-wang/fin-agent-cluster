@@ -4,26 +4,26 @@ Hierarchy
 ---------
 Thread
   └── conclusion_node  (Workflow)
-        └── stream_conclusion  (@task → Celery stream worker)
+        └── stream_llm  (@task → Celery stream worker)
 
 Responsibilities
 ----------------
 * Read research_subgraph output from ``fin_agents.node_executions`` via the
   PG replica (``read_node_output``).
-* Run the ``stream_conclusion`` task to stream an LLM answer to the frontend.
+* Run the ``stream_llm`` task to stream an LLM answer to the frontend.
 * Write the final answer JSON string to ``state["conclusion"]`` so executor.py
   can pass it to ``complete_thread``.
 
 Output view
 -----------
 view_type = "Hybrid" with view_schema:
-    streaming → "Mirror"  resolves to the stream_conclusion task and shows
+    streaming → "Mirror"  resolves to the stream_llm task and shows
                            the thinking animation while streaming.
     answer    → "Json"    shows the structured LLM conclusion as JSON.
 
 Agent upgrade path
 ------------------
-Override ``orchestrate`` with an LLM agent that uses stream_conclusion as
+Override ``orchestrate`` with an LLM agent that uses stream_llm as
 a tool.  ``build_input`` and ``get_state_updates`` are unchanged.
 """
 
@@ -39,12 +39,12 @@ from backend.langgraph.models.node import BaseNode
 from backend.langgraph.models.models import NodeContext, TaskOutput
 from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.mock_conclusion_node.models import ConclusionNodeInput, ConclusionNodeOutput
-from backend.langgraph.nodes.mock_conclusion_node.tasks.stream_conclusion import stream_conclusion
+from backend.langgraph.nodes.mock_conclusion_node.tasks.stream_llm import stream_llm
 from backend.langgraph.state import GraphState
 
 
 class ConclusionNode(BaseNode[ConclusionNodeInput, ConclusionNodeOutput]):
-    """Fixed-flow conclusion node: single stream_conclusion task."""
+    """Fixed-flow conclusion node: single stream_llm task."""
 
     node_name = "conclusion_node"
     node_type = NodeType.WORKFLOW
@@ -53,7 +53,7 @@ class ConclusionNode(BaseNode[ConclusionNodeInput, ConclusionNodeOutput]):
         "streaming": "Mirror",
         "answer": "Json",
     }
-    tasks: ClassVar[list[NodeTask]] = [stream_conclusion]
+    tasks: ClassVar[list[NodeTask]] = [stream_llm]
     _prev_node_names: ClassVar[list[str]] = ["analyze_stats_node", "analyze_news_node"]
 
     async def build_input(self, state: GraphState) -> ConclusionNodeInput:
@@ -88,15 +88,15 @@ class ConclusionNode(BaseNode[ConclusionNodeInput, ConclusionNodeOutput]):
         )
 
     def build_chain(self, ctx: NodeContext) -> Runnable[ConclusionNodeInput, dict[str, TaskOutput]]:
-        """Chain step: stream_conclusion wrapped as a RunnableLambda."""
+        """Chain step: stream_llm wrapped as a RunnableLambda."""
         return (
-            self._task_as_runnable(stream_conclusion, ctx)
-            | RunnableLambda(lambda r: {stream_conclusion.name: r})
+            self._task_as_runnable(stream_llm, ctx)
+            | RunnableLambda(lambda r: {stream_llm.name: r})
         )
 
     def build_output(self, results: dict[str, TaskOutput]) -> ConclusionNodeOutput:
         """Build hybrid output: Mirror ref for the streaming task + structured JSON answer."""
-        task_out = results[stream_conclusion.name]
+        task_out = results[stream_llm.name]
         content: ConclusionNodeOutput = task_out.content
         return ConclusionNodeOutput(
             streaming={"task_id": task_out.ctx.task_id},

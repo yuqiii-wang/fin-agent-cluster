@@ -12,6 +12,7 @@
 export const STATUS_BADGE: Record<string, 'processing' | 'success' | 'error' | 'warning' | 'default'> = {
   received:  'processing',
   running:   'processing',
+  paused:    'warning',
   completed: 'success',
   failed:    'error',
   cancelled: 'warning',
@@ -23,6 +24,7 @@ export const STATUS_TAG_COLOR: Record<string, string> = {
   connecting: 'default',
   received:   'cyan',
   running:    'processing',
+  paused:     'warning',
   completed:  'success',
   failed:     'error',
   cancelled:  'warning',
@@ -32,6 +34,7 @@ export const STATUS_TAG_COLOR: Record<string, string> = {
 export const STATUS_HEX: Record<string, string> = {
   pending:   '#8c8c8c',
   running:   '#1677ff',
+  paused:    '#fa8c16',
   completed: '#52c41a',
   failed:    '#ff4d4f',
   cancelled: '#faad14',
@@ -41,6 +44,7 @@ export const STATUS_HEX: Record<string, string> = {
 export const STATUS_DARK: Record<string, string> = {
   pending:   '#2d2d2d',
   running:   '#0d2d52',
+  paused:    '#3d1d00',
   completed: '#0f3020',
   failed:    '#3d1010',
   cancelled: '#3d2800',
@@ -49,6 +53,7 @@ export const STATUS_DARK: Record<string, string> = {
 export const STATUS_BRIGHT: Record<string, string> = {
   pending:   '#8c8c8c',
   running:   '#1677ff',
+  paused:    '#fa8c16',
   completed: '#52c41a',
   failed:    '#ff4d4f',
   cancelled: '#faad14',

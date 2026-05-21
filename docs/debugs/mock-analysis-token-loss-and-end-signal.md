@@ -37,7 +37,7 @@ Backend : batch 1 → store_preview_token × 20 → is_task_stream_live? → Red
 → batch 1 tokens are buffered in Redis but NOT published to centrifugo-llm
 ```
 
-**Timing:** centrifugo-sse WebSocket delivery (50–200 ms) + Kong HTTP round-trip for
+**Timing:** centrifugo-sse WebSocket delivery (50–200 ms) + nginx HTTP round-trip for
 `enableTaskStream` (20–50 ms) = **70–250 ms** before the live key is set.  
 At `_BATCH_SIZE=20, _TOKEN_PER_SEC=50` → batch period = 0.4 s.  
 Any batch whose `is_task_stream_live` check executes before the live key arrives is silently
@@ -89,7 +89,7 @@ lifecycle event → frontend `task_terminal` dispatch.
 | MOCK_ANALYSIS_PREVIEW | FastAPI asyncio loop (no celery) | FastAPI node directly after loop exits |
 | MockChatModel (perf) | Celery `fanout`/`throughput` via `llm.astream` | FastAPI node after celery task returns |
 | Ollama | Celery `invoke_llm` via `ChatOpenAI.astream`; Ollama sends `finish_reason: stop` → generator exhausts | FastAPI node after `invoke_llm` result |
-| ARK / Gemini / Kong AI | Same celery `invoke_llm` via LangChain adapters | Same |
+| ARK / Gemini | Same celery `invoke_llm` via LangChain adapters | Same |
 
 ---
 

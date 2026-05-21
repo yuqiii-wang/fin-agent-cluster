@@ -1,7 +1,7 @@
 """Output model for conclusion_node.
 
 The node uses view_type="Hybrid" with view_schema:
-    streaming → "Mirror"  (references stream_conclusion task; shows thinking)
+    streaming → "Mirror"  (references stream_llm task; shows thinking)
     answer    → "Json"    (structured LLM conclusion written to node output)
 
 Written to ``state["conclusion"]`` (JSON-serialised answer dict) after the
@@ -23,7 +23,7 @@ class ConclusionNodeOutput(BaseModel):
     """Typed output for ``conclusion_node``.
 
     Attributes:
-        streaming: Mirror reference ``{"task_id": "<stream_conclusion task id>"}``
+        streaming: Mirror reference ``{"task_id": "<stream_llm task id>"}``
             resolved by the frontend to show the streaming thinking view.
         answer: Structured LLM-generated conclusion as a JSON dict.
             Expected keys: summary, recommendation, confidence, key_points,
@@ -36,7 +36,7 @@ class ConclusionNodeOutput(BaseModel):
 
     streaming: dict[str, Any] = Field(
         default_factory=dict,
-        description='Mirror ref: {"task_id": "<stream_conclusion task id>"}.',
+        description='Mirror ref: {"task_id": "<stream_llm task id>"}.',
     )
     answer: dict[str, Any] = Field(
         default_factory=dict,

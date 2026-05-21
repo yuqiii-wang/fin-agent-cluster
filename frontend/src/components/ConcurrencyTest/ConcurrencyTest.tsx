@@ -237,7 +237,7 @@ const ConcurrencyTest: React.FC<Props> = ({ initialResults, onSelectThread, onSt
       title: (
         <Space size={4}>
           Stream Task
-          <Tooltip title="Status of the stream_conclusion Celery task running under conclusion_node. Tracks the LLM streaming worker lifecycle independently from the thread status.">
+          <Tooltip title="Status of the stream_llm Celery task running under conclusion_node. Tracks the LLM streaming worker lifecycle independently from the thread status.">
             <QuestionCircleOutlined style={{ color: '#8c8c8c', fontSize: 12, cursor: 'help' }} />
           </Tooltip>
         </Space>

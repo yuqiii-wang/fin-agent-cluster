@@ -28,6 +28,7 @@ import { useCentrifugoSse } from '../../hooks/useCentrifugoSse';
 import { useCentrifugoLlm } from '../../hooks/useCentrifugoLlm';
 import { useThreadData } from '../../hooks/useThreadData';
 import { getLlmToken, getSseToken, cancelThread, cancelNode, cancelTask, reExploreNode } from '../../api/threads';
+import { evictThreadData } from '../../cache';
 import { isThreadTerminal, isThreadActive } from '../../constants/lifecycleStatus';
 import type { NodeInfo, SseEvent, SseInfo, GraphTopology } from '../../types';
 import type { DetailData } from './types';
@@ -167,6 +168,8 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
     setReExploring(true);
     try {
       const result = await reExploreNode(threadId, forkNodeId, inputOverride);
+      // Evict thread cache: the thread is no longer terminal — it's running a new branch.
+      evictThreadData(threadId);
       setReExploreTarget(null);
       if (result.fork_version != null) {
         setPendingTargetVersion(result.fork_version);
@@ -187,8 +190,13 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
   const [sseInfo, setSseInfo] = useState<SseInfo | null>(initialSseInfo);
   const [llmInfo, setLlmInfo] = useState<SseInfo | null>(initialLlmInfo);
   const [llmEnabled, setLlmEnabled] = useState(() => initialLlmInfo === null);
+  // When a task retry is in flight, keep the SSE connection alive even if the
+  // thread itself is terminal.  Cleared once the retried task reaches a terminal state.
+  const [retryTaskId, setRetryTaskId] = useState<string | null>(null);
 
   const isDone = isThreadTerminal(thread?.status ?? '');
+  // SSE / LLM hooks stay connected while a retry is in progress.
+  const effectiveDone = isDone && retryTaskId === null;
   const threadActive = isThreadActive(thread?.status ?? '');
 
   useEffect(() => {
@@ -223,6 +231,26 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
     return () => { cancelled = true; };
   }, [threadId, initialSseInfo, initialLlmInfo, isDone, thread]);
 
+  // Clear retryTaskId once the retried task reaches a terminal state.
+  useEffect(() => {
+    if (!retryTaskId) return;
+    const t = tasks.find(t => t.task_id === retryTaskId);
+    if (t && new Set(['completed', 'failed', 'cancelled']).has(t.status)) {
+      setRetryTaskId(null);
+    }
+  }, [tasks, retryTaskId]);
+
+  const handleRetryReconnect = useCallback((taskId: string) => {
+    setRetryTaskId(taskId);
+    // Fetch fresh tokens in case the originals expired while the thread was terminal.
+    Promise.all([getSseToken(threadId), getLlmToken(threadId)])
+      .then(([sse, llm]) => {
+        setSseInfo({ ws_url: sse.ws_url, connection_token: sse.connection_token, subscription_token: sse.subscription_token, channel: sse.channel });
+        setLlmInfo({ ws_url: llm.ws_url, connection_token: llm.connection_token, subscription_token: llm.subscription_token, channel: llm.channel });
+      })
+      .catch(() => { /* Non-fatal: existing tokens may still work */ });
+  }, [threadId]);
+
   useEffect(() => {
     const s = thread?.status;
     if (!s || s === prevStatusRef.current) return;
@@ -250,8 +278,8 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
     [],
   );
 
-  useCentrifugoSse({ sseInfo, onEvent: handleSseEvent, done: isDone });
-  useCentrifugoLlm({ llmInfo, onToken: handleToken, done: isDone, enabled: llmEnabled });
+  useCentrifugoSse({ sseInfo, onEvent: handleSseEvent, done: effectiveDone });
+  useCentrifugoLlm({ llmInfo, onToken: handleToken, done: effectiveDone, enabled: llmEnabled });
 
   if (!thread) {
     return (
@@ -316,7 +344,9 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
           detailData={detailData}
           onClose={() => setDetailData(null)}
           tasks={tasks}
+          nodes={nodes}
           threadId={threadId}
+          onRetry={handleRetryReconnect}
         />
       ) : (
         thread.answer && (

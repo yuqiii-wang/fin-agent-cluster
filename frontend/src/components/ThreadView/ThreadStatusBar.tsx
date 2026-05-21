@@ -36,7 +36,9 @@ const ThreadStatusBar: React.FC<Props> = ({ threadId, status, query, error, canc
             loading={cancelling === threadId}
             onClick={onCancel}
             style={{ marginLeft: 'auto' }}
-          />
+          >
+            Cancel
+          </Button>
         )}
       </div>
       {error && <Alert title={error} type="error" showIcon style={{ marginTop: 8 }} />}

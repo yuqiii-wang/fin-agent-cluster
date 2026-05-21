@@ -8,7 +8,7 @@ Node callables (registered with LangGraph StateGraph):
 
 HANDLERS registry (consumed by the Celery completion worker):
     Flat dict mapping task_name → async handler assembled from each node's
-    tasks sub-package.  Streaming tasks (stream_conclusion) are excluded
+    tasks sub-package.  Streaming tasks (stream_llm) are excluded
     because they run via a separate Celery stream worker.
 """
 

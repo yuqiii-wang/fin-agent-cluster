@@ -3,7 +3,7 @@ set -e
 
 [ ! -f .env ] && echo "Error: .env file not found" && exit 1
 
-# --prod: build the React app and serve it via Kong + nginx (no Vite dev server).
+# --prod: build the React app and serve it via nginx (no Vite dev server).
 # default: start Vite dev server as before.
 PROD_MODE=false
 for arg in "$@"; do [[ "$arg" == "--prod" ]] && PROD_MODE=true; done

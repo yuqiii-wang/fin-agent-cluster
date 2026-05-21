@@ -150,7 +150,7 @@ async def _run_graph(
     from backend.db.postgres import raw_conn
     from backend.langgraph.compiled import get_compiled_graph
     from backend.langgraph.lifecycle import complete_thread, register_thread
-    from backend.main_thread.cancel_flag import clear_cancel_flag
+    from backend.langgraph.lifecycle.cancel_flag import clear_cancel_flag
     from backend.main_thread.context import set_fencing_token
     from backend.main_thread.errors import MAIN_THREAD_LOCK_LOST
     from backend.main_thread.lock import release_lock
@@ -208,10 +208,11 @@ async def _run_graph(
         raise
 
     except Exception as exc:  # noqa: BLE001
-        from backend.langgraph.lifecycle.errors import ThreadCancelledError
-        if isinstance(exc, ThreadCancelledError):
+        from backend.langgraph.lifecycle.errors import TaskPausedError, ThreadCancelledError
+        if isinstance(exc, (ThreadCancelledError, TaskPausedError)):
             logger.debug(
-                "[main_thread.executor] graph cancelled thread_id=%s", thread_id
+                "[main_thread.executor] graph stopped thread_id=%s reason=%s",
+                thread_id, type(exc).__name__,
             )
             return
         logger.error(

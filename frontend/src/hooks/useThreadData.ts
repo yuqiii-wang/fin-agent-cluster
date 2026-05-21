@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getGraphTopology, getNodes, getTasks, getThread } from '../api/threads';
+import { getCachedThreadData, setCachedThreadData } from '../cache';
 import { TERMINAL_QUERY_STATUSES } from '../constants/lifecycleStatus';
 import type { GraphTopology, NodeInfo, QueryResponse, TaskInfo } from '../types';
 
@@ -122,17 +123,28 @@ function mergeWithTopology(runtime: NodeInfo[], topology: GraphTopology, tasks: 
 }
 
 export function useThreadData(threadId: string, initialTopology: GraphTopology | null = null): ThreadData {
-  const [thread, setThread] = useState<QueryResponse | null>(null);
-  const [nodes, setNodes] = useState<NodeInfo[]>([]);
-  const [tasks, setTasks] = useState<TaskInfo[]>([]);
-  const [topology, setTopology] = useState<GraphTopology | null>(initialTopology);
+  // Seed state from cache if this is a completed thread being revisited.
+  const cached = getCachedThreadData(threadId);
+  const [thread, setThread] = useState<QueryResponse | null>(cached?.thread ?? null);
+  const [nodes, setNodes] = useState<NodeInfo[]>(cached?.nodes ?? []);
+  const [tasks, setTasks] = useState<TaskInfo[]>(cached?.tasks ?? []);
+  const [topology, setTopology] = useState<GraphTopology | null>(cached?.topology ?? initialTopology);
   const pendingRef = useRef(false);
+  // When a refresh is in-flight and another is requested, set this flag so a
+  // follow-up refresh fires once the current one completes.  This prevents
+  // concurrent task_status SSE events from being silently dropped, which would
+  // leave some tasks showing 'running' forever in a parallel-streaming scenario.
+  const dirtyRef = useRef(false);
   // Seed the ref immediately so the first refresh() can skip the fetch.
-  const topologyRef = useRef<GraphTopology | null>(initialTopology);
+  const topologyRef = useRef<GraphTopology | null>(cached?.topology ?? initialTopology);
 
   const refresh = useCallback(() => {
-    if (pendingRef.current) return;
+    if (pendingRef.current) {
+      dirtyRef.current = true;
+      return;
+    }
     pendingRef.current = true;
+    dirtyRef.current = false;
 
     const topoPromise: Promise<GraphTopology> = topologyRef.current
       ? Promise.resolve(topologyRef.current)
@@ -140,19 +152,30 @@ export function useThreadData(threadId: string, initialTopology: GraphTopology |
 
     Promise.all([getThread(threadId), getNodes(threadId), getTasks(threadId), topoPromise])
       .then(([t, n, k, topo]) => {
+        const mergedNodes = mergeWithTopology(n, topo, k, threadId);
         setThread(t);
-        setNodes(mergeWithTopology(n, topo, k, threadId));
+        setNodes(mergedNodes);
         setTasks(k);
         setTopology(topo);
+        if (TERMINAL_QUERY_STATUSES.has(t.status as never)) {
+          setCachedThreadData({ thread: t, nodes: mergedNodes, tasks: k, topology: topo });
+        }
       })
       .catch(() => {/* ignore transient errors */})
-      .finally(() => { pendingRef.current = false; });
+      .finally(() => {
+        pendingRef.current = false;
+        if (dirtyRef.current) {
+          dirtyRef.current = false;
+          refresh();
+        }
+      });
   }, [threadId]);
 
-  // Initial load
+  // Initial load: skip fetch if we already seeded state from cache (terminal thread).
   useEffect(() => {
+    if (getCachedThreadData(threadId)) return;
     refresh();
-  }, [refresh]);
+  }, [refresh, threadId]);
 
   return { thread, nodes, tasks, topology, refresh };
 }

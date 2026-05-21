@@ -14,6 +14,9 @@ Terminal (lifecycle ended, no further transitions):
     query_status : completed | failed | cancelled
     work_status  : completed | failed | cancelled | wrong
 
+Note: ``paused`` is treated as **active** for work_status — the node is
+paused awaiting user continue, and the task is retryable.
+
 SQL helpers
 -----------
 ``TERMINAL_QUERY_SQL`` and ``TERMINAL_WORK_SQL`` are pre-formatted SQL tuple
@@ -49,8 +52,10 @@ ACTIVE_QUERY_SQL: str = "('connecting', 'received', 'running')"
 # ---------------------------------------------------------------------------
 
 #: Statuses meaning the node/task has started and is still in progress.
+#: ``paused`` is included because the node stays paused while a task is
+#: awaiting user continue — no worker is processing it but the lifecycle has not ended.
 ACTIVE_WORK_STATUSES: frozenset[str] = frozenset(
-    {WorkStatus.PENDING, WorkStatus.RUNNING}
+    {WorkStatus.PENDING, WorkStatus.RUNNING, WorkStatus.PAUSED}
 )
 
 #: Statuses meaning the node/task has reached an end state.
@@ -60,7 +65,7 @@ TERMINAL_WORK_STATUSES: frozenset[str] = frozenset(
 
 # SQL tuple literals for ``NOT IN`` / ``IN`` clauses.
 TERMINAL_WORK_SQL: str = "('completed', 'failed', 'cancelled', 'wrong')"
-ACTIVE_WORK_SQL: str = "('pending', 'running')"
+ACTIVE_WORK_SQL: str = "('pending', 'running', 'paused')"
 
 __all__ = [
     "ACTIVE_QUERY_STATUSES",

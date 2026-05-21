@@ -43,7 +43,10 @@ langchain-google-genai==4.2.2
 # PDF parsing (financial reports)
 pypdf==6.10.2
 
-# YAML — used by kong-api-gateway/build.py to merge declarative config fragments
+# Prometheus metrics
+prometheus_client==0.25.0
+
+# YAML — config parsing
 PyYAML==6.0.2
 
 # Ollama CLI client (for running Ollama LLM in a local container)

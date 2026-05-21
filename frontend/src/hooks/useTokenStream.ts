@@ -41,6 +41,11 @@ export function useTokenStream({ threadId, taskId, active, onToken, onEnd }: Opt
 
         sub.on('publication', (ctx) => {
           const ev = ctx.data as SseEvent;
+          // Only process events that belong to this specific task.
+          // The thread channel carries tokens from all parallel streaming tasks;
+          // without this guard, task A's StreamViewer would consume task B's
+          // tokens and receive task B's stream_end prematurely.
+          if (ev.task_id !== undefined && ev.task_id !== taskId) return;
           if (ev.event === 'token' && ev.token && ev.seq != null) {
             onTokenRef.current(ev.token, ev.seq);
           } else if (ev.event === 'token_batch' && Array.isArray((ev as unknown as { tokens: unknown[] }).tokens)) {

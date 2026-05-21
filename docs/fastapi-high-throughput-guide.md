@@ -499,36 +499,36 @@ a CPU-heavy batch can stall beat's scheduler loop.
 
 ---
 
-## 9. Kong API Gateway — SSE Requirements
+## 9. nginx-internal API Gateway — SSE Requirements
 
-Kong buffers responses by default.  For SSE routes this must be disabled or
-tokens will only arrive at the client in large chunks (when Kong's buffer fills).
+nginx-internal buffers responses by default.  For SSE routes this must be disabled or
+tokens will only arrive at the client in large chunks (when nginx's buffer fills).
 
-```yaml
-# kong-api-gateway/api/v1/stream/routes.yml
-routes:
-  - name: route-stream
-    service: fastapi
-    paths: [/api/v1/stream]
-    response_buffering: false   # ← required for SSE
+```nginx
+# gateway/nginx-api.conf (SSE route snippet)
+location /api/v1/stream {
+    proxy_pass http://fastapi_upstream;
+    proxy_buffering off;          # ← required for SSE
+    proxy_cache off;
+    proxy_read_timeout 3600s;     # 60 min — match your longest query
+    proxy_send_timeout 3600s;
+}
 ```
 
-Also ensure upstream and service timeouts match your longest possible query:
+Also ensure upstream keepalive and timeout match your longest possible query:
 
-```yaml
-services:
-  - name: fastapi
-    write_timeout: 3600000   # 60 min in ms
-    read_timeout: 3600000
+```nginx
+upstream fastapi_upstream {
+    server 127.0.0.1:8432;
+    server 127.0.0.1:8433;
+    keepalive 64;
+}
 ```
 
-**Caution**: The CORS plugin must expose `Last-Event-ID` for SSE reconnect to work:
+**Caution**: The CORS headers must expose `Last-Event-ID` for SSE reconnect to work:
 
-```yaml
-plugins:
-  - name: cors
-    config:
-      exposed_headers: [Last-Event-ID]
+```nginx
+add_header Access-Control-Expose-Headers "Last-Event-ID";
 ```
 
 ### HTTP/2 on the SSE port — removing the browser 6-connection limit
@@ -541,19 +541,18 @@ a slot frees.  The symptom is: all N queries are accepted by the backend (all N
 DB rows created, all N `query_received` events emitted within milliseconds), but
 only 6 `client_connected` log lines appear in wave 1.
 
-The fix is **HTTPS + HTTP/2** on Kong's SSE port.  HTTP/2 multiplexes all
+The fix is **HTTPS + HTTP/2** on nginx-internal's SSE port.  HTTP/2 multiplexes all
 `EventSource` connections over a **single** TCP connection, removing the
 per-origin cap entirely.
 
 ```yaml
 # docker-compose.yml
-kong:
-  environment:
-    KONG_PROXY_LISTEN: "0.0.0.0:8000, 0.0.0.0:8889 ssl http2"
-    KONG_SSL_CERT: /etc/kong/certs/localhost.crt
-    KONG_SSL_CERT_KEY: /etc/kong/certs/localhost.key
+nginx-internal:
+  ports:
+    - "127.0.0.1:${NGINX_API_HTTP_PORT:-8888}:8000"
+    - "${NGINX_API_TLS_PORT:-8443}:8443"
   volumes:
-    - ./certs:/etc/kong/certs:ro
+    - ./certs:/etc/nginx/certs:ro
 ```
 
 Generate a self-signed cert with SAN entries so the browser trusts it:
@@ -599,10 +598,10 @@ When a streaming system is slower than expected, check in this order:
 | 5 | Tokens arrive in bursts, not smoothly | `block=0` XREAD or no batch cap | `block=2000`, `_MAX_BATCH` cap |
 | 6 | Events lost on cold-connect | No ack store | Redis hash pending-notify with drain cycle |
 | 7 | Celery worker crash on async | Stale event loop after fork | Loop-id detection before reusing clients |
-| 8 | Kong drops long responses | `response_buffering` default | Set `response_buffering: false` on SSE routes |
+| 8 | nginx buffers long responses | `proxy_buffering on` default | Set `proxy_buffering off` on SSE routes |
 | 9 | `asyncio.CancelledError` silently swallowed | Missing `raise` in except | Always re-raise `CancelledError` |
 | 10 | Event loop stalled during burst | Batch without `sleep(0)` yield | `await asyncio.sleep(0)` between batches |
-| 11 | Only 6 of N concurrent SSE sessions connect immediately | Browser HTTP/1.1 6-conn-per-origin limit | Enable HTTPS + HTTP/2 on Kong's SSE port |
+| 11 | Only 6 of N concurrent SSE sessions connect immediately | Browser HTTP/1.1 6-conn-per-origin limit | Enable HTTPS + HTTP/2 on nginx-internal's SSE port |
 | 12 | Stale `EventSource` objects accumulate after sessions end | No explicit `es.close()` on terminal events | Call cleanup/dequeue in every terminal handler |
 | 13 | `GRAPH_EVENTS` poll delayed by compute batch | All stream tasks share one Celery queue | Dedicated queues: `stream:critical`, `stream:default`, `stream:compute` |
 | 14 | UI jank / high JS CPU during token stream | `setMessages` called per token (~100 renders/sec) | Buffer tokens in refs, flush to React state every 100 ms |
@@ -625,7 +624,7 @@ frees — they appear connected to the backend (query accepted, DB row created)
 but the SSE stream does not open.
 
 Enabling HTTP/2 on the SSE origin removes this cap because all `EventSource`
-streams are multiplexed over one TCP connection.  See §9 for Kong configuration.
+streams are multiplexed over one TCP connection.  See §9 for nginx-internal configuration.
 
 ### Explicit dequeue on terminal events
 
@@ -718,7 +717,7 @@ export function usePerfSession(deps: PerfSessionDeps): UsePerfSessionReturn {
 ## 12. Multi-Instance Deployment (Two Uvicorn Instances)
 
 `run.py` now launches N uvicorn instances (default 2) as subprocesses on
-consecutive ports (`FASTAPI_PORT`, `FASTAPI_PORT+1`, …) and Kong round-robins
+consecutive ports (`FASTAPI_PORT`, `FASTAPI_PORT+1`, …) and nginx-internal round-robins
 across both targets:
 
 ```python
@@ -730,19 +729,18 @@ uvicorn_procs = _start_uvicorn_instances(
 )
 ```
 
-```yaml
-# kong-api-gateway/_shared/upstreams.yml
-targets:
-  - target: "{BACKEND_HOST}:{BACKEND_PORT}"    # port 8432
-    weight: 100
-  - target: "{BACKEND_HOST}:{BACKEND_PORT_2}"  # port 8433
-    weight: 100
+```nginx
+# gateway/nginx-internal.conf (upstream block)
+upstream fastapi_upstream {
+    server host.docker.internal:8432 weight=1;
+    server host.docker.internal:8433 weight=1;
+    keepalive 64;
+}
 ```
 
-`BACKEND_PORT_2` defaults to `BACKEND_PORT + 1` and is resolved by `build.py`
-alongside all other `{PLACEHOLDER}` tokens.
+`BACKEND_PORT_2` defaults to `BACKEND_PORT + 1` and is set in the nginx conf.
 
-Running two FastAPI/Uvicorn instances behind Kong exposes all per-process
+Running two FastAPI/Uvicorn instances behind nginx-internal exposes all per-process
 in-memory state as split-brain risks.  This section catalogues every state
 location, classifies it, and prescribes the minimal fix.
 
@@ -824,26 +822,25 @@ async def is_thread_watching(thread_id: str) -> bool:
 An `asyncio.Task` object is bound to one event loop and cannot be serialized or
 shared.  Two strategies exist; pick based on deployment complexity budget.
 
-#### Option A — Kong sticky sessions (recommended, zero code change)
+#### Option A — nginx-internal sticky sessions (recommended, zero code change)
 
-Hash `thread_id` in the Kong upstream to route all requests for the same thread
+Hash `thread_id` in the nginx-internal upstream to route all requests for the same thread
 to the same instance:
 
-```yaml
-# kong-api-gateway/_shared/upstreams.yml
-upstreams:
-  - name: fastapi-upstream
-    algorithm: consistent-hashing
-    hash_on: header
-    hash_on_header: X-Thread-Id   # set by frontend on every request
+```nginx
+# gateway/nginx-internal.conf
+upstream fastapi_upstream {
+    hash $http_x_thread_id consistent;  # set X-Thread-Id header from frontend
+    server host.docker.internal:8432;
+    server host.docker.internal:8433;
+}
 ```
 
 The frontend already sends `thread_id` in the URL (`/stream/{thread_id}`,
-`/query/{thread_id}/cancel`).  Kong can hash on the URI path instead:
+`/query/{thread_id}/cancel`).  nginx-internal can hash on the URI path instead:
 
-```yaml
-    hash_on: uri_capture
-    hash_fallback: ip   # fallback when thread_id not in URI
+```nginx
+    hash $request_uri consistent;       # hash on URI path
 ```
 
 All cancel, watch, and status requests for a given thread land on the instance
@@ -950,7 +947,7 @@ involvement needed — the DB owns this invariant.
 | Issue | Severity | Fix | Scope |
 |---|---|---|---|
 | `_watch_registry` in-process | **Critical** | Redis String `watch:{thread_id}` | ~20 lines |
-| `running_tasks` cancel routing | **Critical** | Kong consistent-hash by thread_id (option A) or Redis Pub/Sub cancel (option B) | Kong config or ~40 lines |
+| `running_tasks` cancel routing | **Critical** | nginx-internal consistent-hash by thread_id (option A) or Redis Pub/Sub cancel (option B) | nginx conf or ~40 lines |
 | `lifecycle_fanout` double-publish | **Critical** | Redis leader-lock `SET lock:lifecycle_fanout NX EX 30` + renewal | ~50 lines |
 | Dedup INSERT TOCTOU | **High** | `UNIQUE INDEX … WHERE status IN (…)` partial index | 1 SQL statement |
 | `notify_pending:{thread_id}` | Already safe | Already in Redis | — |
@@ -962,7 +959,7 @@ involvement needed — the DB owns this invariant.
 
 **Recommended deployment order**: fix the partial unique index first (zero
 runtime risk, pure SQL), then move `_watch_registry` to Redis, then add the
-fanout leader lock, then configure Kong sticky sessions.  The cancel Pub/Sub
+fanout leader lock, then configure nginx-internal sticky sessions.  The cancel Pub/Sub
 option (B) is only needed if sticky sessions are not feasible.
 
 ---
@@ -1386,7 +1383,7 @@ Each concurrency test stream follows this path:
 
 ```
 Browser POST /query × N
-   │ (Kong round-robins to 4 FastAPI runners)
+   │ (nginx-internal round-robins to 4 FastAPI runners)
    ▼
 FastAPI: dispatch_scheduled_ingest()
    ├─ sched_register() ── Redis shard 0: HSET state, SADD to run set
@@ -1450,7 +1447,7 @@ dispatched_ids.update(cfg["stream_id"] for cfg in configs)  # ← not new_ids
 
 **Root cause**: Chromium limits **6 concurrent HTTP connections per origin**
 over HTTP/1.1.  With 200 simultaneous `POST /query` requests, only 6 reach
-Kong at once.  The remaining 194 queue in the browser.  With
+nginx-internal at once.  The remaining 194 queue in the browser.  With
 `RENDEZVOUS_WINDOW_SECS = 0.5`, the coordinator dispatches before most streams
 register, creating 7 separate fanout tasks with staggered starts.
 
@@ -1533,6 +1530,6 @@ The following issues are NOT yet fixed but limit scale beyond ~16,000 streams:
    coordinator BLPOP.  The event loop scheduling overhead grows O(N) with
    active coroutines.  Measurable stall above ~5,000/instance.
 
-3. **Kong upstream keepalive**: Default `keepalive_pool_size = 60` per upstream.
-   At 10,000 simultaneous POSTs, Kong opens 9,940 new TCP connections.
-   Fix: enable HTTP/2 in Kong (multiplexes N requests per TCP connection).
+3. **nginx-internal upstream keepalive**: Default `keepalive` pool is 64 connections per upstream.
+   At 10,000 simultaneous POSTs, nginx-internal opens many new TCP connections.
+   Fix: enable HTTP/2 in nginx-internal (multiplexes N requests per TCP connection).

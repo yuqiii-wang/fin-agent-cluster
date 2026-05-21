@@ -33,16 +33,16 @@ from backend.langgraph.models.node import BaseNode
 from backend.langgraph.models.models import NodeContext, TaskOutput
 from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.query_node.models import (
-    QueryNodeInput, QueryNodeOutput, StockInfoInput, WebStockInput,
+    QueryNodeInput, QueryNodeOutput, WebStockInput,
 )
-from backend.langgraph.nodes.query_node.tasks.analyze_query import analyze_query
+from backend.langgraph.nodes.query_node.tasks.analyze_query import analyze_query, AnalyzeQueryInput
 from backend.langgraph.nodes.query_node.tasks.get_stock_from_web_if_not_seen import get_stock_from_web_if_not_seen
 from backend.langgraph.nodes.query_node.tasks.analyze_stock_from_web_if_not_seen import (
     analyze_stock_from_web_if_not_seen,
     AnalyzeWebStockInput,
 )
-from backend.langgraph.nodes.query_node.tasks.get_stock_region import get_stock_region
-from backend.langgraph.nodes.query_node.tasks.get_stock_industry_peers import get_stock_industry_peers
+from backend.langgraph.nodes.query_node.tasks.get_stock_region import get_stock_region, GetStockRegionInput
+from backend.langgraph.nodes.query_node.tasks.get_stock_industry_peers import get_stock_industry_peers, GetStockIndustryPeersInput
 from backend.langgraph.state import GraphState
 
 
@@ -72,7 +72,7 @@ class QueryNode(BaseNode[QueryNodeInput, QueryNodeOutput]):
         """Chain: analyze_query → (optional web tasks) → parallel region + industry/peers."""
         async def _orchestrate(node_input: QueryNodeInput) -> dict[str, TaskOutput]:
             # Step 1: extract stock name
-            analyze_result = await self.run_task(analyze_query, ctx, node_input)
+            analyze_result = await self.run_task(analyze_query, ctx, AnalyzeQueryInput(query=node_input.query))
             results: dict[str, TaskOutput] = {analyze_query.name: analyze_result}
             stock_name = analyze_result.content.stock_name
 
@@ -97,10 +97,9 @@ class QueryNode(BaseNode[QueryNodeInput, QueryNodeOutput]):
                 stock_name = analyze_web_result.content.stock_name
 
             # Step 3: parallel region + industry/peers
-            stock_input = StockInfoInput(stock_name=stock_name)
             region_result, industry_peers_result = await asyncio.gather(
-                self.run_task(get_stock_region, ctx, stock_input),
-                self.run_task(get_stock_industry_peers, ctx, stock_input),
+                self.run_task(get_stock_region, ctx, GetStockRegionInput(stock_name=stock_name)),
+                self.run_task(get_stock_industry_peers, ctx, GetStockIndustryPeersInput(stock_name=stock_name)),
             )
             results[get_stock_region.name] = region_result
             results[get_stock_industry_peers.name] = industry_peers_result

@@ -11,17 +11,19 @@ Public API
 ----------
 :func:`dispatch_graph_run`  — acquire lock and dispatch graph as asyncio.Task.
 :exc:`ThreadRoutingError`   — raised when another live instance owns the thread.
-:func:`recover_running_threads` — call on startup to resume orphaned runs.
-:func:`wait_all`            — call on shutdown to drain in-flight graph tasks.
+:func:`recover_running_threads`     — call on startup to resume orphaned runs.
+:func:`cleanup_stale_celery_tasks`  — call on startup to revoke zombie Celery tasks.
+:func:`wait_all`                    — call on shutdown to drain in-flight graph tasks.
 """
 
 from backend.main_thread.executor import ThreadRoutingError, dispatch_graph_run
 from backend.main_thread.registry import wait_all
-from backend.main_thread.startup import recover_running_threads
+from backend.main_thread.startup import cleanup_stale_celery_tasks, recover_running_threads
 
 __all__ = [
     "ThreadRoutingError",
     "dispatch_graph_run",
     "recover_running_threads",
+    "cleanup_stale_celery_tasks",
     "wait_all",
 ]

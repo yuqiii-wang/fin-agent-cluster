@@ -5,7 +5,7 @@ DROP TYPE IF EXISTS fin_agents.query_status CASCADE;
 CREATE TYPE fin_agents.query_status AS ENUM ('connecting', 'received', 'running', 'completed', 'failed', 'cancelled');
 
 DROP TYPE IF EXISTS fin_agents.work_status CASCADE;
-CREATE TYPE fin_agents.work_status AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled', 'wrong');
+CREATE TYPE fin_agents.work_status AS ENUM ('pending', 'running', 'paused', 'completed', 'failed', 'cancelled', 'wrong');
 
 DROP TYPE IF EXISTS fin_agents.node_types CASCADE;
 CREATE TYPE fin_agents.node_types AS ENUM ('Workflow', 'Subgraph');
@@ -141,6 +141,9 @@ CREATE TABLE IF NOT EXISTS fin_agents.nodes (
     -- Fencing token from the Redis per-thread counter at lock acquisition time.
     -- Zombie writes (lower token) are rejected by guards in upsert/complete SQL.
     fencing_token       BIGINT NOT NULL DEFAULT 0,
+    -- if it is by server err, e.g., server shutdown for new feature release, this is set true
+    -- on restart. server will resume paused nodes with is_last_paused_by_server=true preferentially
+    is_last_paused_by_server BOOLEAN NOT NULL DEFAULT TRUE,
     -- (thread_id, node_name, version) uniquely identifies each fork branch.
     UNIQUE (thread_id, node_name, version)
 );
@@ -189,12 +192,15 @@ CREATE INDEX IF NOT EXISTS fin_agents_tasks_thread_id_idx ON fin_agents.tasks (t
 CREATE INDEX IF NOT EXISTS fin_agents_tasks_node_name_idx ON fin_agents.tasks (node_name);
 
 -- Stores actual input/output payloads for task executions, separated from metadata.
+-- (task_id, retry_num) is the composite primary key so each retry gets its own row.
+-- retry_num = 0 is the initial execution; retry_num = 1, 2, … are subsequent retries.
 CREATE TABLE IF NOT EXISTS fin_agents.task_executions (
-    task_id     TEXT NOT NULL PRIMARY KEY
-                REFERENCES fin_agents.tasks (task_id) ON DELETE CASCADE,
+    task_id     TEXT NOT NULL REFERENCES fin_agents.tasks (task_id) ON DELETE CASCADE,
+    retry_num   INTEGER NOT NULL DEFAULT 0,
     input       JSONB NOT NULL DEFAULT '{}',
     output      JSONB NOT NULL DEFAULT '{}',
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (task_id, retry_num)
 );
 
 -- LLM token usage records persisted by the FastAPI background task
@@ -224,4 +230,6 @@ CREATE INDEX IF NOT EXISTS fin_agents_llm_responses_ts_idx ON fin_agents.llm_res
 CREATE INDEX IF NOT EXISTS fin_agents_llm_responses_provider_model_idx ON fin_agents.llm_responses (provider, model);
 CREATE INDEX IF NOT EXISTS fin_agents_llm_responses_task_id_idx ON fin_agents.llm_responses (task_id)
     WHERE task_id IS NOT NULL;
+
+
 

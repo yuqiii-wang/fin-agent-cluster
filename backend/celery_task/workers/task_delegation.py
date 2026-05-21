@@ -8,7 +8,7 @@ Redis cancel flag on each timeout cycle.
 Cancellation
 ------------
 FastAPI signals cancellation by writing ``SET fin:cancel:{thread_id} 1``
-(via :func:`~backend.main_thread.cancel_flag.set_cancel_flag`).  The
+(via :func:`~backend.langgraph.lifecycle.cancel_flag.set_cancel_flag`).  The
 polling loop in ``_await_result`` checks this Redis key on every
 ``_CANCEL_POLL_INTERVAL``-second cycle.  When detected, the Celery task is
 revoked and :class:`ThreadCancelledError` is raised so the owning LangGraph
@@ -39,7 +39,7 @@ from typing import Any
 
 from backend.celery_task.celery_engine import celery_engine
 from backend.celery_task.config import get_ondemand_queue, get_stream_queue
-from backend.langgraph.lifecycle.errors import ThreadCancelledError
+from backend.langgraph.lifecycle.errors import TaskPausedError, ThreadCancelledError
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ async def _await_result(
     """
     from backend.celery_task.config import CELERY_BACKEND_DB
     from backend.db.redis.client import get_client
-    from backend.main_thread.cancel_flag import is_cancel_flag_set, is_node_cancel_flag_set
+    from backend.langgraph.lifecycle.cancel_flag import is_cancel_flag_set, is_node_cancel_flag_set
     from backend.langgraph.lifecycle.threads.manager import get_thread_registry
     from backend.langgraph.lifecycle.errors import NodeCancelledError
 
@@ -109,7 +109,7 @@ async def _await_result(
                 _warn_bucket = int(elapsed) // 30 * 30
                 if _warn_bucket > _last_warn_s:
                     _last_warn_s = _warn_bucket
-                    logger.error(
+                    logger.warning(
                         "[task_delegation] waiting for celery task_id=%s thread_id=%s"
                         " elapsed_s=%.0f",
                         task_id, thread_id, elapsed,
@@ -136,10 +136,24 @@ async def _await_result(
                 data = _json.loads(raw)
                 status = data.get("status")
                 if status == "SUCCESS":
-                    return data["result"]
+                    result = data["result"]
+                    if isinstance(result, dict) and result.get("paused"):
+                        thinking = result.get("thinking") or ""
+                        if thinking:
+                            from backend.langgraph.lifecycle.pause_flag import save_task_pause_snapshot
+                            await save_task_pause_snapshot(task_id, thinking)
+                        raise TaskPausedError(task_id, thinking)
+                    return result
                 if status == "FAILURE":
                     tb = data.get("traceback") or str(data.get("result", "unknown error"))
                     raise Exception(f"Celery task failed: {tb}")
+                if status == "REVOKED":
+                    # Task was revoked. Check whether this was a pause (task-level
+                    # pause flag set) or a full thread/node cancellation.
+                    from backend.langgraph.lifecycle.pause_flag import is_task_pause_flag_set
+                    if await is_task_pause_flag_set(task_id):
+                        raise TaskPausedError(task_id)
+                    raise ThreadCancelledError(thread_id)
                 # PENDING / STARTED / RETRY — keep polling
 
             await asyncio.sleep(min(_CANCEL_POLL_INTERVAL, remaining))
@@ -190,6 +204,8 @@ async def delegate_completion(
         result = await _await_result(
             async_result, thread_id, task_id, _COMPLETION_TIMEOUT, node_id=node_id
         )
+    except TaskPausedError:
+        raise
     except (ThreadCancelledError, TimeoutError):
         # Cancel and timeout have their own SSE paths (cancel_task / node except block).
         raise
@@ -304,26 +320,92 @@ async def delegate_stream(
     Tokens are streamed from the worker to the frontend via Centrifugo while
     the LangGraph thread polls for the final result dict.
 
+    If a pause snapshot exists for *task_id* in Redis (set when the task was
+    paused mid-stream), dispatches ``run_stream_compact_continue`` so the LLM
+    continues from the saved thinking context rather than starting over.
+
     Args:
         thread_id:  LangGraph thread UUID (for Centrifugo shard routing).
         task_id:    Governance UUID for the ``fin_agents.tasks`` row.
-        task_name:  Human label, e.g. ``"stream_conclusion"``.
+        task_name:  UI-facing label for this streaming task (e.g. ``"stream_llm"``).
+                    Decided by each node's task — independent of the underlying
+                    Celery task registration name (always ``run_stream``).
         node_name:  Owning node name.
-        payload:    Input context (must include ``"merged_research"``).
+        payload:    Input context forwarded to the stream worker.
 
     Returns:
-        ``{"answer": str, "total_tokens": int, "latency_ms": int}``
+        ``{"thinking": str | None, "answer": dict, "total_tokens": int, "latency_ms": int}``
 
     Raises:
         ThreadCancelledError: If the thread's cancel token is set during polling.
         TimeoutError:         If streaming does not complete within the timeout.
     """
-    async_result = celery_engine.send_task(
+    from backend.langgraph.lifecycle.pause_flag import get_task_pause_snapshot
+    snapshot = await get_task_pause_snapshot(task_id)
+    if snapshot:
+        from backend.celery_task.workers.tasks.stream_task import (  # noqa: PLC2701
+            _detect_and_compress_repetition as _compress,
+        )
+        non_rep, rep_block, rep_count = _compress(snapshot)
+        compressed = (
+            non_rep + f"\n<repeating contents> x {rep_count}\n" + rep_block
+            if rep_count >= 2
+            else snapshot
+        )
+        async_result = celery_engine.send_task(
+            "backend.celery_task.workers.tasks.stream_task.run_stream_compact_continue",
+            args=[thread_id, task_id, task_name, node_name, payload, snapshot, compressed],
+            queue=get_stream_queue(thread_id),
+        )
+    else:
+        async_result = _send_to_stream_worker(thread_id, task_id, task_name, node_name, payload)
+    try:
+        result = await _await_result(
+            async_result, thread_id, task_id, _STREAM_TIMEOUT
+        )
+    except TaskPausedError:
+        raise
+    except (ThreadCancelledError, TimeoutError):
+        raise
+    except Exception as exc:
+        logger.error(
+            "[task_delegation] stream task failed task_id=%s task_name=%s thread_id=%s: %s",
+            task_id, task_name, thread_id, exc,
+        )
+        raise
+    return result
+
+
+def _send_to_stream_worker(
+    thread_id: str,
+    task_id: str,
+    task_name: str,
+    node_name: str,
+    payload: dict[str, Any],
+) -> Any:
+    """Route *task_name* to the shared ``run_stream`` Celery task on the stream queue.
+
+    Decouples the UI-facing task name (set by each node's task, stored in
+    ``fin_agents.tasks``, surfaced to the frontend) from the Celery task
+    registration name (``stream_task.run_stream``), which is always the same
+    regardless of which node's streaming task is dispatching.  Any node that
+    wants LLM streaming simply calls :func:`delegate_stream` with its own
+    ``task_name``; this helper ensures all such calls share the same worker pool.
+
+    Args:
+        thread_id:  LangGraph thread UUID (for stream-queue shard routing).
+        task_id:    Governance UUID for the ``fin_agents.tasks`` row.
+        task_name:  UI-facing label forwarded to the worker (used for prompt
+                    builder lookup and result persistence).
+        node_name:  Owning node name forwarded to the worker.
+        payload:    Input context forwarded to the worker.
+
+    Returns:
+        Celery ``AsyncResult`` — pass to ``_await_result`` to retrieve the
+        final streaming result dict.
+    """
+    return celery_engine.send_task(
         "backend.celery_task.workers.tasks.stream_task.run_stream",
         args=[thread_id, task_id, task_name, node_name, payload],
         queue=get_stream_queue(thread_id),
     )
-    result = await _await_result(
-        async_result, thread_id, task_id, _STREAM_TIMEOUT
-    )
-    return result

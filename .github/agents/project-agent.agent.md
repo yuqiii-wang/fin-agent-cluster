@@ -17,7 +17,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 
 * Do NOT add hardcoded time lag or grace period for any flow; if got racing or other safety concerns, implement proper locking or queuing mechanism to ensure safety without hardcoded time lag.
 * Debug on git bash, although backend runs on WSL2, only try wsl if want to `python run.py` to launch the whole backend, for other debugging purposes, use git bash to run individual files or commands, do not use wsl for debugging.
-* Most of the infra, e.g., KONG API, Redis, Postgres, Centrifugo, Grafana stack are run in docker.
+* Most of the infra, e.g., nginx-internal, Redis, Postgres, Centrifugo, Grafana stack are run in docker.
 * OK to add debug logs for debugging or understanding the flow, ok to keep err logs for error cases, but do NOT add info or debug logs for normal flow.
 * If debugging takes a long time, once resolved should add error logs for the issue encountered.
 * In docs dir, there is a debugs dir, write debug docs for any non-trivial debugging process.
@@ -32,7 +32,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 * In every large component, need to mkdir a sub-dir called `errors` to store error code and description capturing likely exceptions or racing or any thing suspected. The error codes will be used in logs and return to UI to help locate error. And in migration or code cleanup, or if some error code is no longer used, just delete/migrate it, do not keep dead code.
 * Ensure all SSE has ack mechanism that for event notification, UI having received the event will send ack to backend, and backend will send back ack to UI. Backend fast api with the same graph thread id listens for the ack and proceed with the flow.
 * Always be careful about racing conditions in the flows, and implement proper locking or queuing mechanism to ensure safety without hardcoded time lag.
-* `ui` nginx is used only to host static frontend files, and KONG API is used for all API calls from frontend to backend, do not use `ui` nginx for any API calls, but to use KONG API for all API calls.
+* `ui` nginx is used only to host static frontend files, and nginx-internal is used for all API calls from frontend to backend, do not use `ui` nginx for any API calls, but to use nginx-internal for all API calls.
 * For HTTP request/response flow, use HTTP2, for bidirectional streaming flow (SSE notification and LLM streaming) between frontend and backend, use centrifugo.
 
 ### Backend

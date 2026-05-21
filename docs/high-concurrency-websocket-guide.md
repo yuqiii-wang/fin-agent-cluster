@@ -12,10 +12,10 @@ FastAPI + LangGraph + Centrifugo fintech service.
 ```
 Browser
   │
-  ├─ HTTP  ──→ Kong :8888  ──→ FastAPI-runner    :8432-:8435  (all HTTP endpoints)
+  ├─ HTTP  ──→ nginx-internal :8888  ──→ FastAPI-runner    :8432-:8435  (all HTTP endpoints)
   │
-  ├─ WS    ──→ Kong :8888  ──→ Centrifugo-0 :8000  (shard 0 — redis-0)
-  │                        ──→ Centrifugo-1 :8000  (shard 1 — redis-1)
+  ├─ WS    ──→ nginx-internal :8888  ──→ Centrifugo-0 :8000  (shard 0 — redis-0)
+  │                                  ──→ Centrifugo-1 :8000  (shard 1 — redis-1)
   │
 Celery workers (WSL2 prefork, queue: stream:ingest)
   │
@@ -39,7 +39,7 @@ FastAPI is **never** in the token delivery path.
 
 ```
 Browser → POST /api/v1/users/query   (X-User-Token: <jwt>)
-        → Kong :8888
+        → nginx-internal :8888
         → round-robin to runner-upstream (FastAPI :8432–:8435)
         → backend/api/queries.py
             INSERT user_queries (status='received')
@@ -58,7 +58,7 @@ no need to wait for the WebSocket event.
 
 ```
 Browser → GET /api/v1/centrifugo/llm-token?thread_id=<uuid>   (X-User-Token: <jwt>)
-        → Kong :8888
+        → nginx-internal :8888
         → route-centrifugo-llm  (rate-limit: 6000/min)
         → runner-upstream (FastAPI :8432-:8435)
         → backend/api/centrifugo.py :: get_centrifugo_token()
@@ -70,7 +70,7 @@ Browser → GET /api/v1/centrifugo/llm-token?thread_id=<uuid>   (X-User-Token: <
 shard = get_shard_index(thread_id)          # SHA-256(thread_id) % 2
 channel = f"thread:{thread_id}"
 
-# Points browser to the correct shard through Kong
+# Points browser to the correct shard through nginx-internal
 ws_url = f"{CENTRIFUGO_PUBLIC_BASE}/centrifugo-{shard}/connection/websocket"
 
 connection_token = make_connection_token(user_id, CENTRIFUGO_SECRET)
@@ -99,29 +99,27 @@ written to `redis-N` are consumed by `centrifugo-N`.
 
 ---
 
-### Step 3 — Browser opens WebSocket via Kong
+### Step 3 — Browser opens WebSocket via nginx-internal
 
 ```
 Browser → WebSocket upgrade
         → ws://localhost:8888/centrifugo-{shard}/connection/websocket
-        → Kong :8888
-        → route-centrifugo-{shard}  (strip_path: true, protocol: ws/wss)
-        → centrifugo-{shard}-upstream → centrifugo-{n}:8000/connection/websocket
+        → nginx-internal :8888
+        → /centrifugo-{shard}/ location  (proxy_pass, WebSocket upgrade headers)
+        → centrifugo-{n}:8000/connection/websocket
 ```
 
-Kong service config for Centrifugo:
+nginx-internal config for Centrifugo (gateway/nginx-internal.conf):
 
-```yaml
-- name: centrifugo-0
-  host: centrifugo-0-upstream
-  protocol: ws         # ← Kong uses WS protocol for pass-through
-  write_timeout: 3600000   # 1 h — holds WS connection open for full stream duration
-  read_timeout:  3600000
-
-- name: route-centrifugo-0
-  paths: [/centrifugo-0]
-  strip_path: true     # strips /centrifugo-0 prefix before forwarding
-  protocols: [ws, wss]
+```nginx
+location ~ ^/centrifugo-([01])/(.*) {
+    proxy_pass http://centrifugo-$1:8000/$2$is_args$args;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;   # hold WS connection open for full stream duration
+    proxy_send_timeout 3600s;
+}
 ```
 
 **Centrifugo validates the connection JWT:**
@@ -178,7 +176,7 @@ sub.on("publication", ctx => dispatch(ctx.data))
   → dispatch sees event="query_received"
   → onQueryReceived() handler
   → POST /api/v1/users/query/{thread_id}/ack   (X-User-Token)
-  → Kong → runner-upstream
+  → nginx-internal → runner-upstream
   → backend/api/queries.py :: ack_query()
       SELECT FOR UPDATE (dedup guard)
       UPDATE user_queries SET status='running'
@@ -317,24 +315,24 @@ Browser receives event="done"
 
 ---
 
-### Kong Route Map (Centrifugo-related)
+### nginx-internal Route Map (Centrifugo-related)
 
 ```
-Kong :8888
-├─ GET  /api/v1/centrifugo/llm-token        → fastapi-runner  (rate: 6000/min)
+nginx-internal :8888
+├─ GET  /api/v1/centrifugo/llm-token        → fastapi-runner
 ├─ WS   /centrifugo-0/*   strip_path   → centrifugo-0:8000   (ws, timeout 1h)
 └─ WS   /centrifugo-1/*   strip_path   → centrifugo-1:8000   (ws, timeout 1h)
 ```
 
-Full Kong upstream map:
+nginx-internal upstream map:
 
-| Service | Upstream | Protocol | write/read timeout |
+| Location | Upstream | Protocol | timeout |
 |---|---|---|---|
-| `centrifugo-0` | `centrifugo-0:8000` | `ws` | 3 600 000 ms |
-| `centrifugo-1` | `centrifugo-1:8000` | `ws` | 3 600 000 ms |
-| `fastapi-runner` | `:8432–:8435` round-robin | `http` | 30 000 ms |
+| `/centrifugo-0/` | `centrifugo-0:8000` | `ws` | 3 600 s |
+| `/centrifugo-1/` | `centrifugo-1:8000` | `ws` | 3 600 s |
+| `/api/` | `:8432–:8435` round-robin | `http/1.1` | 30 s |
 
-Kong only handles **WebSocket upgrade** and **HTTP token bootstrap**.  It does
+nginx-internal only handles **WebSocket upgrade** and **HTTP token bootstrap**.  It does
 not proxy the Centrifugo internal publish API — that uses Docker internal DNS
 (`centrifugo-{n}:8000`) directly from FastAPI.
 
@@ -363,7 +361,7 @@ by the wrong Centrifugo node → never delivered to the subscriber (silent 0-tok
 
 ### Vite Dev Proxy (local dev only)
 
-In production, the browser hits Kong directly.  In dev, Vite rewrites the WS URL:
+In production, the browser hits nginx-internal directly.  In dev, Vite rewrites the WS URL:
 
 ```typescript
 // stream.ts :: openStream()
@@ -411,7 +409,7 @@ Each stream opened its own `new Centrifuge(wsUrl)` connection.
 
 ```
 200 streams × 1 WebSocket = 200 WebSocket connections
-All routed through: localhost:3000 (Vite dev proxy) → Kong → Centrifugo
+All routed through: localhost:3000 (Vite dev proxy) → nginx-internal → Centrifugo
 ```
 
 **Firefox default**: `network.websocket.max-connections = 200` per origin.
@@ -593,7 +591,7 @@ When a subset of concurrent streams receive 0 tokens:
 3. **Check the Vite log** for the token fetch HTTP status vs WebSocket upgrade:
    Token 200 OK but no WS frame → browser connection limit hit.
 
-4. **Check Kong rate limits** on centrifugo token endpoint (`6000/min`) and
+4. **Check nginx-internal rate limits** on centrifugo token endpoint (`6000/min`) and
    perf-stable route if running 200+ streams.
 
 ---
@@ -636,10 +634,10 @@ handshake overhead.
 Requirements:
 - Set Go env: `GODEBUG=http2xconnect=1` in the Centrifugo container
 - TLS must be enabled on the Centrifugo endpoint (or enable H2C via `http_server.h2c_external: true`)
-- Reverse proxy (Kong/Nginx) must support RFC 8441 WebSocket-over-HTTP/2 proxying
+- Reverse proxy (nginx) must support RFC 8441 WebSocket-over-HTTP/2 proxying
 - All major browsers support it: Chrome 67+, Firefox 65+, Safari 14.1+, Edge 79+
 
-For this project's dev setup (plain HTTP through Vite proxy → Kong → Centrifugo),
+For this project's dev setup (plain HTTP through Vite proxy → nginx-internal → Centrifugo),
 **1 WS per shard** is sufficient and simpler.  HTTP/2 upgrade is the path once moving
 to production TLS.
 

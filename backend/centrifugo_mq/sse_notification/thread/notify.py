@@ -9,6 +9,13 @@ from typing import Any
 
 from backend.centrifugo_mq.client import publish_thread_event, has_app_viewers, has_thread_viewers
 from backend.centrifugo_mq.errors import CENTRIFUGO_SSE_NACK
+from backend.centrifugo_mq.sse_notification.metrics import (
+    SSE_ACK,
+    SSE_ACK_LATENCY,
+    SSE_NACK,
+    SSE_PUBLISH_ATTEMPTS,
+    SSE_PUBLISHED,
+)
 from backend.db.redis.session.notify_ack_store import wait_notify_ack
 
 logger = logging.getLogger(__name__)
@@ -58,6 +65,8 @@ async def notify(
     ack_key = f"{dedup_key or f'thread:{event}'}:{nonce}"
     published_payload = {"event": event, "thread_id": thread_id, "ack_key": ack_key, **payload}
 
+    SSE_PUBLISHED.labels(scope="thread", event=event).inc()
+
     if not viewers_present:
         await publish_thread_event(thread_id, published_payload)
         return True
@@ -65,13 +74,17 @@ async def notify(
     t0_total = time.monotonic()
     for attempt in range(max_retries):
         t_attempt = time.monotonic()
+        SSE_PUBLISH_ATTEMPTS.labels(scope="thread", event=event).inc()
         await publish_thread_event(thread_id, published_payload)
         result = await wait_notify_ack(thread_id, ack_key, timeout=retry_interval)
         elapsed_attempt = (time.monotonic() - t_attempt) * 1000
         if result is True:
+            total_s = time.monotonic() - t0_total
+            SSE_ACK.labels(scope="thread", event=event).inc()
+            SSE_ACK_LATENCY.labels(scope="thread", event=event).observe(total_s)
             logger.debug(
                 "[sse:thread] ack received thread_id=%s event=%s attempt=%d attempt_ms=%.0f total_ms=%.0f",
-                thread_id, event, attempt, elapsed_attempt, (time.monotonic() - t0_total) * 1000,
+                thread_id, event, attempt, elapsed_attempt, total_s * 1000,
             )
             return True
         if result is False:
@@ -85,6 +98,7 @@ async def notify(
                     "[sse:thread] NACK (1st attempt) thread_id=%s event=%s attempt_ms=%.0f",
                     thread_id, event, elapsed_attempt,
                 )
+            SSE_NACK.labels(scope="thread", event=event, reason="explicit_nack").inc()
             break
         logger.debug(
             "[sse:thread] ack timeout thread_id=%s event=%s attempt=%d attempt_ms=%.0f — retrying",
@@ -92,6 +106,7 @@ async def notify(
         )
 
     if attempt >= 1:
+        SSE_NACK.labels(scope="thread", event=event, reason="exhausted").inc()
         logger.error(
             "[%s] thread event NACK/exhausted thread_id=%s event=%s ack_key=%s total_ms=%.0f",
             CENTRIFUGO_SSE_NACK,

@@ -36,6 +36,14 @@ limits_config:
   # Relax cardinality limits for per-component label fan-out
   ingestion_rate_mb: 16
   ingestion_burst_size_mb: 32
+  retention_period: 2160h   # 90 days
 
 ruler:
   alertmanager_url: http://localhost:9093
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150

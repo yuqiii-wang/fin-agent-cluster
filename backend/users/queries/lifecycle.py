@@ -57,7 +57,7 @@ async def cancel_query(thread_id: str, reason: str = "user") -> QueryResponse:
     Returns:
         Updated :class:`QueryResponse`.
     """
-    from backend.main_thread.cancel_flag import set_cancel_flag
+    from backend.langgraph.lifecycle.cancel_flag import set_cancel_flag
     from backend.langgraph.lifecycle import cancel_thread
     await set_cancel_flag(thread_id)
     await cancel_thread(thread_id, reason=reason)
@@ -187,10 +187,61 @@ async def cancel_task_by_uuid(
     return {"thread_id": thread_id, "task_id": task_id, "action": "cancelled"}
 
 
+async def pause_task_by_uuid(
+    thread_id: str,
+    task_id: str,
+) -> dict:
+    """Pause a task. Does NOT cascade to node (node stays 'running').
+
+    For streaming tasks: sets Redis pause flag so the worker detects it and
+    saves the partial thinking content gracefully before exiting.  The worker
+    returns a SUCCESS result with ``paused=True``; ``_await_result`` then
+    raises :class:`~backend.langgraph.lifecycle.errors.TaskPausedError` which
+    propagates through the node and executor without marking anything as failed.
+
+    For completion tasks: revokes the Celery task directly (no graceful exit
+    path exists).
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        task_id:   Task governance UUID.
+
+    Returns:
+        Dict with ``thread_id``, ``task_id``, and ``action``.
+    """
+    from backend.langgraph.lifecycle.threads.nodes.tasks import pause_task as _pause
+    from backend.langgraph.lifecycle.threads.manager import get_thread_registry
+    from backend.langgraph.lifecycle.pause_flag import set_task_pause_flag
+
+    async with raw_conn(readonly=True) as conn:
+        cur = await conn.execute(
+            "SELECT view_type FROM fin_agents.tasks WHERE task_id = %s AND thread_id = %s",
+            (task_id, thread_id),
+        )
+        row = await cur.fetchone()
+    view_type = row["view_type"] if row else "ToolCall"
+    is_streaming = view_type == "Streaming"
+
+    # Always set pause flag (streaming workers poll this; completion tasks also
+    # read it in task_delegation to identify paused results).
+    await set_task_pause_flag(task_id)
+
+    # For completion tasks: revoke Celery immediately (no graceful exit path).
+    if not is_streaming:
+        get_thread_registry().revoke_celery_task(task_id)
+
+    # Mark task as 'paused' in DB and emit SSE.
+    # Does NOT cascade to owning node — node stays 'running'.
+    await _pause(thread_id, task_id)
+
+    return {"thread_id": thread_id, "task_id": task_id, "action": "paused"}
+
+
 __all__ = [
     "ack_query",
     "cancel_query",
     "resume_query",
     "cancel_node",
     "cancel_task_by_uuid",
+    "pause_task_by_uuid",
 ]

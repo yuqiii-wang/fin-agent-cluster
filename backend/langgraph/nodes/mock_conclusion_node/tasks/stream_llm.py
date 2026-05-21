@@ -1,4 +1,4 @@
-"""stream_conclusion — NodeTask for conclusion_node.
+"""stream_llm — streaming LLM NodeTask for conclusion_node.
 
 This is a streaming task: it uses ``delegate_stream`` instead of
 ``delegate_completion``.  Unlike non-streaming tasks (where the Celery
@@ -7,7 +7,7 @@ explicit ``complete_task`` call on success in the @task function.
 
 Execution layers
 ----------------
-LangGraph layer (``_stream_conclusion_task``):
+LangGraph layer (``_stream_llm_task``):
     Calls ``create_task``, delegates to the streaming Celery worker via
     ``delegate_stream``, calls ``complete_task`` with the full result on
     success, and calls ``complete_task(failed=True)`` on exception.
@@ -33,7 +33,7 @@ from backend.celery_task.workers.task_delegation import delegate_stream
 
 logger = logging.getLogger(__name__)
 
-_TASK_NAME = "stream_conclusion"
+_TASK_NAME = "stream_llm"
 
 
 async def _handler(payload: dict) -> dict:
@@ -52,16 +52,16 @@ async def _handler(payload: dict) -> dict:
         Serialised ``ConclusionNodeOutput`` dict.
     """
     # Handler body is implemented in the Celery stream worker.
-    # This stub is present for HANDLERS registry registration — the actual
+    # This stub is present for structural consistency — the actual
     # logic lives in celery_task/workers/tasks/stream_task.py.
-    raise NotImplementedError("stream_conclusion handler runs in the streaming Celery worker.")
+    raise NotImplementedError("stream_llm handler runs in the streaming Celery worker.")
 
 
 @task
-async def _stream_conclusion_task(
+async def _stream_llm_task(
     task_input: TaskInput[ConclusionNodeInput],
 ) -> TaskOutput[ConclusionNodeOutput]:
-    """LangGraph @task: delegates stream_conclusion to the streaming Celery worker.
+    """LangGraph @task: delegates stream_llm to the streaming Celery worker.
 
     Streaming tasks require an explicit ``complete_task`` call on success
     because the streaming Celery worker does not call ``persist_task_result``
@@ -86,14 +86,14 @@ async def _stream_conclusion_task(
             payload=payload,
         )
         # result["answer"] is a dict (parsed JSON) returned by the streaming worker.
-        # Defensively parse it if the worker returned a raw string (e.g. old worker version).
+        # Defensively parse it if the worker returned a raw string.
         raw_answer = result.get("answer", {})
         if isinstance(raw_answer, str):
             try:
                 answer_dict = json.loads(raw_answer)
             except (json.JSONDecodeError, TypeError):
                 logger.error(
-                    "[stream_conclusion] answer JSON parse failed task_id=%s; storing raw text",
+                    "[stream_llm] answer JSON parse failed task_id=%s; storing raw text",
                     ctx.task_id,
                 )
                 answer_dict = {"raw": raw_answer}
@@ -119,7 +119,7 @@ async def _stream_conclusion_task(
         raise
 
 
-stream_conclusion = NodeTask(
+stream_llm = NodeTask(
     name=_TASK_NAME,
     description=(
         "Stream an LLM-generated conclusion based on the merged research summary "
@@ -127,6 +127,8 @@ stream_conclusion = NodeTask(
     ),
     input_type=ConclusionNodeInput,
     output_type=ConclusionNodeOutput,
-    task_fn=_stream_conclusion_task,
+    task_fn=_stream_llm_task,
     handler=_handler,
 )
+
+__all__ = ["stream_llm"]

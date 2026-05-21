@@ -25,6 +25,8 @@ export type { SseEvent } from './sse';
 export type { SessionStatus } from './session';
 export type { GraphTopology, TopologyNodeDef, TopologyEdgeDef } from './topology';
 
+export type { NodeConfig, UserPreference, UserPreferencesResponse } from './user';
+
 export type {
   AnalyzeQueryInput,
   AnalyzeQueryOutput,

@@ -1,27 +1,27 @@
-"""backend.main_thread.cancel_flag — Redis-backed cancel flags.
+"""backend.langgraph.lifecycle.cancel_flag — Redis-backed cancel flags.
 
 Two granularities are supported:
 
 Thread-level  ``{GRAPH_CANCEL_KEY_PREFIX}{thread_id}``
     e.g. ``fin:cancel:abc123``
-    Set by ``cancel_query()``; polled by every delegation poll loop.
+    Set by ``cancel_thread()``; polled by every delegation poll loop.
 
 Node-level    ``{GRAPH_CANCEL_KEY_PREFIX}node:{node_id}``
     e.g. ``fin:cancel:node:uuid4``
-    Set by ``cancel_node()`` lifecycle when a single parallel node is
-    cancelled via the API.  Polled by ``_await_result`` in addition to
-    the thread-level flag so the delegation loop exits quickly without
-    waiting for the 120-second task timeout.
+    Set by ``cancel_node()`` when a single parallel node is cancelled via
+    the API.  Polled by ``_await_result`` in addition to the thread-level
+    flag so the delegation loop exits quickly without waiting for the
+    120-second task timeout.
 
 Both key types share the same TTL (``GRAPH_CANCEL_TTL_SECONDS``) and
 Redis shard 0.
 
 Public API
 ----------
-:func:`set_cancel_flag`          — thread-level; called by FastAPI cancel_query().
+:func:`set_cancel_flag`          — thread-level; called by cancel_thread().
 :func:`is_cancel_flag_set`       — thread-level; polled by task_delegation.
 :func:`clear_cancel_flag`        — thread-level; called on thread completion.
-:func:`set_node_cancel_flag`     — node-level;   called by lifecycle cancel_node().
+:func:`set_node_cancel_flag`     — node-level;   called by cancel_node().
 :func:`is_node_cancel_flag_set`  — node-level;   polled by task_delegation.
 :func:`clear_node_cancel_flag`   — node-level;   called on thread cleanup.
 """
@@ -32,8 +32,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Redis shard 0 is used for control-plane signals; cancel flags are tiny and
-# infrequent, so no sharding by thread_id is necessary.
+# Redis shard 0 is used for control-plane signals.
 _CANCEL_SHARD = 0
 
 
@@ -101,11 +100,10 @@ def _node_cancel_key(node_id: str) -> str:
 async def set_node_cancel_flag(node_id: str) -> None:
     """Set the per-node cancel flag for *node_id* in Redis.
 
-    Called by ``cancel_node()`` in the lifecycle layer so the delegation
-    poll loop for that node's tasks exits within one poll cycle instead of
-    waiting for the full 120-second task timeout.
-
-    Idempotent.  Expires after ``GRAPH_CANCEL_TTL_SECONDS``.
+    Called by ``cancel_node()`` so the delegation poll loop for that
+    node's tasks exits within one poll cycle instead of waiting for the
+    full 120-second task timeout.  Idempotent.  Expires after
+    ``GRAPH_CANCEL_TTL_SECONDS``.
 
     Args:
         node_id: Stable node UUID (from ``make_node_id``).

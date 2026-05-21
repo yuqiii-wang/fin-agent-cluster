@@ -7,10 +7,11 @@
 
 import React, { useState } from 'react';
 import { Avatar, Button, Dropdown, Space, Spin, Typography } from 'antd';
-import { LogoutOutlined, UserOutlined } from '@ant-design/icons';
+import { LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useAuth } from '../contexts/AuthContext';
 import LoginModal from './LoginModal';
+import UserProfile from './UserProfile';
 import type { GuestAuthResponse } from '../types';
 
 const { Text } = Typography;
@@ -18,6 +19,7 @@ const { Text } = Typography;
 const UserButton: React.FC = () => {
   const { user, loading, refresh, logout } = useAuth();
   const [modalOpen, setModalOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   function handleSuccess(data: GuestAuthResponse) {
     // AuthContext refresh will re-read the stored token.
@@ -59,6 +61,13 @@ const UserButton: React.FC = () => {
     },
     { type: 'divider' },
     {
+      key: 'profile',
+      icon: <SettingOutlined />,
+      label: 'Profile & Preferences',
+      onClick: () => setProfileOpen(true),
+    },
+    { type: 'divider' },
+    {
       key: 'logout',
       icon: <LogoutOutlined />,
       label: 'Logout',
@@ -68,14 +77,17 @@ const UserButton: React.FC = () => {
   ];
 
   return (
-    <Dropdown menu={{ items: menuItems }} placement="bottomRight" trigger={['click']}>
-      <Avatar
-        size="small"
-        icon={<UserOutlined />}
-        src={user.avatar_url}
-        style={{ cursor: 'pointer', background: '#1677ff' }}
-      />
-    </Dropdown>
+    <>
+      <Dropdown menu={{ items: menuItems }} placement="bottomRight" trigger={['click']}>
+        <Avatar
+          size="small"
+          icon={<UserOutlined />}
+          src={user.avatar_url}
+          style={{ cursor: 'pointer', background: '#1677ff' }}
+        />
+      </Dropdown>
+      <UserProfile open={profileOpen} onClose={() => setProfileOpen(false)} />
+    </>
   );
 };
 

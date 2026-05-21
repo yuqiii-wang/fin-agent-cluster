@@ -11,7 +11,7 @@ that owns the thread's session keys.  The frontend is told which
 Centrifugo WebSocket endpoint to connect to via the token endpoint:
 
     GET /api/v1/centrifugo/llm-token?thread_id=<uuid>
-    → {"ws_url": "ws://kong/centrifugo-llm-0/connection/websocket",
+    → {"ws_url": "wss://localhost:22332/centrifugo-llm-0/connection/websocket",
        "connection_token": "<JWT>",
        "subscription_token": "<JWT>"}
 

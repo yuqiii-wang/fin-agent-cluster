@@ -136,6 +136,17 @@ class ThreadRegistry:
         for task_id in task_ids:
             self.revoke_celery_task(task_id)
 
+    def get_celery_result(self, task_id: str) -> Any | None:
+        """Return the Celery AsyncResult for *task_id*, or ``None`` if not registered.
+
+        Used by retry-fresh to poll whether the old worker has finished
+        (result is discarded by ``discard_celery_result`` in ``_await_result``).
+
+        Args:
+            task_id: Governance UUID of the task.
+        """
+        return self._celery_results.get(task_id)
+
     def discard_celery_result(self, task_id: str) -> None:
         """Remove a completed Celery result from the registry without revoking."""
         self._celery_results.pop(task_id, None)
@@ -156,6 +167,7 @@ def get_thread_registry() -> ThreadRegistry:
 __all__ = [
     "ThreadRegistry",
     "get_thread_registry",
+    "get_celery_result",
     "TERMINAL_WORK_STATUSES",
     "TERMINAL_QUERY_STATUSES",
 ]

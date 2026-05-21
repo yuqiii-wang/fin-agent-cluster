@@ -44,7 +44,7 @@ a best-effort bulk update for orphaned DB rows.
 from __future__ import annotations
 
 from backend.langgraph.lifecycle.ids import make_node_id, make_task_id, get_next_fork_generation
-from backend.langgraph.lifecycle.errors import NodeCancelledError, ThreadCancelledError
+from backend.langgraph.lifecycle.errors import NodeCancelledError, TaskPausedError, ThreadCancelledError
 from backend.langgraph.lifecycle.threads import (
     cancel_all_running_threads,
     cancel_thread,
@@ -58,6 +58,8 @@ from backend.langgraph.lifecycle.threads.nodes import (
     cancel_node,
     complete_node,
     get_latest_sibling_node_version,
+    pause_node,
+    resume_node,
     read_node_output,
     upsert_node,
 )
@@ -68,6 +70,21 @@ from backend.langgraph.lifecycle.threads.nodes.tasks import (
     create_task,
     persist_task_result,
 )
+from backend.langgraph.lifecycle.cancel_flag import (
+    set_cancel_flag,
+    is_cancel_flag_set,
+    clear_cancel_flag,
+    set_node_cancel_flag,
+    is_node_cancel_flag_set,
+    clear_node_cancel_flag,
+)
+from backend.langgraph.lifecycle.pause_flag import (
+    set_task_pause_flag,
+    is_task_pause_flag_set,
+    clear_task_pause_flag,
+    save_task_pause_snapshot,
+    get_task_pause_snapshot,
+)
 
 __all__ = [
     # ID helpers
@@ -76,6 +93,7 @@ __all__ = [
     "get_next_fork_generation",
     # Exception types
     "NodeCancelledError",
+    "TaskPausedError",
     "ThreadCancelledError",
     # Thread-level
     "register_thread",
@@ -87,6 +105,8 @@ __all__ = [
     # Node-level
     "upsert_node",
     "complete_node",
+    "pause_node",
+    "resume_node",
     "cancel_node",
     "get_latest_sibling_node_version",
     "read_node_output",
@@ -97,4 +117,17 @@ __all__ = [
     "persist_task_result",
     "cancel_task",
     "cleanup_zombie_tasks",
+    # Cancel flags
+    "set_cancel_flag",
+    "is_cancel_flag_set",
+    "clear_cancel_flag",
+    "set_node_cancel_flag",
+    "is_node_cancel_flag_set",
+    "clear_node_cancel_flag",
+    # Pause flags
+    "set_task_pause_flag",
+    "is_task_pause_flag_set",
+    "clear_task_pause_flag",
+    "save_task_pause_snapshot",
+    "get_task_pause_snapshot",
 ]

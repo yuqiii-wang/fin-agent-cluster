@@ -1,0 +1,156 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "id": null,
+  "uid": "fin-sse-lifecycle-ref",
+  "title": "Fin Trading — SSE Lifecycle Reference",
+  "description": "Static reference explaining the thread/node/task lifecycle and the ACK mechanism used by SSE notifications.",
+  "tags": [
+    "sse",
+    "reference",
+    "lifecycle",
+    "fin-trading"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "hidden": true
+  },
+  "timezone": "browser",
+  "editable": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Overview — Scope Hierarchy & ACK Purpose",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 5
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## SSE Notification Scope Hierarchy\n\nEvery user query runs in a **Thread**. A thread executes a sequence of **Nodes** (LangGraph graph nodes). Each node may dispatch one or more **Tasks** (Celery workers).\n\n```\nThread  ─── Node ─── Task\n              └────── Task\n        ─── Node ─── Task\n```\n\n### Why ACK?\n\nSSE is fire-and-forget at the transport layer. Without an application-level ACK the backend cannot know whether the frontend actually received and rendered the event.\nThe ACK loop ensures **at-least-once delivery**: the backend republishes the event every `retry_interval` seconds (default **5 s**) for up to `max_retries` attempts (default **6**, i.e. up to 30 s total) until the frontend confirms receipt.\n\nThis is especially important for terminal lifecycle events (`done`, `node_status: completed`, `task_status: completed/failed`) because missing one leaves the UI in a stale state."
+      },
+      "datasource": null
+    },
+    {
+      "id": 2,
+      "type": "text",
+      "title": "Thread Lifecycle",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 8,
+        "h": 18
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## Thread Lifecycle\n\nA **thread** represents the full execution of one user query.\n\n### Typical event sequence\n\n| Step | Event | ACK required? | Notes |\n|------|-------|---------------|-------|\n| 1 | `query_status: submitted` | ✅ Yes | Emitted right after the query is accepted; confirms the backend received the request |\n| 2 | *(nodes execute — see Node tab)* | — | — |\n| 3 | `done: completed` | ✅ Yes | Terminal success; signals the frontend to close the SSE channel |\n| 3 | `done: failed` | ✅ Yes | Terminal failure |\n| 3 | `done: cancelled` | ✅ Yes | User-initiated cancellation |\n\n### No-viewer fast path\n\nIf the app has no active clients (`has_app_viewers = False`), the graph keeps running silently — no events are published at all.\n\nIf clients are connected but none are viewing this specific thread (`has_thread_viewers = False`), the event is published **once** (stored in Centrifugo history for recovery when the user navigates back) and the ACK loop is skipped. This is recorded as **`result = skipped / reason = no_thread_viewers`** in the audit.\n\n### Scope: `thread`\n\n- Published to the **thread-level Centrifugo channel** (`thread:{thread_id}`).\n- Envelope fields: `thread_id`, `event`, `status`, `metadata`, `content`, `ack_key`.\n- ACK key default: `thread:{event}:{status}:{nonce}`"
+      },
+      "datasource": null
+    },
+    {
+      "id": 3,
+      "type": "text",
+      "title": "Node Lifecycle",
+      "gridPos": {
+        "x": 8,
+        "y": 5,
+        "w": 8,
+        "h": 18
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## Node Lifecycle\n\nA **node** is a single LangGraph graph node execution within a thread version.\n\n### Typical event sequence\n\n| Step | Event | ACK required? | Notes |\n|------|-------|---------------|-------|\n| 1 | `node_status: running` | 🔕 No (fire-and-forget) | Published at node entry; backend does not block waiting for ACK. Used only for live progress indication. |\n| 2 | *(tasks execute — see Task tab)* | — | — |\n| 3 | `node_status: completed` | ✅ Yes | Published by `_complete_node_internal` in lifecycle ops |\n| 3 | `node_status: failed` | ✅ Yes | Published on unhandled node exception |\n| 3 | `node_status: cancelled` | ✅ Yes | Published when the thread cancellation flag is set |\n\n### `require_ack=False` path\n\nNode-scope events with `require_ack=False` are fire-and-forget. The metric counter `sse_notification_publish_total{scope=\"node\"}` is still incremented so publish volume is tracked even for fire-and-forget events.\n\n### Scope: `node`\n\n- Published to the **node-level Centrifugo channel** (`node:{thread_id}`).\n- Envelope fields: `thread_id`, `node_id`, `node_name`, `event`, `status`, `metadata`, `content`, `ack_key`.\n- ACK key default: `node:{node_id}:{event}:{nonce}`"
+      },
+      "datasource": null
+    },
+    {
+      "id": 4,
+      "type": "text",
+      "title": "Task Lifecycle",
+      "gridPos": {
+        "x": 16,
+        "y": 5,
+        "w": 8,
+        "h": 18
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## Task Lifecycle\n\nA **task** is a single Celery worker execution dispatched by a node (via `delegate_task`). Tasks run concurrently and report their own SSE events.\n\n### Typical event sequence\n\n| Step | Event | `status` | ACK required? | Notes |\n|------|-------|----------|---------------|-------|\n| 1 | `task_status` | `running` | 🔕 No | Emitted when the worker picks up the task |\n| 2 | `task_status` | `streaming` | 🔕 No | Emitted for each LLM stream chunk (high frequency) |\n| 3 | `task_status` | `completed` | ✅ Yes | Terminal success — emitted by `delegate_completion` before node-level SSE fires |\n| 3 | `task_status` | `failed` | ✅ Yes | Terminal failure |\n| 3 | `task_status` | `cancelled` | ✅ Yes | Worker cancelled by thread cancellation |\n\n### Ordering guarantee\n\nTask terminal events (`completed`/`failed`) are published **and ACKed** inside `delegate_completion` **before** the owning node fires its own `node_status: completed` SSE. This enforces strict frontend rendering order: task → node → thread.\n\n### Exhausted ACK → auto-fail\n\nUnlike node-scope where exhaustion publishes `notification_failed`, task-scope exhaustion publishes `task_status: failed` with `reason: ack_timeout` so the frontend always receives a deterministic terminal status for the task.\n\n### Scope: `task`\n\n- Published to the **thread-level Centrifugo channel** (same channel as thread events — `thread:{thread_id}`).\n- Envelope fields: `thread_id`, `task_id`, `node_id`, `node_name`, `task_name`, `event`, `status`, `view_type`, `stats_views`, `content`, `ack_key`.\n- ACK key default: `task:{task_id}:{event}:{nonce}`"
+      },
+      "datasource": null
+    },
+    {
+      "id": 5,
+      "type": "text",
+      "title": "ACK Flow — Step by Step",
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 14,
+        "h": 16
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## ACK Flow (per event)\n\n```\n Backend                               Redis                    Frontend\n ───────                               ─────                    ────────\n 1. Generate nonce → ack_key\n 2. Publish event to Centrifugo ──────────────────────────────► receives event\n    (with ack_key in payload)\n 3. BLPOP sse_ack:{thread_id}:{ack_key}\n    (timeout = retry_interval, default 5 s)\n                                                                 4. Process event\n                                                                    (render UI)\n                                                                 5. POST /api/v1/sse/ack\n                                                                    { ack_key, thread_id }\n                               ◄── LPUSH sse_ack:{thread_id}:{ack_key} ──\n 6. BLPOP returns \"ack\"\n    → return True\n```\n\n### NACK\n\nThe frontend sends `POST /api/v1/sse/ack` with `{ ack_key, nack: true }` when it cannot process the event (e.g. the thread panel was closed). The backend BLPOP reads `\"nack\"` and records the failure in Prometheus counters.\n\n### Exhaustion\n\nIf BLPOP times out on every attempt (retry loop exhausted):\n- `sse_notification_nack_total{reason=\"exhausted\"}` is incremented.\n- A `notification_failed` event (node scope) or `task_status: failed` (task scope) is published so the frontend can recover.\n\n### Redis ACK key\n\n```\nsse_ack:{thread_id}:{ack_key}    ← backend BLPOPs, frontend LPUSHes\n```"
+      },
+      "datasource": null
+    },
+    {
+      "id": 6,
+      "type": "text",
+      "title": "Audit Result Codes",
+      "gridPos": {
+        "x": 14,
+        "y": 23,
+        "w": 10,
+        "h": 16
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## ACK Outcomes (tracked in Prometheus)\n\n| Outcome | Prometheus counter | Meaning |\n|---------|-------------------|--------|\n| ACK | `sse_notification_ack_total` | Frontend confirmed receipt within retry budget |\n| NACK (explicit) | `sse_notification_nack_total{reason=\"explicit_nack\"}` | Frontend explicitly rejected |\n| NACK (exhausted) | `sse_notification_nack_total{reason=\"exhausted\"}` | All `max_retries` (6) attempts timed out |\n\n## Prometheus Metrics\n\n| Metric | Labels | Description |\n|--------|--------|-------------|\n| `sse_notification_publish_total` | `scope`, `event` | Every publish attempt (1 per event per attempt) |\n| `sse_notification_attempt_total` | `scope`, `event` | Publish attempts inside the retry loop (excludes fire-and-forget) |\n| `sse_notification_ack_total` | `scope`, `event` | ACKs received |\n| `sse_notification_nack_total` | `scope`, `event`, `reason` | NACKs (explicit or exhausted) |\n| `sse_notification_ack_latency_seconds` | `scope`, `event` | Histogram of total time from first publish to ACK |"
+      },
+      "datasource": null
+    },
+    {
+      "id": 7,
+      "type": "text",
+      "title": "Centrifugo Channel Mapping",
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## Centrifugo Channel Mapping\n\n| Scope | Centrifugo Channel | Publisher function |\n|-------|-------------------|-------------------|\n| Thread | `thread:{thread_id}` | `publish_thread_event` |\n| Node | `node:{thread_id}` | `publish_node_event` |\n| Task | `thread:{thread_id}` | `publish_task_event` (shared with thread channel) |\n\nThe **SSE tier** (centrifugo-sse-0/1, ports 8103/8104) handles all lifecycle events.\nThe **LLM tier** (centrifugo-llm-0/1, ports 8101/8102) handles token streaming.\n\nThe frontend subscribes to both `thread:{thread_id}` and `node:{thread_id}` when opening a thread panel.\n\n### ACK Redis key\n\n```\nsse_ack:{thread_id}:{ack_key}    <- backend BLPOPs, frontend LPUSHes\n```"
+      },
+      "datasource": null
+    },
+    {
+      "id": 8,
+      "type": "text",
+      "title": "Reading the SSE Audit Dashboard",
+      "gridPos": {
+        "x": 12,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## Reading the SSE Audit Dashboard\n\nOpen **Fin Trading — SSE Notification Audit** (`fin-sse-audit`) for live metrics.\n\n### Key panels\n\n| Panel | What to look for |\n|-------|------------------|\n| **ACK % by scope (gauge)** | Should be ≥ 95 % in normal operation. Drops indicate frontend connectivity issues or high load. |\n| **ACK % over time** | Sudden drops correlate with deployments or network instability. |\n| **NACK rate by reason** | `exhausted` NACKs mean the frontend is too slow or disconnected. `explicit_nack` means the UI intentionally rejected. |\n| **ACK latency p95** | Should be < 1 s for active viewers. Spikes mean the frontend event loop is blocked. |\n| **Retry pressure** | `attempt_total / publish_total > 1` means events are being retried — watch for sustained pressure. |\n\n### Filtering by thread/node/task\n\nUse the `$thread_id`, `$node_id`, and `$task_id` template variables to drill down to specific execution contexts. The Loki log panels in the lower half of the audit dashboard show raw SSE lifecycle logs filtered by those IDs.\n\n### Link to this dashboard\n\nBookmark: `http://localhost:3210/d/fin-sse-lifecycle-ref`\nAudit dashboard: `http://localhost:3210/d/fin-sse-audit`"
+      },
+      "datasource": null
+    }
+  ]
+}

@@ -26,3 +26,32 @@ CREATE TABLE IF NOT EXISTS fin_users.users (
 CREATE UNIQUE INDEX IF NOT EXISTS users_oauth_idx
     ON fin_users.users (oauth_provider, oauth_subject)
     WHERE oauth_provider IS NOT NULL AND oauth_subject IS NOT NULL;
+
+
+-- User preferences — one row per (user, node_name) pair.
+-- node_name can be a concrete graph node (e.g. "conclusion_node") or the
+-- sentinel "__global__" for preferences that apply across all nodes.
+--
+-- config JSONB shape (keys are optional — absent means "use default"):
+--   human_in_the_loop  BOOLEAN   pause execution after this node and wait for
+--                                 the user to review/approve the output before
+--                                 the graph continues.
+--   depth              TEXT      research thoroughness: "shallow"|"normal"|"deep"
+--                                 (meaningful for research_subgraph, stats_node,
+--                                  news_node, analyze_stats_node, analyze_news_node)
+--   max_iterations     INTEGER   max agent loop iterations for deep-agent nodes
+--   temperature        NUMERIC   LLM sampling temperature 0.0–2.0
+--                                 (meaningful for conclusion_node, regional nodes)
+--   detail_level       TEXT      output verbosity: "brief"|"standard"|"detailed"
+--                                 (meaningful for conclusion_node, merge_node)
+CREATE TABLE IF NOT EXISTS fin_users.user_preferences (
+    id          BIGSERIAL    PRIMARY KEY,
+    user_id     VARCHAR(36)  NOT NULL REFERENCES fin_users.users (id) ON DELETE CASCADE,
+    node_name   TEXT         NOT NULL,   -- graph node name or "__global__"
+    config      JSONB        NOT NULL DEFAULT '{}',
+    updated_at  TIMESTAMP    NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_user_preferences_user_node UNIQUE (user_id, node_name)
+);
+
+CREATE INDEX IF NOT EXISTS user_preferences_user_id_idx
+    ON fin_users.user_preferences (user_id);

@@ -114,6 +114,10 @@ async def cancel_thread(
 
     Cascade order
     -------------
+    0. Set Redis cancel flag so ``_await_result`` polling loops exit within
+       0.5 s, regardless of the DB status check result below.  Done first so
+       that Celery delegation unblocks even for threads whose DB status is
+       already terminal (e.g. a completed thread whose task is being retried).
     1. Revoke all in-flight Celery tasks tracked for this thread.
     2. Batch-UPDATE active tasks to ``cancelled`` (RETURNING task_ids).
     3. Batch-UPDATE active nodes to ``cancelled`` (RETURNING node rows).
@@ -131,6 +135,19 @@ async def cancel_thread(
         ``True`` if the thread was active and has been cancelled;
         ``False`` if it was already terminal.
     """
+    # ------------------------------------------------------------------
+    # 0. Set Redis cancel flag immediately — unblocks _await_result within
+    #    one poll cycle (0.5 s) regardless of the DB status below.
+    # ------------------------------------------------------------------
+    try:
+        from backend.langgraph.lifecycle.cancel_flag import set_cancel_flag
+        await set_cancel_flag(thread_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "[%s] cancel_thread set_cancel_flag failed thread_id=%s: %s",
+            LIFECYCLE_CANCEL_FAILED, thread_id, exc,
+        )
+
     # ------------------------------------------------------------------
     # 1. Revoke all in-flight Celery tasks before touching DB.
     # ------------------------------------------------------------------
@@ -281,4 +298,81 @@ __all__ = [
     "complete_thread",
     "cancel_thread",
     "cancel_all_running_threads",
+    "pause_all_running_tasks_on_shutdown",
 ]
+
+
+async def pause_all_running_tasks_on_shutdown() -> None:
+    """Pause all running tasks on graceful shutdown instead of cancelling.
+
+    Intentionally leaves node status as ``'running'`` so
+    :func:`~backend.langgraph.lifecycle.startup.recover_running_threads` will
+    re-dispatch those threads on the next startup.  Inside each node,
+    :meth:`~backend.langgraph.models.node.BaseNode.run_task` detects the paused
+    task via :func:`~backend.langgraph.lifecycle.threads.nodes.tasks.get_paused_task_for_node`
+    and reuses the saved snapshot, causing
+    :func:`~backend.celery_task.workers.task_delegation.delegate_stream` to
+    dispatch ``run_stream_compact_continue`` automatically.
+
+    Errors are logged but never raised — shutdown must proceed regardless.
+    """
+    from backend.langgraph.lifecycle.pause_flag import set_task_pause_flag
+
+    registry = get_thread_registry()
+
+    # 1. Find all running tasks in the DB.
+    try:
+        async with raw_conn() as conn:
+            cur = await conn.execute(
+                "SELECT task_id, thread_id FROM fin_agents.tasks WHERE status = 'running'"
+            )
+            running_tasks = await cur.fetchall()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[lifecycle] pause_all shutdown: DB query failed: %s", exc)
+        running_tasks = []
+
+    # 2. Set task-level pause flags in Redis so stream workers stop gracefully.
+    for row in running_tasks:
+        try:
+            await set_task_pause_flag(row["task_id"])
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "[lifecycle] pause_all: set_pause_flag task_id=%s: %s",
+                row["task_id"], exc,
+            )
+
+    # 3. Bulk-update running tasks → 'paused' in DB (nodes intentionally stay 'running').
+    try:
+        from backend.langgraph.lifecycle.threads.nodes.tasks.sql import (  # noqa: PLC0415
+            _BULK_PAUSE_RUNNING_TASKS,
+        )
+        async with raw_conn() as conn:
+            await conn.execute(_BULK_PAUSE_RUNNING_TASKS)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[lifecycle] pause_all: bulk task DB update failed: %s", exc)
+
+    # 4. Bulk-update running nodes → 'paused' with is_last_paused_by_server=TRUE.
+    # This is done before revoking Celery tasks so the node status is correct
+    # even if the event loop shuts down before the graph's except handlers run.
+    try:
+        async with raw_conn() as conn:
+            await conn.execute(
+                """
+                UPDATE fin_agents.nodes
+                SET status                   = 'paused',
+                    is_last_paused_by_server = TRUE,
+                    updated_at               = NOW()
+                WHERE status = 'running'
+                """
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[lifecycle] pause_all: bulk node DB update failed: %s", exc)
+
+    # 5. Revoke Celery tasks — triggers TaskPausedError inside _await_result.
+    registry.revoke_all_celery_tasks()
+
+    if running_tasks:
+        logger.error(
+            "[lifecycle] pause_all_running_tasks_on_shutdown: paused %d task(s)",
+            len(running_tasks),
+        )

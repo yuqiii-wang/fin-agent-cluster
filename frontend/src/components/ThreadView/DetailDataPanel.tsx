@@ -1,20 +1,75 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Card, Typography } from 'antd';
-import DataViewer from '../DataViewer/index';
+import { CaretRightOutlined, PauseOutlined, RetweetOutlined } from '@ant-design/icons';
+import DataViewer, { viewTypeToMode } from '../DataViewer/index';
 import { StatsViewSelect } from '../DataViewer/StatsViewer';
-import type { TaskInfo } from '../../types';
+import { retryFreshTask, continueTask, pauseTask } from '../../api/threads';
+import type { TaskInfo, NodeInfo } from '../../types';
 import type { DetailData } from './types';
 
 const { Text } = Typography;
+
+const RETRYABLE_STATUSES = new Set(['completed', 'failed', 'cancelled', 'paused']);
 
 interface Props {
   detailData: DetailData;
   onClose: () => void;
   tasks: TaskInfo[];
+  nodes: NodeInfo[];
   threadId: string;
+  /** Called immediately when a retry is initiated so the parent can re-establish SSE. */
+  onRetry?: (taskId: string) => void;
 }
 
-const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, threadId }) => {
+const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, nodes, threadId, onRetry }) => {
+  const [retrying, setRetrying] = useState(false);
+  const [continuing, setContinuing] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [retryCooldown, setRetryCooldown] = useState(false);
+  const retryCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const streamTask = detailData.taskId ? tasks.find(t => t.task_id === detailData.taskId) : undefined;
+  const streamNode = streamTask?.node_id ? nodes.find(n => n.node_id === streamTask.node_id) : undefined;
+  const isRetryableStream = !!(streamTask?.is_streaming &&
+    streamNode?.status !== 'completed' &&
+    (RETRYABLE_STATUSES.has(streamTask.status) || streamTask.status === 'running'));
+
+  const handleRetry = async () => {
+    if (!streamTask) return;
+    onRetry?.(streamTask.task_id);
+    setRetrying(true);
+    setRetryCooldown(true);
+    if (retryCooldownRef.current) clearTimeout(retryCooldownRef.current);
+    retryCooldownRef.current = setTimeout(() => setRetryCooldown(false), 5000);
+    try {
+      await retryFreshTask(threadId, streamTask.task_id);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const handleContinue = async () => {
+    if (!streamTask) return;
+    onRetry?.(streamTask.task_id);
+    setContinuing(true);
+    try {
+      await continueTask(threadId, streamTask.task_id);
+    } finally {
+      setContinuing(false);
+    }
+  };
+
+  const handlePause = async () => {
+    if (!streamTask) return;
+    setPausing(true);
+    try {
+      await pauseTask(threadId, streamTask.task_id);
+    } finally {
+      setPausing(false);
+    }
+  };
+
   const statsViews = (() => {
     const d = detailData.data as Record<string, unknown> | undefined;
     if (Array.isArray(d?.stats_views)) return d!.stats_views as string[];
@@ -39,10 +94,32 @@ const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, threadId
       ? 'dataframe'
       : 'json');
 
+  // When a streaming task completes while DetailDataPanel is open (e.g. when
+  // TaskDetail is not mounted and cannot call onViewData to switch modes),
+  // automatically transition from stream mode to the completed output view.
+  // The backend marks completed streaming tasks as view_type="Hybrid" with
+  // view_schema {thinking: "Markdown", answer: "Json"}.
+  const isCompletedStream =
+    resolvedMode === 'stream' &&
+    !!(streamTask?.status === 'completed' && streamTask?.is_streaming && streamTask?.output);
+  const effectiveMode = isCompletedStream ? viewTypeToMode(streamTask!.view_type) : resolvedMode;
+  const effectiveData = isCompletedStream
+    ? streamTask!.output
+    : (typeof detailData.data !== 'string' ? detailData.data : undefined);
+  const effectiveText = isCompletedStream
+    ? undefined
+    : (typeof detailData.data === 'string' ? detailData.data : undefined);
+  const effectiveViewSchema = isCompletedStream
+    ? (streamTask!.view_schema as Record<string, string> | undefined)
+    : detailData.viewSchema;
+  const effectiveFieldList = isCompletedStream ? true : detailData.fieldList;
+
   return (
     <Card
       size="small"
       title={<Text strong style={{ fontSize: 12 }}>{detailData.label}</Text>}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       extra={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {statsViews.length > 0 && (
@@ -52,18 +129,65 @@ const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, threadId
               onChange={setActiveStatsView}
             />
           )}
+          {isRetryableStream && hovered && (
+            streamTask?.status === 'running' ? (
+              <>
+                <Button
+                  size="small"
+                  icon={<PauseOutlined />}
+                  loading={pausing}
+                  onClick={handlePause}
+                  title="Pause task"
+                  style={{ color: '#fa8c16', borderColor: '#fa8c16' }}
+                >
+                  Pause
+                </Button>
+                <Button
+                  size="small"
+                  icon={<RetweetOutlined />}
+                  loading={retrying}
+                  disabled={pausing || retryCooldown}
+                  onClick={handleRetry}
+                  title="Pause then restart from scratch"
+                >
+                  Retry
+                </Button>
+              </>
+            ) : streamTask?.status === 'paused' ? (
+              <Button
+                size="small"
+                icon={<CaretRightOutlined />}
+                loading={continuing}
+                onClick={handleContinue}
+                title="Resume from pause"
+              >
+                Resume
+              </Button>
+            ) : (
+              <Button
+                size="small"
+                icon={<RetweetOutlined />}
+                loading={retrying}
+                disabled={retryCooldown}
+                onClick={handleRetry}
+                title="Restart from scratch"
+              >
+                Retry
+              </Button>
+            )
+          )}
           <Button size="small" type="text" onClick={onClose}>✕</Button>
         </div>
       }
       style={{ borderRadius: 8 }}
     >
       <DataViewer
-        mode={resolvedMode}
-        data={typeof detailData.data !== 'string' ? detailData.data : undefined}
-        text={typeof detailData.data === 'string' ? detailData.data : undefined}
-        viewSchema={detailData.viewSchema}
+        mode={effectiveMode}
+        data={effectiveData}
+        text={effectiveText}
+        viewSchema={effectiveViewSchema}
         activeStatsView={activeStatsView || undefined}
-        fieldList={detailData.fieldList}
+        fieldList={effectiveFieldList}
         tasks={tasks}
         task={detailData.taskId ? tasks.find(t => t.task_id === detailData.taskId) : undefined}
         threadId={threadId}

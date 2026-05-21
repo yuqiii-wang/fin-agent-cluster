@@ -3,56 +3,55 @@
 Execution layers
 ----------------
 LangGraph layer (``_get_stock_industry_peers_task`` decorated with ``@task``):
-    Calls ``create_task``, delegates to a Celery completion worker via
-    ``delegate_completion``, and returns a ``TaskOutput``.  On exception,
-    calls ``complete_task(failed=True)`` to emit the failure SSE.
+    Calls ``create_task(..., view_type="Streaming")``, delegates to the
+    Celery stream worker via ``delegate_stream``, and returns a ``TaskOutput``.
+    On exception, calls ``complete_task(failed=True)`` to emit the failure SSE.
 
-Celery layer (``_handler``):
-    Uses the Ollama LLM to determine the primary industry and 3-5 peer
-    companies for the given stock.  Peers must operate in a similar business
-    and the same geographic region as the target company.
+Celery layer (``stream_task.run_stream``):
+    Dispatched via ``STREAM_PROMPT_BUILDERS`` to
+    ``_build_get_stock_industry_peers_prompt``.  The Ollama LLM returns a JSON
+    object with the primary industry sector and 3–5 regional peer companies.
 
 Public export
 -------------
 ``get_stock_industry_peers`` — ``NodeTask`` instance used by ``QueryNode.build_chain``.
-``HANDLERS``                 — dict slice ``{"get_stock_industry_peers": _handler}``.
+``STREAM_PROMPT_BUILDERS``   — dict slice for registration in ``stream_task.py``.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from langgraph.func import task
 from pydantic import BaseModel, Field
 
-from backend.celery_task.workers.task_delegation import delegate_completion
+from backend.celery_task.workers.task_delegation import delegate_stream
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.models import TaskInput, TaskOutput
+from backend.langgraph.models.streaming_output import StreamingTaskOutput
 from backend.langgraph.models.task import NodeTask
-from backend.langgraph.nodes.query_node.models import StockInfoInput
-from backend.llm.factory import get_llm
 
 logger = logging.getLogger(__name__)
 
 _TASK_NAME = "get_stock_industry_peers"
 
-_PROMPT = (
-    "You are a financial analyst. For the company or stock '{stock_name}', provide:\n"
-    "1. Its primary industry sector (e.g. 'Semiconductors', 'Consumer Electronics', 'E-Commerce').\n"
-    "2. A list of 3 to 5 peer companies that:\n"
-    "   - Operate in the same or very similar business as '{stock_name}'\n"
-    "   - Are primarily based and listed in the same geographic region\n\n"
-    "Respond with valid JSON only, using this exact schema:\n"
-    "{{\"industry\": \"<industry>\", \"peers\": [\"<company1>\", \"<company2>\", ...]}}\n"
-    "No explanation, only the JSON."
-)
-
 
 # ---------------------------------------------------------------------------
-# Intermediate output model
+# Input / output models
 # ---------------------------------------------------------------------------
+
+
+class GetStockIndustryPeersInput(BaseModel):
+    """Input for the get_stock_industry_peers task.
+
+    Attributes:
+        stock_name: Company name or stock ticker to look up.
+    """
+
+    stock_name: str = Field(description="Company name or stock ticker.")
+
+
 
 
 class GetStockIndustryPeersOutput(BaseModel):
@@ -68,35 +67,37 @@ class GetStockIndustryPeersOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Celery layer — pure business logic
+# Streaming prompt builder — imported by stream_task.py
 # ---------------------------------------------------------------------------
 
 
-async def _handler(payload: dict) -> dict:
-    """Use Ollama LLM to determine the industry and peers for the stock.
+def _build_get_stock_industry_peers_prompt(payload: dict) -> list[BaseMessage]:
+    """Build the LangChain message list for get_stock_industry_peers from a serialised GetStockIndustryPeersInput.
 
     Args:
-        payload: Serialised ``StockInfoInput`` dict from the Celery worker.
+        payload: Serialised ``GetStockIndustryPeersInput`` dict passed to ``run_stream``.
 
     Returns:
-        Serialised ``GetStockIndustryPeersOutput`` dict.
+        LangChain message list (SystemMessage + HumanMessage) for the streaming LLM.
     """
-    inp = StockInfoInput.model_validate(payload)
-    llm = get_llm("ollama")
-    prompt = _PROMPT.format(stock_name=inp.stock_name)
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
-    raw = response.content.strip()
+    inp = GetStockIndustryPeersInput.model_validate(payload)
+    system_content = (
+        "You are a financial analyst. Respond with valid JSON only, using this exact schema:\n"
+        '{\"industry\": \"<industry>\", \"peers\": [\"<company1>\", \"<company2>\", ...]}\n\n'
+        "Rules:\n"
+        "- industry: the primary industry sector of the company "
+        "(e.g. 'Semiconductors', 'Consumer Electronics', 'E-Commerce').\n"
+        "- peers: 3 to 5 peer companies that operate in the same or very similar business "
+        "and are primarily based and listed in the same geographic region.\n"
+        "No markdown fences, no explanation, only the JSON."
+    )
+    return [
+        SystemMessage(content=system_content),
+        HumanMessage(content=f"Company or stock: {inp.stock_name}"),
+    ]
 
-    try:
-        data = json.loads(raw)
-        industry = str(data.get("industry", ""))
-        peers = [str(p) for p in data.get("peers", [])]
-    except (json.JSONDecodeError, AttributeError):
-        logger.error("get_stock_industry_peers: failed to parse LLM JSON for %r — raw: %r", inp.stock_name, raw)
-        industry = ""
-        peers = []
 
-    return GetStockIndustryPeersOutput(industry=industry, peers=peers).model_dump()
+STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_get_stock_industry_peers_prompt}
 
 
 # ---------------------------------------------------------------------------
@@ -106,32 +107,53 @@ async def _handler(payload: dict) -> dict:
 
 @task
 async def _get_stock_industry_peers_task(
-    task_input: TaskInput[StockInfoInput],
+    task_input: TaskInput[GetStockIndustryPeersInput],
 ) -> TaskOutput[GetStockIndustryPeersOutput]:
-    """LangGraph @task: delegates get_stock_industry_peers to a Celery completion worker.
+    """LangGraph @task: delegates get_stock_industry_peers to the Celery stream worker.
+
+    Tokens are streamed to the frontend via Centrifugo.  The final answer is
+    parsed as JSON to extract ``industry`` and ``peers``.
 
     Args:
-        task_input: Typed envelope with TaskContext and StockInfoInput content.
+        task_input: Typed envelope with TaskContext and GetStockIndustryPeersInput content.
 
     Returns:
-        TaskOutput wrapping the GetStockIndustryPeersOutput from the Celery worker.
+        TaskOutput wrapping the GetStockIndustryPeersOutput from the Celery stream worker.
     """
     ctx = task_input.ctx
     payload = task_input.content.model_dump()
 
-    await create_task(ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload)
+    await create_task(
+        ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,
+        view_type="Streaming",
+    )
     try:
-        result = await delegate_completion(
-            ctx.thread_id, ctx.task_id, ctx.node_id, ctx.node_name, ctx.task_name, payload
+        result = await delegate_stream(
+            thread_id=ctx.thread_id,
+            task_id=ctx.task_id,
+            task_name=ctx.task_name,
+            node_name=ctx.node_name,
+            payload=payload,
         )
+        answer_dict: dict = result.get("answer", {})
+
+        industry = str(answer_dict.get("industry", "")).strip()
+        peers = [str(p) for p in answer_dict.get("peers", [])]
+        output = GetStockIndustryPeersOutput(industry=industry, peers=peers)
+
+        await complete_task(
+            ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name,
+            output_data=StreamingTaskOutput(thinking=result.get("thinking"), answer=output.model_dump()).model_dump(),
+            view_type="Streaming",
+        )
+        return TaskOutput(ctx=ctx, content=output)
+
     except Exception as exc:
         await complete_task(
             ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name,
-            failed=True, error=str(exc),
+            failed=True, error=str(exc), view_type="Streaming",
         )
         raise
-    output = GetStockIndustryPeersOutput.model_validate(result)
-    return TaskOutput(ctx=ctx, content=output)
 
 
 # ---------------------------------------------------------------------------
@@ -141,13 +163,13 @@ async def _get_stock_industry_peers_task(
 get_stock_industry_peers = NodeTask(
     name=_TASK_NAME,
     description=(
-        "Determine the primary industry and 3-5 regional peers for the given stock using an LLM. "
+        "Determine the primary industry and 3-5 regional peers for the given stock using a streaming LLM. "
         "Peers must operate in a similar business and the same geographic region."
     ),
-    input_type=StockInfoInput,
+    input_type=GetStockIndustryPeersInput,
     output_type=GetStockIndustryPeersOutput,
     task_fn=_get_stock_industry_peers_task,
-    handler=_handler,
+    handler=lambda payload: (_ for _ in ()).throw(
+        NotImplementedError("get_stock_industry_peers runs via the Celery stream worker.")
+    ),
 )
-
-HANDLERS: dict = {_TASK_NAME: _handler}

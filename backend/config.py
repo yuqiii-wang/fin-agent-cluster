@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # ── Ollama LLM ────────────────────────────────────────────────────────────
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_LLM_MODEL: str = "qwen3.5-27b-instruct"
+    # Number of model layers to offload to GPU (-1 = auto, 0 = CPU only).
+    # Set explicitly to keep the full model resident in VRAM.
+    OLLAMA_NUM_GPU: int = 65
 
     # ── API Gateway ──────────────────────────────────────────────
     # Internal HTTP URL of nginx-api (plain HTTP, no TLS required for

@@ -54,14 +54,14 @@ export default defineConfig(({ mode }) => {
   plugins: [react()],
   server: {
     port: 3000,
-    // Serve over HTTPS so the browser negotiates HTTP/2 with Kong on port 8443.
+    // Serve over HTTPS so the browser negotiates HTTP/2 with nginx-internal on port 8443.
     // Self-signed localhost cert — generated once via setup/tls.sh.
     https: {
       key: readFileSync(resolve(__dirname, "../certs/localhost.key")),
       cert: readFileSync(resolve(__dirname, "../certs/localhost.crt")),
     },
     proxy: {
-      // REST proxy — only active in proxyMode; in directMode KONG_ORIGIN makes
+      // REST proxy — only active in proxyMode; in directMode NGINX_ORIGIN makes
       // all fetch() calls use absolute https://localhost:8443/... URLs that
       // bypass Vite entirely.
       ...(!directMode && {

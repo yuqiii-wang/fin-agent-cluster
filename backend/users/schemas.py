@@ -53,6 +53,20 @@ class ReExploreRequest(BaseModel):
     input_override: Optional[dict[str, Any]] = None
 
 
+class RetryTaskRequest(BaseModel):
+    """Request body for ``POST /threads/{thread_id}/tasks/{task_id}/retry``.
+
+    Attributes:
+        mode: Retry strategy.
+            - ``"restart"`` — re-run with the original input unchanged.
+            - ``"compact_and_continue"`` — streaming tasks only; injects
+              compressed prior thinking as context so the LLM continues from
+              a de-looped state rather than starting over.
+    """
+
+    mode: str = "restart"
+
+
 class SseInfo(BaseModel):
     """Centrifugo SSE connection bootstrap info returned with a new query submission."""
 

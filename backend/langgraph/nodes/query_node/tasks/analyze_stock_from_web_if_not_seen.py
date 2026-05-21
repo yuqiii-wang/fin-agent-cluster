@@ -29,12 +29,14 @@ from __future__ import annotations
 import json
 import logging
 
+from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.models import TaskInput, TaskOutput
+from backend.langgraph.models.streaming_output import StreamingTaskOutput
 from backend.langgraph.models.task import NodeTask
 
 logger = logging.getLogger(__name__)
@@ -83,14 +85,14 @@ class AnalyzeWebStockOutput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _build_analyze_web_stock_prompt(payload: dict) -> str:
-    """Build the LLM prompt from an ``AnalyzeWebStockInput`` payload dict.
+def _build_analyze_web_stock_prompt(payload: dict) -> list[BaseMessage]:
+    """Build the LangChain message list from an ``AnalyzeWebStockInput`` payload dict.
 
     Args:
         payload: Serialised ``AnalyzeWebStockInput`` dict passed to ``run_stream``.
 
     Returns:
-        Prompt string for the streaming LLM.
+        LangChain message list (SystemMessage + HumanMessage) for the streaming LLM.
     """
     inp = AnalyzeWebStockInput.model_validate(payload)
     web_section = (
@@ -98,17 +100,24 @@ def _build_analyze_web_stock_prompt(payload: dict) -> str:
         if inp.web_content
         else "No web content was retrieved."
     )
-    return (
-        f"You are a financial analyst. The user asked: \"{inp.query}\"\n\n"
-        f"We could not initially identify the stock \"{inp.stock_name}\". "
+    system_content = (
+        "You are a financial analyst. Identify company names and stock tickers from web content. "
+        "Respond with valid JSON only:\n"
+        '{"stock_name": "<exact company name or ticker>", "not_seen": false}\n\n'
+        "Set not_seen to true ONLY if the web content clearly does not match any known publicly "
+        "traded company. No explanation, only the JSON."
+    )
+    human_content = (
+        f'The user asked: "{inp.query}"\n\n'
+        f'We could not initially identify the stock "{inp.stock_name}". '
         f"We fetched the following information from the web:\n\n"
         f"{web_section}\n\n"
-        f"Based on this information, identify the exact company name and primary stock ticker symbol.\n"
-        f"Respond with valid JSON only:\n"
-        f'{{\"stock_name\": \"<exact company name or ticker>\", \"not_seen\": false}}\n'
-        f"Set not_seen to true ONLY if the web content clearly does not match any known publicly "
-        f"traded company. No explanation, only the JSON."
+        f"Based on this information, identify the exact company name and primary stock ticker symbol."
     )
+    return [
+        SystemMessage(content=system_content),
+        HumanMessage(content=human_content),
+    ]
 
 
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_analyze_web_stock_prompt}
@@ -173,7 +182,7 @@ async def _analyze_stock_from_web_if_not_seen_task(
         output = AnalyzeWebStockOutput(stock_name=stock_name, not_seen=not_seen)
         await complete_task(
             ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name,
-            output_data=output.model_dump(),
+            output_data=StreamingTaskOutput(thinking=result.get("thinking"), answer=output.model_dump()).model_dump(),
             view_type="Streaming",
         )
 

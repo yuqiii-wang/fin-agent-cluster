@@ -71,10 +71,21 @@ const StreamViewer: React.FC<StreamViewerProps> = ({
   const [localDone, setLocalDone] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Reset on task_id change (different task selected).
   useEffect(() => {
     setLocalTokens([]);
     setLocalDone(false);
   }, [task?.task_id]);
+
+  // Clear accumulated tokens when task goes back to 'running' (retry triggered).
+  const prevStatusRef = useRef<string | undefined>(task?.status);
+  useEffect(() => {
+    if (task?.status === 'running' && prevStatusRef.current !== undefined && prevStatusRef.current !== 'running') {
+      setLocalTokens([]);
+      setLocalDone(false);
+    }
+    prevStatusRef.current = task?.status;
+  }, [task?.status]);
 
   useTokenStream({
     threadId: threadId ?? '',
@@ -143,7 +154,9 @@ const StreamViewer: React.FC<StreamViewerProps> = ({
   }
 
   // Completed stream — read thinking from task.output (backend-extracted).
-  const thinking = task?.output?.thinking as string | undefined;
+  // Fall back to locally accumulated tokens when task was cancelled mid-stream (no stored output).
+  const thinking = (task?.output?.thinking as string | undefined)
+    ?? (localTokens.length > 0 ? localTokens.join('') : undefined);
   const answerRaw = task?.output?.answer;
   const answer = answerRaw !== undefined && answerRaw !== null ? answerRaw : undefined;
 

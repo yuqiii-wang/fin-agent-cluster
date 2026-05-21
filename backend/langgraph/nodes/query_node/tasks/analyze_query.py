@@ -3,57 +3,53 @@
 Execution layers
 ----------------
 LangGraph layer (``_analyze_query_task`` decorated with ``@task``):
-    Calls ``create_task``, delegates to a Celery completion worker via
-    ``delegate_completion``, and returns a ``TaskOutput``.  On exception,
-    calls ``complete_task(failed=True)`` to emit the failure SSE.
+    Calls ``create_task(..., view_type="Streaming")``, delegates to the
+    Celery stream worker via ``delegate_stream``, and returns a ``TaskOutput``.
+    On exception, calls ``complete_task(failed=True)`` to emit the failure SSE.
 
-Celery layer (``_handler``):
-    Uses the Ollama LLM to extract the primary company name or stock ticker
-    from the raw user query.  Returns an ``AnalyzeQueryOutput``.
+Celery layer (``stream_task.run_stream``):
+    Dispatched via ``STREAM_PROMPT_BUILDERS`` to ``_build_analyze_query_prompt``.
+    The Ollama LLM (or mock for test queries) extracts the primary company name
+    or stock ticker from the raw user query and returns a JSON answer.
 
 Public export
 -------------
-``analyze_query`` — ``NodeTask`` instance used by ``QueryNode.build_chain``.
-``HANDLERS``      — dict slice ``{"analyze_query": _handler}``.
+``analyze_query``         — ``NodeTask`` instance used by ``QueryNode.build_chain``.
+``STREAM_PROMPT_BUILDERS`` — dict slice ``{"analyze_query": _build_analyze_query_prompt}``.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
 from langgraph.func import task
 from pydantic import BaseModel, Field
 
-from backend.celery_task.workers.task_delegation import delegate_completion
+from backend.celery_task.workers.task_delegation import delegate_stream
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.models import TaskInput, TaskOutput
+from backend.langgraph.models.streaming_output import StreamingTaskOutput
 from backend.langgraph.models.task import NodeTask
-from backend.langgraph.nodes.query_node.models import QueryNodeInput
-from backend.llm.factory import get_llm
 
 logger = logging.getLogger(__name__)
 
 _TASK_NAME = "analyze_query"
 
-_PROMPT = (
-    "You are a financial assistant. Extract the primary company name or stock ticker "
-    "from the following user query.\n\n"
-    "Respond with valid JSON only, using this exact schema:\n"
-    '{{"stock_name": "<company name or ticker>", "not_seen": false}}\n\n'
-    "Set not_seen to true if you do not recognise the company or stock, or if the query "
-    "does not mention a specific publicly traded company. "
-    "If not_seen is true, still try your best to extract what the user might be referring to "
-    "in stock_name.\n"
-    "No explanation, only the JSON.\n\n"
-    "Query: {query}"
-)
-
 
 # ---------------------------------------------------------------------------
-# Intermediate output model
+# Input / output models
 # ---------------------------------------------------------------------------
+
+
+class AnalyzeQueryInput(BaseModel):
+    """Input for the analyze_query task.
+
+    Attributes:
+        query: Raw user query string from the thread initiator.
+    """
+
+    query: str = Field(description="Raw user query string.")
 
 
 class AnalyzeQueryOutput(BaseModel):
@@ -70,33 +66,37 @@ class AnalyzeQueryOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Celery layer — pure business logic
+# Streaming prompt builder — imported by stream_task.py
 # ---------------------------------------------------------------------------
 
 
-async def _handler(payload: dict) -> dict:
-    """Use Ollama LLM to extract the stock name from the user query.
+def _build_analyze_query_prompt(payload: dict) -> list[BaseMessage]:
+    """Build the LangChain message list for analyze_query from a serialised AnalyzeQueryInput.
 
     Args:
-        payload: Serialised ``QueryNodeInput`` dict from the Celery worker.
+        payload: Serialised ``AnalyzeQueryInput`` dict passed to ``run_stream``.
 
     Returns:
-        Serialised ``AnalyzeQueryOutput`` dict.
+        LangChain message list (SystemMessage + HumanMessage) for the streaming LLM.
     """
-    inp = QueryNodeInput.model_validate(payload)
-    llm = get_llm("ollama")
-    prompt = _PROMPT.format(query=inp.query)
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
-    raw = response.content.strip()
-    try:
-        data = json.loads(raw)
-        stock_name = str(data.get("stock_name", "")).strip()
-        not_seen = bool(data.get("not_seen", False))
-    except (json.JSONDecodeError, AttributeError):
-        logger.error("analyze_query: failed to parse LLM JSON — raw: %r", raw)
-        stock_name = raw.split("\n")[0][:100]
-        not_seen = True
-    return AnalyzeQueryOutput(stock_name=stock_name, not_seen=not_seen).model_dump()
+    inp = AnalyzeQueryInput.model_validate(payload)
+    system_content = (
+        "You are a financial assistant. Extract the primary company name or stock ticker "
+        "from user queries. Respond with valid JSON only, using this exact schema:\n"
+        '{"stock_name": "<company name or ticker>", "not_seen": false}\n\n'
+        "Set not_seen to true if you do not recognise the company or stock, or if the query "
+        "does not mention a specific publicly traded company. "
+        "If not_seen is true, still try your best to extract what the user might be referring to "
+        "in stock_name.\n"
+        "No explanation, only the JSON."
+    )
+    return [
+        SystemMessage(content=system_content),
+        HumanMessage(content=f"Query: {inp.query}"),
+    ]
+
+
+STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_analyze_query_prompt}
 
 
 # ---------------------------------------------------------------------------
@@ -106,32 +106,53 @@ async def _handler(payload: dict) -> dict:
 
 @task
 async def _analyze_query_task(
-    task_input: TaskInput[QueryNodeInput],
+    task_input: TaskInput[AnalyzeQueryInput],
 ) -> TaskOutput[AnalyzeQueryOutput]:
-    """LangGraph @task: delegates analyze_query to a Celery completion worker.
+    """LangGraph @task: delegates analyze_query to the Celery stream worker.
+
+    Tokens are streamed to the frontend via Centrifugo.  The final answer is
+    parsed as JSON to extract ``stock_name`` and ``not_seen``.
 
     Args:
-        task_input: Typed envelope with TaskContext and QueryNodeInput content.
+        task_input: Typed envelope with TaskContext and AnalyzeQueryInput content.
 
     Returns:
-        TaskOutput wrapping the AnalyzeQueryOutput from the Celery worker.
+        TaskOutput wrapping the AnalyzeQueryOutput from the Celery stream worker.
     """
     ctx = task_input.ctx
     payload = task_input.content.model_dump()
 
-    await create_task(ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload)
+    await create_task(
+        ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,
+        view_type="Streaming",
+    )
     try:
-        result = await delegate_completion(
-            ctx.thread_id, ctx.task_id, ctx.node_id, ctx.node_name, ctx.task_name, payload
+        result = await delegate_stream(
+            thread_id=ctx.thread_id,
+            task_id=ctx.task_id,
+            task_name=ctx.task_name,
+            node_name=ctx.node_name,
+            payload=payload,
         )
+        answer_dict: dict = result.get("answer", {})
+
+        stock_name = str(answer_dict.get("stock_name", "")).strip()
+        not_seen = bool(answer_dict.get("not_seen", True))
+        output = AnalyzeQueryOutput(stock_name=stock_name, not_seen=not_seen)
+
+        await complete_task(
+            ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name,
+            output_data=StreamingTaskOutput(thinking=result.get("thinking"), answer=output.model_dump()).model_dump(),
+            view_type="Streaming",
+        )
+        return TaskOutput(ctx=ctx, content=output)
+
     except Exception as exc:
         await complete_task(
             ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name,
-            failed=True, error=str(exc),
+            failed=True, error=str(exc), view_type="Streaming",
         )
         raise
-    output = AnalyzeQueryOutput.model_validate(result)
-    return TaskOutput(ctx=ctx, content=output)
 
 
 # ---------------------------------------------------------------------------
@@ -140,11 +161,13 @@ async def _analyze_query_task(
 
 analyze_query = NodeTask(
     name=_TASK_NAME,
-    description="Extract the primary company name or stock ticker from the user query using an LLM.",
-    input_type=QueryNodeInput,
+    description="Extract the primary company name or stock ticker from the user query using a streaming LLM.",
+    input_type=AnalyzeQueryInput,
     output_type=AnalyzeQueryOutput,
     task_fn=_analyze_query_task,
-    handler=_handler,
+    handler=lambda payload: (_ for _ in ()).throw(
+        NotImplementedError("analyze_query runs via the Celery stream worker.")
+    ),
 )
 
 

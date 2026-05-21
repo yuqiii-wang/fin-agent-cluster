@@ -84,7 +84,7 @@ async def _cascade_up_from_cancelled_node(
     """
     from backend.langgraph.lifecycle.threads.nodes import cancel_node as _cancel_node_lc
     from backend.langgraph.lifecycle import cancel_thread as _cancel_thread_lc
-    from backend.main_thread.cancel_flag import set_cancel_flag
+    from backend.langgraph.lifecycle.cancel_flag import set_cancel_flag
 
     if parent_node_id:
         try:

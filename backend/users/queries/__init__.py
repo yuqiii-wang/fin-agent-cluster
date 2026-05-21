@@ -20,20 +20,27 @@ from backend.users.queries.lifecycle import (
     resume_query,
     cancel_node,
     cancel_task_by_uuid,
+    pause_task_by_uuid,
 )
 from backend.users.queries.re_explore import re_explore_node
+from backend.users.queries.retry import retry_task, retry_fresh_task, retry_restart_task, continue_task
 
 __all__ = [
     "ack_query",
     "cancel_node",
     "cancel_query",
     "cancel_task_by_uuid",
+    "continue_task",
     "get_node_executions",
     "get_query_status",
     "get_query_tasks",
     "get_task_by_id",
     "get_version_graph",
+    "pause_task_by_uuid",
     "re_explore_node",
     "resume_query",
+    "retry_fresh_task",
+    "retry_restart_task",
+    "retry_task",
     "submit_query",
 ]
