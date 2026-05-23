@@ -11,7 +11,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Checkbox } from 'antd';
+import { Select } from 'antd';
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
 import type { DfSplit } from '../StatsDataFrame';
 
@@ -30,11 +30,12 @@ const OVERLAY_LABEL: Record<Overlay, string> = {
 interface Props {
   dfSplit: DfSplit;
   maxHeight?: number;
+  symbol?: string;
 }
 
 const TOOLBAR_H = 32;
 
-const CandleStickChart: React.FC<Props> = ({ dfSplit, maxHeight = 320 }) => {
+const CandleStickChart: React.FC<Props> = ({ dfSplit, maxHeight = 320, symbol }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const availableOverlays = (['sma_20', 'rsi_14'] as Overlay[]).filter((o) =>
@@ -188,17 +189,27 @@ const CandleStickChart: React.FC<Props> = ({ dfSplit, maxHeight = 320 }) => {
 
   return (
     <div>
+      {symbol && (
+        <span style={{ display: 'block', fontSize: 12, fontFamily: 'monospace', fontWeight: 600, color: '#e8e9ec', padding: '2px 8px' }}>
+          {symbol}
+        </span>
+      )}
       {availableOverlays.length > 0 && (
-        <div style={{ display: 'flex', gap: 16, padding: '4px 8px', height: TOOLBAR_H, alignItems: 'center' }}>
-          {availableOverlays.map((o) => (
-            <Checkbox
-              key={o}
-              checked={activeOverlays.has(o)}
-              onChange={(e) => toggleOverlay(o, e.target.checked)}
-            >
-              <span style={{ color: OVERLAY_COLOR[o], fontSize: 12 }}>{OVERLAY_LABEL[o]}</span>
-            </Checkbox>
-          ))}
+        <div style={{ display: 'flex', gap: 8, padding: '4px 8px', height: TOOLBAR_H, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: '#9B9EA4', flexShrink: 0 }}>Overlay:</span>
+          <Select
+            mode="multiple"
+            size="small"
+            value={Array.from(activeOverlays)}
+            onChange={(values: string[]) => setActiveOverlays(new Set(values as Overlay[]))}
+            options={availableOverlays.map((o) => ({
+              value: o,
+              label: <span style={{ color: OVERLAY_COLOR[o], fontSize: 12 }}>{OVERLAY_LABEL[o]}</span>,
+            }))}
+            style={{ minWidth: 140 }}
+            placeholder="Add overlay…"
+            popupMatchSelectWidth={false}
+          />
         </div>
       )}
       <div

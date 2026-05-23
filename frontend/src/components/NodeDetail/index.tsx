@@ -14,6 +14,7 @@ import { Button, Descriptions, Space, Tag, Tooltip, Typography } from 'antd';
 import { ArrowLeftOutlined, BranchesOutlined, StopOutlined } from '@ant-design/icons';
 import { viewTypeToMode } from '../DataViewer/index';
 import TaskDetail from './TaskDetail';
+import AgentNodeDetail from './Agent';
 import SubgraphNode from './SubgraphNode';
 import { COLOR_SURFACE_RAISED, COLOR_TEXT_SECONDARY } from '../../constants/styleColors';
 import { STATUS_HEX, STATUS_TAG_COLOR } from '../../constants/statusColors';
@@ -35,7 +36,7 @@ interface Props {
   /** Active version being viewed; used to mark shared nodes from older versions. */
   activeVersion?: number;
   /** Called when the user wants to inspect data in the bottom DataViewer panel. */
-  onViewData?: (label: string, data: unknown, opts?: { mode?: DataViewerMode; viewSchema?: Record<string, string>; fieldList?: boolean; nodeContext?: 'input' | 'output' }) => void;
+  onViewData?: (label: string, data: unknown, opts?: { mode?: DataViewerMode; viewSchema?: Record<string, string>; fieldList?: boolean; nodeContext?: 'input' | 'output'; activeStatsView?: string }) => void;
   /** Called when the user clicks a child node (subgraph navigation). */
   onSelectNode?: (nodeId: string) => void;
   /** Called when the user cancels the node. */
@@ -100,6 +101,25 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
     );
   }
 
+  // ── Agent node view ───────────────────────────────────────────────────────
+  if (node.type === 'Agent') {
+    return (
+      <AgentNodeDetail
+        node={node}
+        tasks={nodeTasks}
+        threadId={threadId}
+        tokenStreams={tokenStreams}
+        threadActive={threadActive}
+        activeVersion={activeVersion}
+        onViewData={onViewData}
+        onCancelNode={onCancelNode}
+        onCancelTask={onCancelTask}
+        cancellingId={cancellingId}
+        onReExplore={onReExplore}
+      />
+    );
+  }
+
   // ── Default node view ─────────────────────────────────────────────────────
   const nodeVersion = node.version ?? 0;
   // A node is "shared" when it ran in an earlier version than the one currently viewed.
@@ -107,9 +127,10 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
   // Inner subgraph nodes (parent_node_id set) cannot be re-explored individually.
   const isInnerNode = !!node.parent_node_id;
   const isConditional = !!node.conditional_group;
-  // Re-explore is available for: terminal nodes (any) OR conditional not-yet-run (topology-only) nodes.
+  // Re-explore is available for: terminal nodes (any), active/running nodes (disabled), or conditional not-yet-run (topology-only) nodes.
   const canReExplore = !isInnerNode && !!onReExplore && (
     TERMINAL_WORK_STATUSES.has(node.status as never) ||
+    isWorkActive(node.status) ||
     (isConditional && !!node.is_topology_only)
   );
   return (
@@ -140,15 +161,19 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
         )}
         {canReExplore && (
           <Tooltip
-            title={threadActive ? 'Cancel or stop the thread before re-exploring' : (
-              node.is_topology_only ? 'Fork graph to run this conditional branch' : 'Fork graph from this node with different inputs'
-            )}
+            title={
+              isWorkActive(node.status) && threadActive
+                ? 'Node must finish before re-exploring'
+                : node.is_topology_only
+                ? 'Fork graph to run this conditional branch'
+                : 'Fork graph from this node with different inputs'
+            }
           >
             <Button
               size="small"
               icon={<BranchesOutlined />}
-              disabled={threadActive}
-              onClick={() => !threadActive && onReExplore!(node)}
+              disabled={isWorkActive(node.status) && threadActive}
+              onClick={() => !(isWorkActive(node.status) && threadActive) && onReExplore!(node)}
               style={{ marginLeft: 'auto' }}
             >
               Re-explore

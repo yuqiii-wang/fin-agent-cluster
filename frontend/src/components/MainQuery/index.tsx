@@ -7,6 +7,7 @@
 
 import React, { useState } from 'react';
 import { Alert, Input, Typography } from 'antd';
+import { CloseOutlined } from '@ant-design/icons';
 import { ensureGuest } from '../../api/auth';
 import { submitQuery } from '../../api/threads';
 import { useAuth } from '../../contexts/AuthContext';
@@ -22,6 +23,7 @@ const MainQuery: React.FC<Props> = ({ onSubmit }) => {
   const { refresh: refreshAuth } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorHovered, setErrorHovered] = useState(false);
 
   async function handleSearch(value: string) {
     const query = value.trim();
@@ -77,7 +79,10 @@ const MainQuery: React.FC<Props> = ({ onSubmit }) => {
           type="error"
           message={error}
           closable
+          closeIcon={<CloseOutlined style={{ visibility: errorHovered ? 'visible' : 'hidden' }} />}
           onClose={() => setError(null)}
+          onMouseEnter={() => setErrorHovered(true)}
+          onMouseLeave={() => setErrorHovered(false)}
           style={{ maxWidth: 640, width: '100%' }}
         />
       )}

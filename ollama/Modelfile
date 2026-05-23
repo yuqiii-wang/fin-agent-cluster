@@ -2,9 +2,34 @@ FROM ./Qwen3.5-27B-Instruct/Qwen3.5-27B.Q4_K_M.gguf
 
 TEMPLATE """{{ if .System }}<|im_start|>system
 {{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-{{ end }}<|im_start|>assistant
+{{ end }}{{ if .Tools }}<|im_start|>system
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags. You may call one or more of these functions to assist with the user query. Respond with a JSON for a function call with its proper arguments that best answers the given prompt.
+
+Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}. Do not use variables.
+
+<tools>
+{{ range .Tools }}{{- . }}
+{{ end }}</tools><|im_end|>
+{{ end }}{{ range .Messages }}
+{{- if eq .Role "system" }}<|im_start|>system
+{{ .Content }}<|im_end|>
+{{ else if eq .Role "user" }}<|im_start|>user
+{{ .Content }}<|im_end|>
+{{ else if eq .Role "assistant" }}<|im_start|>assistant
+{{ if .Content }}{{ .Content }}
+{{ end }}{{ if .ToolCalls }}{{ range .ToolCalls }}<tool_call>
+{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+</tool_call>
+{{ end }}{{ end }}<|im_end|>
+{{ else if eq .Role "tool" }}<|im_start|>tool
+<tool_response>
+{{ .Content }}
+</tool_response><|im_end|>
+{{ end }}{{ end }}<|im_start|>assistant
 """
 PARAMETER stop "<|im_start|>"
 PARAMETER stop "<|im_end|>"

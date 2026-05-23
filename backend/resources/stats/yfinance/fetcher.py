@@ -51,17 +51,18 @@ async def fetch(symbol: str, period: str) -> StatsRecord:
 
     loop = asyncio.get_running_loop()
     try:
-        df = await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None,
             partial(_download, symbol, yf_period, yf_interval),
         )
     except Exception as exc:
-        logger.warning(
+        logger.error(
             "yfinance.fetch error symbol=%s period=%s error=%s [%s]",
             symbol, period, exc, STATS_PROVIDER_ERROR,
         )
         raise ValueError(STATS_PROVIDER_ERROR) from exc
 
+    df = result["df"]
     if df.empty:
         logger.warning(
             "yfinance.fetch empty DataFrame symbol=%s period=%s [%s]",
@@ -70,6 +71,8 @@ async def fetch(symbol: str, period: str) -> StatsRecord:
         raise ValueError(STATS_YFINANCE_EMPTY)
 
     record = transform(symbol, period, df)
+    record.yf_exchange = result.get("yf_exchange")
+    record.currency = result.get("currency")
     logger.info("yfinance.fetch ok symbol=%s period=%s rows=%d", symbol, period, len(df))
     return record
 
@@ -82,7 +85,7 @@ def _download(
     symbol: str,
     yf_period: str,
     yf_interval: str,
-) -> "pandas.DataFrame":  # type: ignore[name-defined]  # noqa: F821
+) -> dict:
     """Blocking yfinance download.  Called inside a thread-pool executor.
 
     Args:
@@ -91,7 +94,17 @@ def _download(
         yf_interval: yfinance ``interval`` arg, e.g. ``"1h"``.
 
     Returns:
-        ``pandas.DataFrame`` from ``yf.Ticker.history()``.
+        Dict with keys ``df`` (OHLCV DataFrame), ``yf_exchange`` (str or None),
+        and ``currency`` (str or None).
     """
     ticker = yf.Ticker(symbol)
-    return ticker.history(period=yf_period, interval=yf_interval, auto_adjust=True)
+    df = ticker.history(period=yf_period, interval=yf_interval, auto_adjust=True)
+    yf_exchange: str | None = None
+    currency: str | None = None
+    try:
+        fi = ticker.fast_info
+        yf_exchange = getattr(fi, "exchange", None)
+        currency = getattr(fi, "currency", None)
+    except Exception:
+        pass
+    return {"df": df, "yf_exchange": yf_exchange, "currency": currency}

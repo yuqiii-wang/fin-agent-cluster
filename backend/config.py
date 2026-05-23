@@ -21,14 +21,38 @@ class Settings(BaseSettings):
     # When empty, the router falls back to DATABASE_REDIS_URL as a single node.
     DATABASE_REDIS_NODES: list[str] = ["redis://127.0.0.1:3456", "redis://127.0.0.1:3457"]
     DB_CONNECT_TIMEOUT_SECONDS: int = 8
+    # ── LLM provider selection ─────────────────────────────────────────────
+    # Which LLM backend to use: ark | gemini | ollama | mock
+    LLM_PROVIDER: str = "ark"
+
+    # ── Volcano Engine ARK / Doubao ──────────────────────────────────────────
+    ARK_API_KEY: Optional[str] = None
+    ARK_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
+    ARK_MODEL: str = "doubao-seed-2-0-mini-260215"
+
+    # ── Google Gemini ─────────────────────────────────────────────────────────
+    GOOGLE_GEMINI_API_KEY: Optional[str] = None
+    GOOGLE_GEMINI_MODEL: str = "gemini-2.5-flash"
+
+    # ── Embedding ─────────────────────────────────────────────────────────────
+    # Provider: google | ollama | mock
+    EMBEDDING_PROVIDER: str = "google"
+    GOOGLE_EMBEDDING_MODEL: str = "models/text-embedding-004"
+    GOOGLE_EMBEDDING_DIMENSIONS: int = 768
+
     # Stats data provider: mock | yfinance | fmp
     # mock    — in-process mock data, no external calls (default)
     # yfinance — free Yahoo Finance via the yfinance library
     # fmp      — Financial Modeling Prep REST API (requires FMP_API_KEY)
     STATS_PROVIDER: str = "mock"
+    ALPHAVANTAGE_API_KEY: Optional[str] = None
+    FMP_API_KEY: Optional[str] = None
+    FMP_BASE_URL: str = "https://financialmodelingprep.com/stable"
     FASTAPI_PORT: int = 8432
     # Number of main thread FastAPI instances (must match run.py --runner-instances and nginx-api.conf targets).
     RUNNER_INSTANCE_COUNT: int = 4
+    FASTAPI_ASSISTANT_PORT: int = 8436
+    ASSISTANT_INSTANCE_COUNT: int = 2
     # Number of Celery workers bound to each runner instance (completion tasks only).
     CELERY_WORKERS_PER_INSTANCE: int = 2
     # Number of concurrent task slots per completion Celery worker process (prefork child count).
@@ -43,11 +67,6 @@ class Settings(BaseSettings):
     # Total stream slots = RUNNER_INSTANCE_COUNT * CELERY_STREAM_WORKERS_PER_INSTANCE * CELERY_STREAM_WORKER_CONCURRENCY.
     CELERY_STREAM_WORKER_CONCURRENCY: int = 8
     # Port this specific main thread instance is bound to.
-
-    # ── Test mode ─────────────────────────────────────────────────────────────
-    # When True, the mock graph (full multi-node pipeline) is used instead of
-    # the production fin-trading graph.  Set via --test flag in run.py.
-    TEST_MODE: bool = False
 
     # ── Thread ownership lock (Redis) ─────────────────────────────────────────
     # TTL (seconds) for the per-thread Redis ownership lock.
@@ -66,6 +85,7 @@ class Settings(BaseSettings):
     # ── Ollama LLM ────────────────────────────────────────────────────────────
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_LLM_MODEL: str = "qwen3.5-27b-instruct"
+    OLLAMA_EMBED_MODEL: str = "qwen3-0.6b-emb"
     # Number of model layers to offload to GPU (-1 = auto, 0 = CPU only).
     # Set explicitly to keep the full model resident in VRAM.
     OLLAMA_NUM_GPU: int = 65
@@ -74,6 +94,19 @@ class Settings(BaseSettings):
     # Internal HTTP URL of nginx-api (plain HTTP, no TLS required for
     # container-internal calls from the backend or health-check scripts).
     API_GATEWAY_URL: str = "http://127.0.0.1:8888"
+
+    # ── Web search ───────────────────────────────────────────────────────────
+    # Provider: auto | bing | google_cse | volcengine
+    WEB_SEARCH_PROVIDER: str = "auto"
+    BING_SEARCH_API_KEY: Optional[str] = None
+    BING_SEARCH_ENDPOINT: str = "https://api.bing.microsoft.com/v7.0/news/search"
+    GOOGLE_CSE_API_KEY: Optional[str] = None
+    GOOGLE_CSE_CX: Optional[str] = None
+    VOLCENGINE_ACCESS_KEY_ID: Optional[str] = None
+    VOLCENGINE_SECRET_ACCESS_KEY: Optional[str] = None
+    VOLC_SEARCH_HOST: str = "open.volcengineapi.com"
+    VOLC_SEARCH_REGION: str = "cn-north-1"
+    VOLC_SEARCH_SERVICE: str = "search_platform"
 
     # ── Redis Streams (MQ / buffer layer) ────────────────────────────────────
     # Soft cap on each stream's entry count (XADD MAXLEN ~).
@@ -125,6 +158,14 @@ class Settings(BaseSettings):
     # location directly to the corresponding Centrifugo container over plain
     # HTTP/1.1 WebSocket.
     CENTRIFUGO_PUBLIC_BASE: str = "wss://localhost:22332"
+
+    # ── Assistant status verifier ─────────────────────────────────────────────
+    STATUS_VERIFIER_INTERVAL_SECS: int = 30
+    STATUS_VERIFIER_LOOKBACK_SECS: int = 3600
+
+    # ── Assistant done verifier ───────────────────────────────────────────────
+    DONE_VERIFIER_INTERVAL_SECS: int = 2
+    DONE_VERIFIER_MAX_RETRIES: int = 30
 
     from pydantic import field_validator as _fv
 

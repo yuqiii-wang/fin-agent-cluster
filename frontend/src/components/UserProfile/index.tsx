@@ -18,12 +18,12 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { UserOutlined } from '@ant-design/icons';
+import { CloseOutlined, UserOutlined } from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchPreferences, upsertPreference } from '../../api/user';
+import { fetchNodeMetas } from '../../api/threads';
 import NodePrefCard from './NodePrefCard';
-import { NODE_METAS } from './nodeMeta';
-import type { NodeConfig, UserPreference } from '../../types';
+import type { NodeConfig, NodeMeta, UserPreference } from '../../types';
 
 const { Text, Title } = Typography;
 
@@ -32,30 +32,30 @@ interface Props {
   onClose: () => void;
 }
 
-/** Group NODE_METAS by category for collapsible sections. */
-const CATEGORIES = Array.from(new Set(NODE_METAS.map((m) => m.category)));
-
 const UserProfile: React.FC<Props> = ({ open, onClose }) => {
   const { user } = useAuth();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorHovered, setErrorHovered] = useState(false);
+  const [nodeMetas, setNodeMetas] = useState<NodeMeta[]>([]);
   /** Local state: node_name → NodeConfig */
   const [configs, setConfigs] = useState<Record<string, NodeConfig>>({});
   /** node_names currently being saved */
   const [saving, setSaving] = useState<Set<string>>(new Set());
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  // ---- load preferences on open ----
+  // ---- load preferences and node metas on open ----
   useEffect(() => {
     if (!open || !user) return;
     setLoading(true);
     setError(null);
-    fetchPreferences()
-      .then((prefs: UserPreference[]) => {
+    Promise.all([fetchPreferences(), fetchNodeMetas()])
+      .then(([prefs, metas]: [UserPreference[], NodeMeta[]]) => {
         const map: Record<string, NodeConfig> = {};
         for (const p of prefs) map[p.node_name] = p.config;
         setConfigs(map);
+        setNodeMetas(metas);
       })
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : 'Failed to load preferences');
@@ -117,7 +117,17 @@ const UserProfile: React.FC<Props> = ({ open, onClose }) => {
       </Text>
 
       {error && (
-        <Alert type="error" message={error} style={{ marginBottom: 12 }} showIcon />
+        <Alert
+          type="error"
+          message={error}
+          showIcon
+          closable
+          closeIcon={<CloseOutlined style={{ visibility: errorHovered ? 'visible' : 'hidden' }} />}
+          onClose={() => setError(null)}
+          onMouseEnter={() => setErrorHovered(true)}
+          onMouseLeave={() => setErrorHovered(false)}
+          style={{ marginBottom: 12 }}
+        />
       )}
 
       {loading ? (
@@ -126,8 +136,8 @@ const UserProfile: React.FC<Props> = ({ open, onClose }) => {
         <Collapse
           defaultActiveKey={['Global']}
           size="small"
-          items={CATEGORIES.map((cat) => {
-            const metas = NODE_METAS.filter((m) => m.category === cat);
+          items={Array.from(new Set(nodeMetas.map((m) => m.category))).map((cat) => {
+            const metas = nodeMetas.filter((m) => m.category === cat);
             return {
               key: cat,
               label: cat,

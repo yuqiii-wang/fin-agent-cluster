@@ -168,108 +168,6 @@ ON CONFLICT (code) DO UPDATE SET
     decimals = EXCLUDED.decimals;
 
 -- ---------------------------------------------------------------------------
--- regions: major stock-market economies
---   code          → ISO-3166-1 alpha-2 country code (or region alias)
---   name          → full country / region name
---   zone          → top-level grouping: global | amer | emea | apac
---   timezone      → standard timezone abbreviation
---   utc_offset    → UTC offset string (std / dst where applicable)
---   currency_code → FK to fin_markets.currencies(code)
---   indexes       → ordered benchmark index tickers for the region;
---                   first element is the primary benchmark index
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS fin_markets.regions (
-    code            TEXT    PRIMARY KEY,
-    name            TEXT    NOT NULL,
-    zone            TEXT    NOT NULL CHECK (zone IN ('global','amer','emea','apac')),
-    timezone        TEXT,
-    utc_offset      TEXT,
-    currency_code   TEXT    REFERENCES fin_markets.currencies(code),
-    indexes         TEXT[]
-);
-
--- Seed data (idempotent) — ON CONFLICT updates all mutable columns
-INSERT INTO fin_markets.regions
-    (code, name, zone, timezone, utc_offset, currency_code, indexes)
-VALUES
--- ── Americas ────────────────────────────────────────────────────────────────
-('us', 'United States', 'amer', 'ET',   'UTC-5/-4',   'USD',
- ARRAY['NASDAQ_100','NASDAQ','S&P_500','DOW_JONES','RUSSELL']),
-('ca', 'Canada',  'amer', 'ET',   'UTC-5/-4',   'CAD',
- ARRAY['S&P/TSX']),
-('br', 'Brazil',  'amer', 'BRT',  'UTC-3',      'BRL',
- ARRAY['IBOVESPA','BVSP']),
-('mx', 'Mexico',  'amer', 'CT',   'UTC-6/-5',   'MXN',
- ARRAY['IPC']),
--- ── EMEA ────────────────────────────────────────────────────────────────────
-('gb', 'United Kingdom', 'emea', 'GMT/BST', 'UTC+0/+1',  'GBP',
- ARRAY['FTSE']),
-('de', 'Germany',        'emea', 'CET',     'UTC+1/+2',  'EUR',
- ARRAY['DAX']),
-('fr', 'France',         'emea', 'CET',     'UTC+1/+2',  'EUR',
- ARRAY['CAC']),
-('ch', 'Switzerland',    'emea', 'CET',     'UTC+1/+2',  'CHF',
- ARRAY['SMI']),
-('nl', 'Netherlands',    'emea', 'CET',     'UTC+1/+2',  'EUR',
- ARRAY['AEX']),
-('se', 'Sweden',         'emea', 'CET',     'UTC+1/+2',  'SEK',
- ARRAY['OMX']),
-('no', 'Norway',         'emea', 'CET',     'UTC+1/+2',  'NOK',
- ARRAY['OBX']),
-('dk', 'Denmark',        'emea', 'CET',     'UTC+1/+2',  'DKK',
- NULL),
-('it', 'Italy',          'emea', 'CET',     'UTC+1/+2',  'EUR',
- ARRAY['FTSE_MIB','MIB']),
-('es', 'Spain',          'emea', 'CET',     'UTC+1/+2',  'EUR',
- ARRAY['IBEX']),
-('sa', 'Saudi Arabia',   'emea', 'AST',     'UTC+3',     'SAR',
- ARRAY['TADAWUL','TASI']),
-('ae', 'UAE',            'emea', 'GST',     'UTC+4',     'AED',
- NULL),
-('qa', 'Qatar',          'emea', 'AST',     'UTC+3',     'QAR',
- NULL),
-('il', 'Israel',         'emea', 'IST',     'UTC+2/+3',  'ILS',
- NULL),
-('za', 'South Africa',   'emea', 'SAST',    'UTC+2',     'ZAR',
- NULL),
--- ── Asia-Pacific ────────────────────────────────────────────────────────────
-('jp', 'Japan',       'apac', 'JST',  'UTC+9',      'JPY',
- ARRAY['NIKKEI','TOPIX']),
-('cn', 'China',       'apac', 'CST',  'UTC+8',      'CNY',
- ARRAY['SHANGHAI','CSI_300','SSE','000001','SHENZHEN','399001']),
-('hk', 'Hong Kong',   'apac', 'HKT',  'UTC+8',      'HKD',
- ARRAY['HANG_SENG']),
-('tw', 'Taiwan',      'apac', 'CST',  'UTC+8',      'TWD',
- ARRAY['TAIEX']),
-('kr', 'South Korea', 'apac', 'KST',  'UTC+9',      'KRW',
- ARRAY['KOSPI']),
-('sg', 'Singapore',   'apac', 'SGT',  'UTC+8',      'SGD',
- ARRAY['STRAITS','STI']),
-('in', 'India',       'apac', 'IST',  'UTC+5:30',   'INR',
- ARRAY['SENSEX','NIFTY','BSE']),
-('au', 'Australia',   'apac', 'AEST', 'UTC+10/+11', 'AUD',
- ARRAY['ASX_200','ASX']),
-('nz', 'New Zealand', 'apac', 'NZST', 'UTC+12/+13', 'NZD',
- ARRAY['NZX']),
-('id', 'Indonesia',   'apac', 'WIB',  'UTC+7',      'IDR',
- ARRAY['IDX']),
-('my', 'Malaysia',    'apac', 'MYT',  'UTC+8',      'MYR',
- ARRAY['BURSA','KLCI']),
-('th', 'Thailand',    'apac', 'THA',  'UTC+7',      'THB',
- ARRAY['SET']),
-('ph', 'Philippines', 'apac', 'PHT',  'UTC+8',      'PHP',
- NULL),
-('vn', 'Vietnam',     'apac', 'ICT',  'UTC+7',      'VND',
- NULL)
-ON CONFLICT (code) DO UPDATE SET
-    name          = EXCLUDED.name,
-    zone          = EXCLUDED.zone,
-    timezone      = EXCLUDED.timezone,
-    utc_offset    = EXCLUDED.utc_offset,
-    currency_code = EXCLUDED.currency_code,
-    indexes       = EXCLUDED.indexes;
-
--- ---------------------------------------------------------------------------
 -- news_impact_categories: flat matrix of impact classification
 --   level1_topic  → domain        (e.g. 'Corporate')
 --   level2_topic  → category      (e.g. 'Financial Performance')
@@ -450,4 +348,105 @@ VALUES
 ON CONFLICT (code) DO NOTHING;
 
 
+-- ---------------------------------------------------------------------------
+-- macro_instruments: fixed-universe instruments for macro analysis nodes
+--   code          → short identifier (e.g. 'gold', 'sofr_3m')
+--   symbol        → yfinance / provider ticker (e.g. 'GC=F', 'SR3=F')
+--   label         → human-readable name (e.g. 'Gold', 'SOFR 3-Month')
+--   category      → 'macro' (commodities) | 'market_index' (rate/benchmark indices)
+--   currency_code → ISO 4217 FK to fin_markets.currencies(code)
+--   zone          → geographic zone: 'global' | 'amer' | 'emea' | 'apac'
+--   sort_order    → display / iteration order within the category
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fin_markets.macro_instruments (
+    code          TEXT    PRIMARY KEY,
+    symbol        TEXT    NOT NULL,
+    label         TEXT    NOT NULL,
+    category      TEXT    NOT NULL CHECK (category IN ('macro', 'market_index')),
+    currency_code TEXT    REFERENCES fin_markets.currencies (code),
+    zone          TEXT    NOT NULL DEFAULT 'global' CHECK (zone IN ('global','amer','emea','apac')),
+    sort_order    INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO fin_markets.macro_instruments
+    (code, symbol, label, category, currency_code, zone, sort_order)
+VALUES
+    ('gold',    'GC=F',  'Gold',                 'macro',        'USD', 'global', 1),
+    ('silver',  'SI=F',  'Silver',               'macro',        'USD', 'global', 2),
+    ('nat_gas', 'NG=F',  'Natural Gas',          'macro',        'USD', 'global', 3),
+    ('oil',     'CL=F',  'Crude Oil (WTI)',       'macro',        'USD', 'global', 4),
+    ('sofr_3m', 'SR3=F', 'SOFR 3-Month Futures', 'market_index', 'USD', 'amer',   1)
+ON CONFLICT (code) DO UPDATE SET
+    symbol        = EXCLUDED.symbol,
+    label         = EXCLUDED.label,
+    category      = EXCLUDED.category,
+    currency_code = EXCLUDED.currency_code,
+    zone          = EXCLUDED.zone,
+    sort_order    = EXCLUDED.sort_order;
+
+-- ---------------------------------------------------------------------------
+-- market_indexes: major benchmark stock-market indexes
+--   code              → short identifier (e.g. 'SP500', 'HANG_SENG', 'CSI_300')
+--   name              → human-readable index name
+--   ticker            → Yahoo Finance ticker for the index (e.g. '^GSPC', '^HSI')
+--   currency_code     → ISO 4217 FK; the traded currency for stocks in this index
+--   stats_provider    → provider to use when fetching OHLCV for stocks in this index
+--   zone              → geographic zone: 'amer' | 'emea' | 'apac'
+--   yf_exchange_codes → yfinance info['exchange'] values for stocks in this index
+--   sort_order        → priority when multiple indexes share exchange codes (lower = higher priority)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fin_markets.market_indexes (
+    code              TEXT      PRIMARY KEY,
+    name              TEXT      NOT NULL,
+    ticker            TEXT,
+    currency_code     TEXT      NOT NULL REFERENCES fin_markets.currencies(code),
+    stats_provider    TEXT      NOT NULL DEFAULT 'fmp',
+    zone              TEXT      NOT NULL CHECK (zone IN ('amer','emea','apac')),
+    yf_exchange_codes TEXT[]    NOT NULL DEFAULT '{}',
+    sort_order        INTEGER   NOT NULL DEFAULT 0
+);
+
+-- Seed data (idempotent) — covers the major benchmark indexes used for
+-- stock index membership detection and currency derivation.
+-- yf_exchange_codes: codes that yfinance returns in ticker.info['exchange']
+--   for stocks listed on the exchanges that constitute each index.
+INSERT INTO fin_markets.market_indexes
+    (code, name, ticker, currency_code, stats_provider, zone, yf_exchange_codes, sort_order)
+VALUES
+-- ── Americas ────────────────────────────────────────────────────────────────
+('SP500',       'S&P 500',           '^GSPC',   'USD', 'fmp',      'amer', ARRAY['NMS','NGM','NCM','NYQ','PCX','ASE','BTS','NYS'], 1),
+('NASDAQ_100',  'Nasdaq 100',        '^NDX',    'USD', 'fmp',      'amer', ARRAY['NMS','NGM','NCM'],                               2),
+('DOW_JONES',   'Dow Jones',         '^DJI',    'USD', 'fmp',      'amer', ARRAY['NMS','NYQ','NGM'],                               3),
+('RUSSELL_2000','Russell 2000',      '^RUT',    'USD', 'fmp',      'amer', ARRAY['NMS','NGM','NCM','NYQ','PCX','ASE','BTS'],        4),
+('TSX',         'S&P/TSX Composite', '^GSPTSE', 'CAD', 'yfinance', 'amer', ARRAY['TOR'],                                           5),
+('IBOVESPA',    'Ibovespa',          '^BVSP',   'BRL', 'yfinance', 'amer', ARRAY['SAO'],                                           6),
+-- ── Asia-Pacific ────────────────────────────────────────────────────────────
+('HANG_SENG',   'Hang Seng',         '^HSI',    'HKD', 'fmp',      'apac', ARRAY['HKG'],                                           1),
+('CSI_300',     'CSI 300',           '000300.SS','CNY','yfinance', 'apac', ARRAY['SHH','SHZ'],                                     2),
+('NIKKEI_225',  'Nikkei 225',        '^N225',   'JPY', 'yfinance', 'apac', ARRAY['TYO','OSA','JPX'],                               3),
+('TOPIX',       'TOPIX',             '^TOPX',   'JPY', 'yfinance', 'apac', ARRAY['TYO','OSA','JPX'],                               4),
+('KOSPI',       'KOSPI',             '^KS11',   'KRW', 'yfinance', 'apac', ARRAY['KSC'],                                           5),
+('KOSDAQ',      'KOSDAQ',            '^KQ11',   'KRW', 'yfinance', 'apac', ARRAY['KSQ'],                                           6),
+('ASX_200',     'ASX 200',           '^AXJO',   'AUD', 'yfinance', 'apac', ARRAY['ASX'],                                           7),
+('TAIEX',       'TAIEX',             '^TWII',   'TWD', 'yfinance', 'apac', ARRAY['TAI','TWO'],                                     8),
+('STI',         'STI',               '^STI',    'SGD', 'yfinance', 'apac', ARRAY['SGX','SES'],                                     9),
+('NIFTY_50',    'Nifty 50',          '^NSEI',   'INR', 'yfinance', 'apac', ARRAY['NSI','NSE','BSE','BOM'],                        10),
+('SENSEX',      'BSE Sensex',        '^BSESN',  'INR', 'yfinance', 'apac', ARRAY['BSE','BOM'],                                    11),
+-- ── EMEA ────────────────────────────────────────────────────────────────────
+('FTSE_100',    'FTSE 100',          '^FTSE',   'GBP', 'fmp',      'emea', ARRAY['LSE','IOB'],                                     1),
+('DAX',         'DAX',               '^GDAXI',  'EUR', 'fmp',      'emea', ARRAY['FRA','GER','XETRA','ETR'],                       2),
+('CAC_40',      'CAC 40',            '^FCHI',   'EUR', 'fmp',      'emea', ARRAY['PAR','ENX'],                                     3),
+('SMI',         'SMI',               '^SSMI',   'CHF', 'yfinance', 'emea', ARRAY['SWX','EBS'],                                     4),
+('AEX',         'AEX',               '^AEX',    'EUR', 'yfinance', 'emea', ARRAY['AMS'],                                           5),
+('MIB',         'FTSE MIB',          '^FTSEMIB','EUR', 'yfinance', 'emea', ARRAY['MIL'],                                           6),
+('IBEX_35',     'IBEX 35',           '^IBEX',   'EUR', 'yfinance', 'emea', ARRAY['MCE'],                                           7),
+('TADAWUL',     'Tadawul All Share',  '^TASI.SR','SAR', 'yfinance', 'emea', ARRAY['SAU'],                                          8)
+ON CONFLICT (code) DO UPDATE SET
+    name              = EXCLUDED.name,
+    ticker            = EXCLUDED.ticker,
+    currency_code     = EXCLUDED.currency_code,
+    stats_provider    = EXCLUDED.stats_provider,
+    zone              = EXCLUDED.zone,
+    yf_exchange_codes = EXCLUDED.yf_exchange_codes,
+    sort_order        = EXCLUDED.sort_order;
 

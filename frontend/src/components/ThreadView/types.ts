@@ -11,4 +11,6 @@ export interface DetailData {
   nodeContext?: 'input' | 'output';
   /** Task ID for stream mode — DetailDataPanel resolves the live task from the tasks list. */
   taskId?: string;
+  /** Pre-selected stats view type (e.g. 'DataFrame', 'StackCandleStick'). */
+  activeStatsView?: string;
 }

@@ -91,6 +91,43 @@ async def emit_node_sse(
         )
 
 
+async def emit_node_failed_sse(
+    thread_id: str,
+    node_id: str,
+    node_name: str,
+    error: str | None,
+) -> None:
+    """Publish a ``node_status: failed`` SSE event for an orphaned node (fire-and-forget)."""
+    try:
+        from backend.centrifugo_mq.sse_notification.thread.node import notify
+        from backend.langgraph.models import BaseNodeSseNotification
+        notif = BaseNodeSseNotification(
+            thread_id=thread_id,
+            node_id=node_id,
+            node_name=node_name,
+            event="node_status",
+            status="failed",
+            content={"error": error} if error else {},
+        )
+        acked = await notify(
+            thread_id=thread_id,
+            node_id=node_id,
+            event=notif.event,
+            payload=notif.to_notify_payload(),
+            dedup_key=f"node:{node_id}:failed",
+        )
+        if not acked:
+            logger.error(
+                "[lifecycle:thread] node failed SSE not acked thread_id=%s node_id=%s",
+                thread_id, node_id,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[LC007] node failed SSE publish failed node_id=%s: %s",
+            node_id, exc,
+        )
+
+
 async def emit_task_cancelled_sse(
     thread_id: str,
     task_id: str,

@@ -18,11 +18,12 @@ yfinance ``period`` and ``interval`` args accepted by :func:`fetch`:
 +--------+------------------------------+
 | period | interval (default)           |
 +========+==============================+
-| ``1d`` | ``1d``                       |
+| ``1d`` | ``1h``                       |
 | ``1w`` | ``1d``                       |
 | ``1mo``| ``1d``                       |
 | ``3mo``| ``1wk``                      |
 | ``1y`` | ``1wk``                      |
+| ``2y`` | ``1d``                       |
 +--------+------------------------------+
 """
 
@@ -39,6 +40,7 @@ _PERIOD_MAP: dict[str, tuple[str, str]] = {
     "1mo": ("3mo", "1d"),
     "3mo": ("6mo", "1wk"),
     "1y":  ("2y",  "1wk"),
+    "2y":  ("2y",  "1d"),
 }
 
 # yfinance column name → StatsMatrix series key

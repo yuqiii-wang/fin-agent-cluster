@@ -23,7 +23,7 @@ CREATE INDEX IF NOT EXISTS fin_markets_news_raw_source_method_idx
     ON fin_markets.news_raw (source, method);
 
 -- quant_raw: logs every call to a market-data API (yfinance, alpha_vantage)
--- 4-hour cache — same cache_key within the TTL returns the stored output
+-- 1-day cache — same cache_key on the same calendar day (UTC) returns the stored output
 -- thread_id is nullable so the same cached record can be reused across different threads
 CREATE TABLE IF NOT EXISTS fin_markets.quant_raw (
     id BIGSERIAL PRIMARY KEY,
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS fin_markets.quant_stats (
     -- Data source and time axis
     source          TEXT          NOT NULL,                    -- 'yfinance', 'alpha_vantage', 'akshare'
     granularity     TEXT          NOT NULL
-                        CHECK (granularity IN ('1min','5min','15min','30min','1h','2h','1day','1mo')),
+                        CHECK (granularity IN ('5min','15min','30min','1h','2h','1day','1mo')),
     bar_time        TIMESTAMPTZ   NOT NULL,                    -- bar open time (UTC); snapshot time for options
     -- OHLCV (NULL for options-flow rows which carry no price bars)
     open            NUMERIC(20,8),
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS fin_markets.quant_stats (
     vwap            NUMERIC(20,8),                             -- Volume-Weighted Average Price
     obv             NUMERIC(30,8),                             -- On-Balance Volume (cumulative)
     ad              NUMERIC(30,8),                             -- Chaikin A/D Line (cumulative)
-    region          TEXT          REFERENCES fin_markets.regions(code), -- market region, e.g. 'us', 'jp', 'cn'
+    index_code      TEXT          REFERENCES fin_markets.market_indexes(code),  -- primary index the stock belongs to (e.g. 'SP500', 'HANG_SENG')
     created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
@@ -138,8 +138,8 @@ CREATE INDEX IF NOT EXISTS fin_markets_quant_stats_lookup_idx
     ON fin_markets.quant_stats (symbol, instrument_type, granularity, bar_time DESC);
 CREATE INDEX IF NOT EXISTS fin_markets_quant_stats_bar_time_idx
     ON fin_markets.quant_stats (bar_time DESC);
-CREATE INDEX IF NOT EXISTS fin_markets_quant_stats_region_idx
-    ON fin_markets.quant_stats (region, instrument_type, granularity, bar_time DESC);
+CREATE INDEX IF NOT EXISTS fin_markets_quant_stats_index_code_idx
+    ON fin_markets.quant_stats (index_code, instrument_type, granularity, bar_time DESC);
 
 
 -- news_stats: one row per normalised news article with AI-generated enrichment fields
@@ -165,7 +165,6 @@ CREATE TABLE IF NOT EXISTS fin_markets.news_stats (
     impact_category TEXT          REFERENCES fin_markets.news_impact_categories (code),
                                                                 -- level3 event code, e.g. 'earnings_beat' → news_impact_categories.code
     topics          TEXT[]        NOT NULL DEFAULT '{}',        -- free-form tags beyond the structured classification
-    region          TEXT REFERENCES fin_markets.regions(code), -- geographic region of the news: 'us', 'cn', 'gb', etc.
     -- timestamps
     created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     CONSTRAINT news_stats_uniq UNIQUE (source, url_hash)
@@ -191,10 +190,9 @@ CREATE TABLE IF NOT EXISTS fin_markets.sec_profiles (
     id              BIGSERIAL PRIMARY KEY,
     symbol          TEXT          NOT NULL UNIQUE,             -- primary ticker, e.g. 'AAPL', 'BABA'
     symbols         TEXT[]        NOT NULL DEFAULT '{}',       -- all known tickers across exchanges, e.g. ['BABA', '9988.HK']
-    region          TEXT          REFERENCES fin_markets.regions(code),
     currency_code   TEXT          REFERENCES fin_markets.currencies(code),
     name            TEXT,                                      -- company/security name for display
-    biz_regions     TEXT[]        NOT NULL DEFAULT '{}',       -- fin_markets.regions codes where company operates
+    biz_regions     TEXT[]        NOT NULL DEFAULT '{}',       -- geographic regions where company operates (free-form)
     intro           TEXT,                                      -- short plain-language description of the company/security
     created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
@@ -202,9 +200,21 @@ CREATE TABLE IF NOT EXISTS fin_markets.sec_profiles (
 
 CREATE INDEX IF NOT EXISTS fin_markets_sec_profiles_symbol_idx
     ON fin_markets.sec_profiles (symbol);
-CREATE INDEX IF NOT EXISTS fin_markets_sec_profiles_region_idx
-    ON fin_markets.sec_profiles (region);
 
+-- stock_index_memberships: maps equity symbols to the market indexes they belong to.
+-- Populated by the calculate_stats task after detecting the stock's exchange code
+-- via yfinance ticker.info['exchange'].  The primary index (is_primary=TRUE) determines
+-- the stock's canonical currency for price calculations.
+CREATE TABLE IF NOT EXISTS fin_markets.stock_index_memberships (
+    symbol      TEXT      NOT NULL,
+    index_code  TEXT      NOT NULL REFERENCES fin_markets.market_indexes(code),
+    is_primary  BOOLEAN   NOT NULL DEFAULT FALSE,
+    upserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (symbol, index_code)
+);
+
+CREATE INDEX IF NOT EXISTS fin_markets_stock_index_memberships_symbol_idx
+    ON fin_markets.stock_index_memberships (symbol);
 
 -- quant_static_stats: slow-changing fundamental and catalyst data per security
 -- unique key spans both types via COALESCE expression index

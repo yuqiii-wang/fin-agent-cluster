@@ -216,7 +216,9 @@ async def _run_graph(
             )
             return
         logger.error(
-            "[main_thread.executor] graph failed thread_id=%s: %s", thread_id, exc
+            "[main_thread.executor] graph failed thread_id=%s: %s",
+            thread_id, exc,
+            exc_info=True,
         )
         try:
             await complete_thread(thread_id, failed=True, error=str(exc))

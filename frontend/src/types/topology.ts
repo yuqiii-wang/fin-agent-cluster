@@ -22,3 +22,23 @@ export interface GraphTopology {
   nodes: TopologyNodeDef[];
   edges: TopologyEdgeDef[];
 }
+
+/** Mirrors backend/api/graph/node_metas.py — NodeConfigField */
+export interface NodeConfigField {
+  key: string;
+  label: string;
+  type: 'boolean' | 'select' | 'number';
+  options?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  step?: number;
+  description: string;
+}
+
+/** Mirrors backend/api/graph/node_metas.py — NodeMetaResponse */
+export interface NodeMeta {
+  node_name: string;
+  display_name: string;
+  category: string;
+  fields: NodeConfigField[];
+}

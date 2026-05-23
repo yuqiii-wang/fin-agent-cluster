@@ -6,7 +6,7 @@ import React from 'react';
 import { Card, Form, InputNumber, Select, Switch, Tooltip, Typography } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import type { NodeConfig } from '../../types';
-import type { NodeMeta } from './nodeMeta';
+import type { NodeMeta } from '../../types';
 
 const { Text } = Typography;
 

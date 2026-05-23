@@ -49,7 +49,12 @@ class TaskRunnerMixin:
         from backend.langgraph.lifecycle.pause_flag import clear_task_pause_flag
 
         existing = await get_existing_task_for_node(ctx.thread_id, ctx.node_id, node_task.name)
-        if existing and existing["status"] == "completed":
+        # Guard against returning a cached result from a *different* parallel invocation of the
+        # same task within this node (e.g. prepare_index running get_and_calculate_stats for N
+        # symbols concurrently).  ctx.task_ids is appended to before the @task fn is awaited, so
+        # if task_id is already present another coroutine has claimed it; create a fresh one.
+        existing_claimed = existing is not None and existing["task_id"] in ctx.task_ids
+        if existing and not existing_claimed and existing["status"] == "completed":
             # Task was already completed by _run_retry_background; reuse the stored
             # output without re-running so the resumed graph can reach complete_node.
             task_id = existing["task_id"]
@@ -72,7 +77,7 @@ class TaskRunnerMixin:
                 )
             # output is missing; reset and re-run normally.
             await reset_task_for_retry(ctx.thread_id, task_id)
-        elif existing and existing["status"] in ("paused", "failed"):
+        elif existing and not existing_claimed and existing["status"] in ("paused", "failed"):
             task_id = existing["task_id"]
             await reset_task_for_retry(ctx.thread_id, task_id)
             if existing["status"] == "paused":

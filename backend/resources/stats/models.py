@@ -41,6 +41,8 @@ class StatsRecord(BaseModel):
     symbol: str = Field(..., description="Equity symbol, e.g. 'AAPL'.")
     period: str = Field(..., description="Aggregation period, e.g. '1d', '1w', '1mo'.")
     content: StatsMatrix = Field(..., description="Time-series matrix payload.")
+    yf_exchange: str | None = Field(None, description="yfinance exchange code, e.g. 'NMS', 'HKG'.")
+    currency: str | None = Field(None, description="ISO 4217 currency code from yfinance, e.g. 'USD', 'HKD'.")
 
 
 class StatsListResponse(BaseModel):

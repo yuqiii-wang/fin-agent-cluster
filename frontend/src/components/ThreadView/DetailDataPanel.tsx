@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button, Card, Typography } from 'antd';
 import { CaretRightOutlined, PauseOutlined, RetweetOutlined } from '@ant-design/icons';
 import DataViewer, { viewTypeToMode } from '../DataViewer/index';
@@ -26,8 +26,6 @@ const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, nodes, t
   const [continuing, setContinuing] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [hovered, setHovered] = useState(false);
-  const [retryCooldown, setRetryCooldown] = useState(false);
-  const retryCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const streamTask = detailData.taskId ? tasks.find(t => t.task_id === detailData.taskId) : undefined;
   const streamNode = streamTask?.node_id ? nodes.find(n => n.node_id === streamTask.node_id) : undefined;
@@ -39,9 +37,6 @@ const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, nodes, t
     if (!streamTask) return;
     onRetry?.(streamTask.task_id);
     setRetrying(true);
-    setRetryCooldown(true);
-    if (retryCooldownRef.current) clearTimeout(retryCooldownRef.current);
-    retryCooldownRef.current = setTimeout(() => setRetryCooldown(false), 5000);
     try {
       await retryFreshTask(threadId, streamTask.task_id);
     } finally {
@@ -82,9 +77,9 @@ const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, nodes, t
     return [] as string[];
   })();
 
-  const [activeStatsView, setActiveStatsView] = useState<string>(statsViews[0] ?? '');
+  const [activeStatsView, setActiveStatsView] = useState<string>(detailData.activeStatsView ?? statsViews[0] ?? '');
   useEffect(() => {
-    setActiveStatsView(statsViews[0] ?? '');
+    setActiveStatsView(detailData.activeStatsView ?? statsViews[0] ?? '');
   }, [detailData.label]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const resolvedMode = detailData.mode ??
@@ -146,7 +141,7 @@ const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, nodes, t
                   size="small"
                   icon={<RetweetOutlined />}
                   loading={retrying}
-                  disabled={pausing || retryCooldown}
+                  disabled={pausing}
                   onClick={handleRetry}
                   title="Pause then restart from scratch"
                 >
@@ -168,7 +163,6 @@ const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, nodes, t
                 size="small"
                 icon={<RetweetOutlined />}
                 loading={retrying}
-                disabled={retryCooldown}
                 onClick={handleRetry}
                 title="Restart from scratch"
               >

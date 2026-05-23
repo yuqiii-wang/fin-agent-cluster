@@ -78,40 +78,16 @@ class TaskOutput(BaseModel, Generic[T]):
     """Typed output envelope from a @task.  Mirrors TaskInput for traceability.
 
     Attributes:
-        ctx: Same TaskContext that was passed in — carries origin identity.
-        content: Biz-specific result; type is fixed by the concrete subclass.
+        ctx:      Same TaskContext that was passed in — carries origin identity.
+        content:  Biz-specific result; type is fixed by the concrete subclass.
+        thinking: Chain-of-thought text captured from streaming tasks.  Set by
+                  streaming ``@task`` functions so the agent loop can store it
+                  in memory alongside the structured answer.
     """
 
     ctx: TaskContext
     content: T
-
-
-__all__ = ["NodeContext", "TaskContext", "TaskInput", "TaskOutput"]
-
-
-
-class TaskInput(BaseModel, Generic[T]):
-    """Typed input envelope for a @task.
-
-    Attributes:
-        ctx: Full thread → node → task identity chain.
-        content: Biz-specific input; type is fixed by the concrete subclass.
-    """
-
-    ctx: TaskContext
-    content: T
-
-
-class TaskOutput(BaseModel, Generic[T]):
-    """Typed output envelope from a @task.  Mirrors TaskInput for traceability.
-
-    Attributes:
-        ctx: Same TaskContext that was passed in — carries origin identity.
-        content: Biz-specific result; type is fixed by the concrete subclass.
-    """
-
-    ctx: TaskContext
-    content: T
+    thinking: str | None = None
 
 
 __all__ = ["NodeContext", "TaskContext", "TaskInput", "TaskOutput"]

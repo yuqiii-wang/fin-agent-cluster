@@ -100,26 +100,15 @@ class GraphTopologyResponse(BaseModel):
 
 GRAPH_TOPOLOGY = GraphTopologyResponse(
     nodes=[
-        TopologyNodeDef(node_name="query_node",          node_type="Workflow"),
-        TopologyNodeDef(node_name="apac_analyze_node",   node_type="Workflow", conditional_group="regional_route"),
-        TopologyNodeDef(node_name="emea_analyze_node",   node_type="Workflow", conditional_group="regional_route"),
-        TopologyNodeDef(node_name="amer_analyze_node",   node_type="Workflow", conditional_group="regional_route"),
-        TopologyNodeDef(node_name="research_subgraph",   node_type="Subgraph"),
-        TopologyNodeDef(node_name="analyze_stats_node",  node_type="Workflow", parallel_group="analyze_parallel"),
-        TopologyNodeDef(node_name="analyze_news_node",   node_type="Workflow", parallel_group="analyze_parallel"),
-        TopologyNodeDef(node_name="conclusion_node",     node_type="Workflow"),
+        TopologyNodeDef(node_name="query_node",       node_type="Workflow"),
+        TopologyNodeDef(node_name="prepare_peers",    node_type="Agent",    parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_macro",    node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_index",    node_type="Workflow", parallel_group="analyze_parallel"),
     ],
     edges=[
-        TopologyEdgeDef(from_node="query_node",          to_node="apac_analyze_node",   kind="conditional", condition_label="UTC 00:00\u201307:59 (APAC)"),
-        TopologyEdgeDef(from_node="query_node",          to_node="emea_analyze_node",   kind="conditional", condition_label="UTC 08:00\u201315:59 (EMEA)"),
-        TopologyEdgeDef(from_node="query_node",          to_node="amer_analyze_node",   kind="conditional", condition_label="UTC 16:00\u201323:59 (AMER)"),
-        TopologyEdgeDef(from_node="apac_analyze_node",   to_node="research_subgraph",   kind="conditional"),
-        TopologyEdgeDef(from_node="emea_analyze_node",   to_node="research_subgraph",   kind="conditional"),
-        TopologyEdgeDef(from_node="amer_analyze_node",   to_node="research_subgraph",   kind="conditional"),
-        TopologyEdgeDef(from_node="research_subgraph",   to_node="analyze_stats_node",  kind="sequential"),
-        TopologyEdgeDef(from_node="research_subgraph",   to_node="analyze_news_node",   kind="sequential"),
-        TopologyEdgeDef(from_node="analyze_stats_node",  to_node="conclusion_node",     kind="sequential"),
-        TopologyEdgeDef(from_node="analyze_news_node",   to_node="conclusion_node",     kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_peers",  kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_macro",  kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_index",  kind="sequential"),
     ],
 )
 

@@ -65,7 +65,10 @@ class NewsClient:
 
         logger.debug("news.list_news provider=%s symbol=%s limit=%d", self.provider, symbol, limit)
         response = await self._http.get("/news", params=params)
-        response.raise_for_status()
+        if not response.is_success:
+            raise ValueError(
+                f"news.list_news failed: status={response.status_code} body={response.text[:500]!r}"
+            )
         items = [NewsArticle.model_validate(row) for row in response.json()]
         return NewsListResponse(items=items, total=len(items))
 
@@ -82,7 +85,10 @@ class NewsClient:
         response = await self._http.get(f"/news/{article_id}")
         if response.status_code == 404:
             return None
-        response.raise_for_status()
+        if not response.is_success:
+            raise ValueError(
+                f"news.get_news failed: status={response.status_code} body={response.text[:500]!r}"
+            )
         return NewsArticle.model_validate(response.json())
 
     async def aclose(self) -> None:

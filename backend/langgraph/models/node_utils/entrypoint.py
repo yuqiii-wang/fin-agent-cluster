@@ -47,6 +47,7 @@ class EntrypointMixin:
         cancelled via the API.  Returns a ``cancelled`` state delta without
         raising so the other parallel branches continue unaffected.
         """
+        from backend.langgraph.agent.errors import AgentPausedError
         from backend.langgraph.lifecycle.errors import NodeCancelledError, TaskPausedError
 
         thread_id: str = state["thread_id"]
@@ -113,6 +114,7 @@ class EntrypointMixin:
             forked_from_version=forked_from_version,
             view_type=self.view_type,  # type: ignore[attr-defined]
             view_schema=self.view_schema,  # type: ignore[attr-defined]
+            stats_views=self.stats_views,  # type: ignore[attr-defined]
         )
 
         # --- Parallel-cancel check: auto-cancel merge nodes whose required
@@ -144,6 +146,30 @@ class EntrypointMixin:
             cancelled_record = self._build_node_record(node_id, version, prev_node_ids, "cancelled")  # type: ignore[attr-defined]
             cancelled_record["task_ids"] = list(ctx.task_ids)
             return {"nodes": {node_id: cancelled_record}}
+        except AgentPausedError as exc:
+            # Agent-level pause detected between LLM iterations.  Pause the node
+            # then, if auto_resume is set, schedule a background re-dispatch so
+            # the agent restarts with the updated skill / memory context.
+            from backend.langgraph.lifecycle import pause_node as _pause_node
+            await _pause_node(
+                thread_id, node_id, self.node_name,  # type: ignore[attr-defined]
+                is_last_paused_by_server=False,
+            )
+            if exc.auto_resume:
+                import asyncio
+
+                async def _trigger_auto_resume() -> None:
+                    from backend.users.queries import resume_query
+                    try:
+                        await resume_query(thread_id)
+                    except Exception as resume_err:
+                        logger.error(
+                            "[agent] auto-resume failed thread_id=%s: %s",
+                            thread_id, resume_err,
+                        )
+
+                asyncio.create_task(_trigger_auto_resume())
+            raise
         except TaskPausedError:
             from backend.langgraph.lifecycle import pause_node as _pause_node
             await _pause_node(

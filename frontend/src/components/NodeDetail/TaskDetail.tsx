@@ -46,8 +46,6 @@ const TaskDetail: React.FC<Props> = ({ task, nodeStatus, threadId, onViewData, o
   const [localTask, setLocalTask] = useState<TaskInfo | null>(null);
   const [isHeaderHovered, setIsHeaderHovered] = useState(false);
   const [retryingMode, setRetryingMode] = useState<string | null>(null);
-  const [retryCooldown, setRetryCooldown] = useState(false);
-  const retryCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchedTaskIdRef = useRef<string | null>(null);
   const openedStreamRef = useRef<string | null>(null);
 
@@ -108,9 +106,6 @@ const TaskDetail: React.FC<Props> = ({ task, nodeStatus, threadId, onViewData, o
 
   const handleRetry = async () => {
     setRetryingMode('retry');
-    setRetryCooldown(true);
-    if (retryCooldownRef.current) clearTimeout(retryCooldownRef.current);
-    retryCooldownRef.current = setTimeout(() => setRetryCooldown(false), 5000);
     try {
       // Streaming tasks may still have a live Celery worker; use retry-fresh
       // which pauses first if needed.  Completion tasks are already terminal
@@ -131,9 +126,6 @@ const TaskDetail: React.FC<Props> = ({ task, nodeStatus, threadId, onViewData, o
 
   const handleContinue = async () => {
     setRetryingMode('continue');
-    setRetryCooldown(true);
-    if (retryCooldownRef.current) clearTimeout(retryCooldownRef.current);
-    retryCooldownRef.current = setTimeout(() => setRetryCooldown(false), 5000);
     try {
       await continueTask(threadId, task.task_id);
       setLocalTask(null);
@@ -181,7 +173,6 @@ const TaskDetail: React.FC<Props> = ({ task, nodeStatus, threadId, onViewData, o
               size="small"
               icon={<CaretRightOutlined />}
               loading={retryingMode !== null}
-              disabled={retryCooldown}
               onClick={handleContinue}
               style={{ marginLeft: 'auto' }}
             >
@@ -192,7 +183,6 @@ const TaskDetail: React.FC<Props> = ({ task, nodeStatus, threadId, onViewData, o
               size="small"
               icon={<RetweetOutlined />}
               loading={retryingMode !== null}
-              disabled={retryCooldown}
               onClick={handleRetry}
               style={{ marginLeft: isWorkActive(task.status) ? 0 : 'auto' }}
             >
@@ -246,6 +236,12 @@ const TaskDetail: React.FC<Props> = ({ task, nodeStatus, threadId, onViewData, o
       {/* After stream ends: spinner while fetching full output from DB. */}
       {streamCompleted && fetchingTask && (
         <Spin size="small" />
+      )}
+
+      {task.description && (
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+          {task.description}
+        </Text>
       )}
     </div>
   );

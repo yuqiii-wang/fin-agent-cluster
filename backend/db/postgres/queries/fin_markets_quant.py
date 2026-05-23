@@ -14,7 +14,7 @@ class QuantRawSQL:
     """Queries against ``fin_markets.quant_raw`` (market-data API cache)."""
 
     GET_CACHED = """
-        SELECT output
+        SELECT output, created_at
         FROM fin_markets.quant_raw
         WHERE cache_key = %s
           AND created_at > %s
@@ -38,7 +38,7 @@ class QuantRawSQL:
 
     PURGE_EXPIRED = """
         DELETE FROM fin_markets.quant_raw
-        WHERE created_at < NOW() - INTERVAL '4 hours'
+        WHERE created_at < DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
     """
 
 
@@ -57,7 +57,7 @@ class OhlcvStatsSQL:
             aroon_up_14, aroon_down_14, sar,
             willr_14, cci_20, mfi_14, roc_10, natr_14,
             vwap, obv, ad,
-            region
+            index_code
         ) VALUES (
             %(symbol)s, 'equity', %(currency_code)s, %(source)s, %(granularity)s, %(bar_time)s,
             %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s, %(trade_count)s,
@@ -69,7 +69,7 @@ class OhlcvStatsSQL:
             %(aroon_up_14)s, %(aroon_down_14)s, %(sar)s,
             %(willr_14)s, %(cci_20)s, %(mfi_14)s, %(roc_10)s, %(natr_14)s,
             %(vwap)s, %(obv)s, %(ad)s,
-            %(region)s
+            %(index_code)s
         )
         ON CONFLICT (
             instrument_type, symbol, source, granularity, bar_time,
@@ -110,7 +110,7 @@ class OhlcvStatsSQL:
             vwap          = COALESCE(EXCLUDED.vwap,        fin_markets.quant_stats.vwap),
             obv           = COALESCE(EXCLUDED.obv,         fin_markets.quant_stats.obv),
             ad            = COALESCE(EXCLUDED.ad,          fin_markets.quant_stats.ad),
-            region        = COALESCE(EXCLUDED.region,      fin_markets.quant_stats.region)
+            index_code    = COALESCE(EXCLUDED.index_code,  fin_markets.quant_stats.index_code)
     """
 
     GET_COVERAGE = """
@@ -130,6 +130,24 @@ class OhlcvStatsSQL:
           AND granularity = %s
           AND bar_time >= %s
         ORDER BY bar_time ASC
+    """
+
+    GET_SMA_EMA_BARS_IN_WINDOW = """
+        SELECT bar_time, sma_20, sma_50, ema_12, ema_26
+        FROM fin_markets.quant_stats
+        WHERE symbol = %s
+          AND instrument_type = 'equity'
+          AND granularity = %s
+          AND bar_time >= %s
+        ORDER BY bar_time ASC
+    """
+
+    COUNT_BY_SYMBOL_GRANULARITY = """
+        SELECT COUNT(*) AS row_count
+        FROM fin_markets.quant_stats
+        WHERE symbol = %s
+          AND instrument_type = 'equity'
+          AND granularity = %s
     """
 
     GET_BY_SYMBOL = """
@@ -193,10 +211,10 @@ class FuturesStatsSQL:
     UPSERT = """
         INSERT INTO fin_markets.quant_stats (
             symbol, instrument_type, currency_code, contract_ticker, expiry, source, granularity, bar_time,
-            open, high, low, close, volume, open_interest, region
+            open, high, low, close, volume, open_interest, index_code
         ) VALUES (
             %(symbol)s, 'futures', %(currency_code)s, %(contract_ticker)s, %(expiry)s, %(source)s, '1day', %(bar_time)s,
-            %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s, %(open_interest)s, %(region)s
+            %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s, %(open_interest)s, %(index_code)s
         )
         ON CONFLICT (
             instrument_type, symbol, source, granularity, bar_time,
@@ -209,7 +227,7 @@ class FuturesStatsSQL:
             volume        = COALESCE(EXCLUDED.volume,        fin_markets.quant_stats.volume),
             open_interest = COALESCE(EXCLUDED.open_interest, fin_markets.quant_stats.open_interest),
             currency_code = COALESCE(EXCLUDED.currency_code, fin_markets.quant_stats.currency_code),
-            region        = COALESCE(EXCLUDED.region,        fin_markets.quant_stats.region)
+            index_code    = COALESCE(EXCLUDED.index_code,    fin_markets.quant_stats.index_code)
     """
 
     GET_RECENT = """
@@ -239,10 +257,10 @@ class OptionsStatsSQL:
     UPSERT = """
         INSERT INTO fin_markets.quant_stats (
             symbol, instrument_type, currency_code, expiry, source, granularity, bar_time,
-            calls_oi, puts_oi, calls_puts_ratio, net_flow, query_used, region
+            calls_oi, puts_oi, calls_puts_ratio, net_flow, query_used, index_code
         ) VALUES (
             %(symbol)s, 'options', %(currency_code)s, %(expiry)s, %(source)s, '1day', %(bar_time)s,
-            %(calls_oi)s, %(puts_oi)s, %(calls_puts_ratio)s, %(net_flow)s, %(query_used)s, %(region)s
+            %(calls_oi)s, %(puts_oi)s, %(calls_puts_ratio)s, %(net_flow)s, %(query_used)s, %(index_code)s
         )
         ON CONFLICT (
             instrument_type, symbol, source, granularity, bar_time,
@@ -252,7 +270,9 @@ class OptionsStatsSQL:
             puts_oi          = COALESCE(EXCLUDED.puts_oi,          fin_markets.quant_stats.puts_oi),
             calls_puts_ratio = COALESCE(EXCLUDED.calls_puts_ratio, fin_markets.quant_stats.calls_puts_ratio),
             net_flow         = COALESCE(EXCLUDED.net_flow,         fin_markets.quant_stats.net_flow),
-            query_used       = COALESCE(EXCLUDED.query_used,       fin_markets.quant_stats.query_used),            currency_code    = COALESCE(EXCLUDED.currency_code,     fin_markets.quant_stats.currency_code),            region           = COALESCE(EXCLUDED.region,           fin_markets.quant_stats.region)
+            query_used       = COALESCE(EXCLUDED.query_used,       fin_markets.quant_stats.query_used),
+            currency_code    = COALESCE(EXCLUDED.currency_code,    fin_markets.quant_stats.currency_code),
+            index_code       = COALESCE(EXCLUDED.index_code,       fin_markets.quant_stats.index_code)
     """
 
 
@@ -268,7 +288,7 @@ class IndexStatsSQL:
             rsi_14, stoch_k, stoch_d, willr_14, cci_20, roc_10,
             atr_14, bb_upper, bb_middle, bb_lower, natr_14,
             adx_14, plus_di_14, minus_di_14, aroon_up_14, aroon_down_14, sar,
-            obv, region
+            obv, index_code
         ) VALUES (
             %(symbol)s, 'index', %(currency_code)s, %(source)s, %(granularity)s, %(bar_time)s,
             %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s,
@@ -277,7 +297,7 @@ class IndexStatsSQL:
             %(rsi_14)s, %(stoch_k)s, %(stoch_d)s, %(willr_14)s, %(cci_20)s, %(roc_10)s,
             %(atr_14)s, %(bb_upper)s, %(bb_middle)s, %(bb_lower)s, %(natr_14)s,
             %(adx_14)s, %(plus_di_14)s, %(minus_di_14)s, %(aroon_up_14)s, %(aroon_down_14)s, %(sar)s,
-            %(obv)s, %(region)s
+            %(obv)s, %(index_code)s
         )
         ON CONFLICT (
             instrument_type, symbol, source, granularity, bar_time,
@@ -315,7 +335,7 @@ class IndexStatsSQL:
             sar         = COALESCE(EXCLUDED.sar,         fin_markets.quant_stats.sar),
             obv           = COALESCE(EXCLUDED.obv,           fin_markets.quant_stats.obv),
             currency_code = COALESCE(EXCLUDED.currency_code, fin_markets.quant_stats.currency_code),
-            region        = COALESCE(EXCLUDED.region,        fin_markets.quant_stats.region)
+            index_code    = COALESCE(EXCLUDED.index_code,    fin_markets.quant_stats.index_code)
     """
 
     GET_COVERAGE = """

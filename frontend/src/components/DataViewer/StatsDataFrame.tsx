@@ -17,6 +17,7 @@ export interface DfSplit {
   index: string[];
   columns: string[];
   data: number[][];
+  index_label?: string;
 }
 
 interface Props {
@@ -35,27 +36,29 @@ function fmtNumber(col: string, value: number): string {
 
 const StatsDataFrame: React.FC<Props> = ({ dfSplit, maxHeight = 320 }) => {
   const { index, columns, data } = dfSplit;
+  const indexKey = dfSplit.index_label ?? DATE_KEY;
+  const indexTitle = dfSplit.index_label ?? 'Date';
 
   const rows: RowRecord[] = useMemo(
     () =>
-      index.map((date, i) => {
-        const row: RowRecord = { [DATE_KEY]: date };
+      index.map((label, i) => {
+        const row: RowRecord = { [indexKey]: label };
         columns.forEach((col, j) => {
           row[col] = data[i]?.[j] ?? 0;
         });
         return row;
       }),
-    [index, columns, data],
+    [index, columns, data, indexKey],
   );
 
   const antColumns: ColumnType<RowRecord>[] = useMemo(() => {
-    const dateCol: ColumnType<RowRecord> = {
-      title: 'Date',
-      dataIndex: DATE_KEY,
-      key: DATE_KEY,
+    const idxCol: ColumnType<RowRecord> = {
+      title: indexTitle,
+      dataIndex: indexKey,
+      key: indexKey,
       fixed: 'left',
       width: 100,
-      sorter: (a, b) => String(a[DATE_KEY]).localeCompare(String(b[DATE_KEY])),
+      sorter: (a, b) => String(a[indexKey]).localeCompare(String(b[indexKey])),
     };
 
     const dataCols: ColumnType<RowRecord>[] = columns.map((col) => ({
@@ -68,8 +71,8 @@ const StatsDataFrame: React.FC<Props> = ({ dfSplit, maxHeight = 320 }) => {
       render: (val: number) => fmtNumber(col, val),
     }));
 
-    return [dateCol, ...dataCols];
-  }, [columns]);
+    return [idxCol, ...dataCols];
+  }, [columns, indexKey, indexTitle]);
 
   if (!index.length) {
     return <span style={{ fontSize: 12, opacity: 0.5 }}>No data</span>;
@@ -79,7 +82,7 @@ const StatsDataFrame: React.FC<Props> = ({ dfSplit, maxHeight = 320 }) => {
     <Table<RowRecord>
       dataSource={rows}
       columns={antColumns}
-      rowKey={DATE_KEY}
+      rowKey={indexKey}
       size="small"
       pagination={false}
       scroll={{ x: 'max-content', y: maxHeight }}

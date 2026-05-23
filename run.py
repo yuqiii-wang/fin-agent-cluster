@@ -410,7 +410,6 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run the FastAPI server.")
     parser.add_argument("--no-proxy", action="store_true", help="Disable the use of the proxy even if configured.")
-    parser.add_argument("--test", action="store_true", help="Run in test mode: use mock graph and show test UI.")
 
     args = parser.parse_args()
 
@@ -420,10 +419,6 @@ if __name__ == "__main__":
         print(f"  {_k} = {_v}")
     proxy_to_use = None if args.no_proxy else settings.HTTP_PROXY
     _configure_proxy(proxy_to_use)
-
-    if args.test:
-        os.environ["TEST_MODE"] = "true"
-        print("[run.py] TEST_MODE enabled — using mock graph and test UI.")
 
     if sys.platform == "win32":
         # psycopg requires SelectorEventLoop on Windows.

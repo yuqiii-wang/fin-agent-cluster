@@ -9,16 +9,21 @@ Dispatches market-statistics requests to one of three providers:
 * ``"fmp"``     — calls the Financial Modeling Prep REST API
   (requires ``FMP_API_KEY`` in :class:`~backend.config.Settings`).
 
-The active provider is read from ``Settings.STATS_PROVIDER`` at construction
-time.  An unrecognised value falls back to ``"mock"`` with a warning.
+Provider selection order
+------------------------
+1. Ticker-suffix routing via :func:`~backend.resources.stats.routing.provider_for_symbol`
+   when a ``symbol`` is supplied to the constructor and the suffix has a mapping.
+2. ``Settings.STATS_PROVIDER`` global fallback.
+3. ``"mock"`` when the resolved provider is unknown or ``"fmp"`` is requested
+   without ``FMP_API_KEY`` being set.
 
 Usage::
 
     from backend.resources.stats.client import StatsClient
 
-    client = StatsClient()
+    client = StatsClient(symbol="AAPL")   # routes to fmp for US
     records = await client.list_stats("AAPL", "1d")
-    record  = await client.get_stats("yf-aapl-1d")
+    record  = await client.get_stats("fmp-aapl-1d")
     await client.aclose()
 """
 
@@ -30,8 +35,10 @@ from typing import Optional
 import httpx
 
 from backend.config import get_settings
+from backend.resources.stats.errors import STATS_FMP_EMPTY, STATS_YFINANCE_EMPTY
 from backend.resources.stats.mock.transport import MockStatsTransport
 from backend.resources.stats.models import StatsListResponse, StatsRecord
+from backend.resources.stats.routing import provider_for_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -49,26 +56,47 @@ class StatsClient:
 
     provider: str
 
-    def __init__(self) -> None:
-        """Initialise, selecting the provider from :class:`~backend.config.Settings`.
+    def __init__(self, symbol: str | None = None, force_provider: str | None = None) -> None:
+        """Initialise, selecting the provider based on ticker-suffix routing and global settings.
 
-        Falls back to ``"mock"`` when the configured provider is unknown or
-        when ``"fmp"`` is requested without ``FMP_API_KEY`` being set.
+        Provider resolution order:
+        0. *force_provider* when explicitly supplied (bypasses routing and global settings).
+        1. :func:`~backend.resources.stats.routing.provider_for_symbol` when *symbol*
+           is provided and its suffix has a mapping.
+        2. ``Settings.STATS_PROVIDER`` global fallback.
+        3. ``"mock"`` when the resolved provider is unknown or ``"fmp"`` is requested
+           without ``FMP_API_KEY`` being set.
+
+        Args:
+            symbol:         Ticker symbol, e.g. ``'AAPL'``, ``'0700.HK'``, ``'600519.SS'``.
+                            When ``None``, the global ``Settings.STATS_PROVIDER`` is used.
+            force_provider: When set, bypasses routing and uses this provider directly.
+                            Must be one of ``"mock"``, ``"yfinance"``, ``"fmp"``.
         """
         settings = get_settings()
-        requested = (settings.STATS_PROVIDER or "mock").strip().lower()
+
+        if force_provider is not None:
+            requested = force_provider.strip().lower()
+        else:
+            routed = provider_for_symbol(symbol)
+            if routed is not None:
+                requested = routed
+            else:
+                requested = (settings.STATS_PROVIDER or "mock").strip().lower()
 
         if requested not in _VALID_PROVIDERS:
             logger.warning(
-                "StatsClient: unknown STATS_PROVIDER=%r, falling back to mock",
+                "StatsClient: unknown provider=%r for symbol=%r, falling back to mock",
                 requested,
+                symbol,
             )
             requested = "mock"
 
         if requested == "fmp" and not settings.FMP_API_KEY:
             logger.warning(
-                "StatsClient: STATS_PROVIDER=fmp but FMP_API_KEY is not set, "
-                "falling back to mock"
+                "StatsClient: provider=fmp for symbol=%r but FMP_API_KEY is not set, "
+                "falling back to mock",
+                symbol,
             )
             requested = "mock"
 
@@ -187,7 +215,10 @@ class StatsClient:
         if period is not None:
             params["period"] = period
         response = await self._http.get("/stats", params=params)
-        response.raise_for_status()
+        if not response.is_success:
+            raise ValueError(
+                f"stats.list_stats mock failed: status={response.status_code} body={response.text[:500]!r}"
+            )
         items = [StatsRecord.model_validate(row) for row in response.json()]
         return StatsListResponse(items=items, total=len(items))
 
@@ -196,7 +227,10 @@ class StatsClient:
         response = await self._http.get(f"/stats/{record_id}")
         if response.status_code == 404:
             return None
-        response.raise_for_status()
+        if not response.is_success:
+            raise ValueError(
+                f"stats.get_stats mock failed: status={response.status_code} body={response.text[:500]!r}"
+            )
         return StatsRecord.model_validate(response.json())
 
     # ------------------------------------------------------------------
@@ -226,7 +260,10 @@ class StatsClient:
                 record = await yf_fetch(symbol, p)
                 items.append(record)
             except ValueError as exc:
-                logger.warning("stats.list_stats yfinance skip period=%s: %s", p, exc)
+                if STATS_YFINANCE_EMPTY in str(exc):
+                    logger.warning("stats.list_stats yfinance skip period=%s (empty): %s", p, exc)
+                else:
+                    raise
         return StatsListResponse(items=items, total=len(items))
 
     # ------------------------------------------------------------------
@@ -256,7 +293,10 @@ class StatsClient:
                 record = await fmp_fetch(symbol, p, self._http)
                 items.append(record)
             except ValueError as exc:
-                logger.warning("stats.list_stats fmp skip period=%s: %s", p, exc)
+                if STATS_FMP_EMPTY in str(exc):
+                    logger.warning("stats.list_stats fmp skip period=%s (empty): %s", p, exc)
+                else:
+                    raise
         return StatsListResponse(items=items, total=len(items))
 
     # ------------------------------------------------------------------

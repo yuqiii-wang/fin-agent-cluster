@@ -54,7 +54,9 @@ def _get_stream_prompt_builders() -> dict[str, Any]:
     if _STREAM_PROMPT_BUILDERS:
         return _STREAM_PROMPT_BUILDERS
     from backend.langgraph.nodes.query_node.tasks import STREAM_PROMPT_BUILDERS as _QPB
+    from backend.langgraph.nodes.prepare_peers.tasks import STREAM_PROMPT_BUILDERS as _APB
     _STREAM_PROMPT_BUILDERS.update(_QPB)
+    _STREAM_PROMPT_BUILDERS.update(_APB)
     return _STREAM_PROMPT_BUILDERS
 
 

@@ -35,6 +35,9 @@ from langgraph.graph import StateGraph, START, END
 
 from backend.langgraph.state import GraphState
 from backend.langgraph.nodes.query_node import query_node
+from backend.langgraph.nodes.prepare_peers import prepare_peers_node
+from backend.langgraph.nodes.prepare_macro import prepare_macro_node
+from backend.langgraph.nodes.prepare_index import prepare_index_node
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +55,17 @@ def build_graph_builder() -> StateGraph:
     builder = StateGraph(GraphState)
 
     builder.add_node("query_node", query_node)
+    builder.add_node("prepare_peers", prepare_peers_node)
+    builder.add_node("prepare_macro", prepare_macro_node)
+    builder.add_node("prepare_index", prepare_index_node)
 
     builder.add_edge(START, "query_node")
-    builder.add_edge("query_node", END)
+    builder.add_edge("query_node", "prepare_peers")
+    builder.add_edge("query_node", "prepare_macro")
+    builder.add_edge("query_node", "prepare_index")
+    builder.add_edge("prepare_peers", END)
+    builder.add_edge("prepare_macro", END)
+    builder.add_edge("prepare_index", END)
 
     return builder
 

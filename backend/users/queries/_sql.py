@@ -101,7 +101,7 @@ _LIST_NODES_BY_VERSION = """
     SELECT * FROM shared_nodes
     ORDER BY started_at
 """
-
+ 
 _LIST_TASKS = """
     SELECT t.task_id, t.thread_id, t.node_id, t.node_name, t.task_name,
            t.view_type, t.stats_views, t.status, te.input, te.output, t.created_at, t.updated_at

@@ -1,46 +1,49 @@
-"""Nodes package for the fin-analysis LangGraph.
+"""Nodes package for the fin-trading LangGraph.
 
 Exports
 -------
 Node callables (registered with LangGraph StateGraph):
-    query_node, research_subgraph, analyze_stats_node, analyze_news_node,
-    conclusion_node, apac_analyze_node, emea_analyze_node, amer_analyze_node
+    query_node, prepare_peers_node, prepare_macro_node, prepare_index_node
 
 HANDLERS registry (consumed by the Celery completion worker):
     Flat dict mapping task_name → async handler assembled from each node's
     tasks sub-package.  Streaming tasks (stream_llm) are excluded
     because they run via a separate Celery stream worker.
+
+NODE_REGISTRY:
+    Flat dict mapping node_name (str) → BaseNode instance.  Used by the
+    agent capabilities API to look up NodeTask descriptions and input
+    schemas without hitting the DB.
 """
 
 from backend.langgraph.nodes.query_node import query_node
 from backend.langgraph.nodes.query_node import HANDLERS as _QH
-from backend.langgraph.nodes.mock_query_node import HANDLERS as _MOCK_QH
-from backend.langgraph.nodes.mock_research_subgraph import research_subgraph
-from backend.langgraph.nodes.mock_research_subgraph import HANDLERS as _RH
-from backend.langgraph.nodes.mock_analyze_stats_node import analyze_stats_node
-from backend.langgraph.nodes.mock_analyze_stats_node import HANDLERS as _ASH
-from backend.langgraph.nodes.mock_analyze_news_node import analyze_news_node
-from backend.langgraph.nodes.mock_analyze_news_node import HANDLERS as _ANH
-from backend.langgraph.nodes.mock_conclusion_node import conclusion_node
-from backend.langgraph.nodes.mock_conclusion_node import HANDLERS as _CH
-from backend.langgraph.nodes.mock_regional_analyze_nodes import (
-    apac_analyze_node,
-    emea_analyze_node,
-    amer_analyze_node,
-)
-from backend.langgraph.nodes.mock_regional_analyze_nodes import HANDLERS as _RAH
+from backend.langgraph.nodes.prepare_peers import prepare_peers_node
+from backend.langgraph.nodes.prepare_macro import prepare_macro_node
+from backend.langgraph.nodes.prepare_index import prepare_index_node
+from backend.langgraph.models.common_tasks import HANDLERS as _CTH
 
 # Global HANDLERS registry consumed by completion_task.run_completion.
-# Mock handlers use distinct names (e.g. "mock_analyze_query") to avoid
-# colliding with real task handlers registered under the same logical name.
-HANDLERS: dict = {**_QH, **_RH, **_ASH, **_ANH, **_CH, **_RAH, **_MOCK_QH}
+# prepare_peers, prepare_macro, prepare_index have no completion-worker handlers
+# (all tasks stream via Celery stream worker).
+HANDLERS: dict = {**_QH, **_CTH}
+
+# Registry mapping node_name → node instance.
+NODE_REGISTRY: dict = {
+    node.node_name: node
+    for node in [
+        query_node,
+        prepare_peers_node,
+        prepare_macro_node,
+        prepare_index_node,
+    ]
+}
 
 __all__ = [
     "query_node",
-    "research_subgraph",
-    "conclusion_node",
-    "apac_analyze_node",
-    "emea_analyze_node",
-    "amer_analyze_node",
+    "prepare_peers_node",
+    "prepare_macro_node",
+    "prepare_index_node",
     "HANDLERS",
+    "NODE_REGISTRY",
 ]

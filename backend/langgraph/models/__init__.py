@@ -2,6 +2,7 @@
 
 from backend.langgraph.models.models import NodeContext, TaskContext, TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
+from backend.langgraph.models.task_seq import TaskSeq
 from backend.langgraph.models.node import BaseNode, ChildNode
 from backend.langgraph.models.streaming_output import StreamingTaskOutput
 from backend.langgraph.models.base import (
@@ -20,6 +21,7 @@ __all__ = [
     "TaskInput",
     "TaskOutput",
     "NodeTask",
+    "TaskSeq",
     "BaseNode",
     "ChildNode",
     "StreamingTaskOutput",

@@ -100,6 +100,7 @@ class TaskInfo(BaseModel):
     node_id: Optional[str] = None
     node_name: str
     task_name: str
+    description: str = ""
     status: str
     view_type: str = "ToolCall"
     stats_views: list[str] = Field(default_factory=list)

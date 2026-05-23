@@ -20,6 +20,17 @@ export interface ThreadCacheEntry {
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
+/** Module-level topology singleton — same static topology for all threads. */
+let _topology: GraphTopology | null = null;
+
+export function getCachedTopology(): GraphTopology | null {
+  return _topology;
+}
+
+export function setCachedTopology(t: GraphTopology): void {
+  _topology = t;
+}
+
 const _cache = new Map<string, ThreadCacheEntry>();
 
 /** Return cached thread data, or null if not yet cached or not terminal. */

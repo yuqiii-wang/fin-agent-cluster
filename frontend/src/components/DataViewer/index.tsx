@@ -17,6 +17,8 @@ import MarkdownViewer from './MarkdownViewer';
 import StreamViewer from './StreamViewer';
 import StatsDataFrame from './StatsDataFrame';
 import StatsViewer, { StatsViewSelect } from './StatsViewer';
+import StackCandleStickChart from './StatsViewer/StackCandleStickChart';
+import type { StackCandleItem } from './StatsViewer/StackCandleStickChart';
 import WebRequestViewer from './WebRequestViewer';
 import type { StreamViewerProps } from './StreamViewer';
 import type { DfSplit } from './StatsDataFrame';
@@ -122,10 +124,14 @@ function FieldViewer({
 
   if (mode === 'dataframe') {
     const dataObj = fieldData as Record<string, unknown> | undefined;
+    const dfSplits = dataObj?.df_splits as StackCandleItem[] | undefined;
     const dfSplit = dataObj?.df_split as DfSplit | undefined;
     const statsViews = dataObj?.stats_views as string[] | undefined;
+    if (dfSplits?.length && statsViews?.includes('StackCandleStick')) {
+      return <StackCandleStickChart items={dfSplits} />;
+    }
     if (dfSplit && statsViews?.length) {
-      return <StatsViewer dfSplit={dfSplit} activeView={activeStatsView ?? statsViews[0]} maxHeight={maxHeight} />;
+      return <StatsViewer dfSplit={dfSplit} activeView={activeStatsView ?? statsViews[0]} maxHeight={maxHeight} symbol={dataObj?.symbol as string | undefined} />;
     }
     return dfSplit
       ? <StatsDataFrame dfSplit={dfSplit} maxHeight={maxHeight} />
@@ -166,19 +172,21 @@ const StatsFieldListCollapse: React.FC<{
   statsViews: string[];
   maxHeight: number;
   style?: React.CSSProperties;
-}> = ({ dfSplit, statsViews, maxHeight, style }) => {
+  symbol?: string;
+}> = ({ dfSplit, statsViews, maxHeight, style, symbol }) => {
   const [activeView, setActiveView] = useState<string>(statsViews[0] ?? 'DataFrame');
+  const labelKey = symbol ?? 'stats';
   const items = [{
-    key: 'table',
+    key: labelKey,
     label: (
       <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-        <span>table</span>
+        <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{labelKey}</span>
         <StatsViewSelect statsViews={statsViews} activeView={activeView} onChange={setActiveView} />
       </span>
     ),
     children: <StatsViewer dfSplit={dfSplit} activeView={activeView} maxHeight={maxHeight} />,
   }];
-  return <Collapse defaultActiveKey={['table']} items={items} style={style} />;
+  return <Collapse defaultActiveKey={[labelKey]} items={items} style={style} />;
 };
 
 /** Hybrid fieldList Collapse: manages per-field activeStatsView state, shows StatsViewSelect in label for stats sub-fields. */
@@ -303,10 +311,24 @@ const DataViewer: React.FC<DataViewerProps> = ({
       // Stats dataframe: self-contained Collapse with Select in the panel label
       if (mode === 'dataframe') {
         const dataObj = data as Record<string, unknown> | undefined;
+        const dfSplits = dataObj?.df_splits as StackCandleItem[] | undefined;
+        const corrDfSplit = dataObj?.corr_df_split as DfSplit | undefined;
         const dfSplit = dataObj?.df_split as DfSplit | undefined;
         const statsViews = dataObj?.stats_views as string[] | undefined;
+        // Unified view: df_splits (StackCandleStick) + corr_df_split (DataFrame) rendered together.
+        if ((dfSplits?.length || corrDfSplit) && !statsViews?.length) {
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {dfSplits?.length ? <StackCandleStickChart items={dfSplits} /> : null}
+              {corrDfSplit ? <StatsDataFrame dfSplit={corrDfSplit} maxHeight={maxHeight} /> : null}
+            </div>
+          );
+        }
+        if (dfSplits?.length && statsViews?.includes('StackCandleStick')) {
+          return <StackCandleStickChart items={dfSplits} />;
+        }
         if (dfSplit && statsViews?.length) {
-          return <StatsFieldListCollapse dfSplit={dfSplit} statsViews={statsViews} maxHeight={maxHeight ?? 320} style={style} />;
+          return <StatsFieldListCollapse dfSplit={dfSplit} statsViews={statsViews} maxHeight={maxHeight ?? 320} style={style} symbol={dataObj?.symbol as string | undefined} />;
         }
       }
       const content = (() => {
@@ -341,10 +363,14 @@ const DataViewer: React.FC<DataViewerProps> = ({
 
   if (mode === 'dataframe') {
     const dataObj = data as Record<string, unknown> | undefined;
+    const dfSplits = dataObj?.df_splits as StackCandleItem[] | undefined;
     const dfSplit = dataObj?.df_split as DfSplit | undefined;
     const statsViews = dataObj?.stats_views as string[] | undefined;
+    if (dfSplits?.length && statsViews?.includes('StackCandleStick')) {
+      return <StackCandleStickChart items={dfSplits} />;
+    }
     if (dfSplit && statsViews?.length) {
-      return <StatsViewer dfSplit={dfSplit} activeView={activeStatsView ?? statsViews[0]} maxHeight={maxHeight} />;
+      return <StatsViewer dfSplit={dfSplit} activeView={activeStatsView ?? statsViews[0]} maxHeight={maxHeight} symbol={dataObj?.symbol as string | undefined} />;
     }
     return dfSplit
       ? <StatsDataFrame dfSplit={dfSplit} maxHeight={maxHeight} />

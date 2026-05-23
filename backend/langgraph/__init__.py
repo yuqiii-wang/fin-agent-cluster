@@ -21,12 +21,8 @@ from __future__ import annotations
 
 def __getattr__(name: str):  # noqa: N807
     if name in ("fin_analysis_graph", "run_analysis"):
-        from backend.config import get_settings
-        if get_settings().TEST_MODE:
-            from backend.langgraph.graphs.mock_graph import fin_analysis_graph, run_analysis
-        else:
-            from backend.langgraph.graphs.fin_trading_graph import run_analysis
-            from backend.langgraph.graphs.fin_trading_graph import fin_trading_graph as fin_analysis_graph
+        from backend.langgraph.graphs.fin_trading_graph import run_analysis
+        from backend.langgraph.graphs.fin_trading_graph import fin_trading_graph as fin_analysis_graph
         return locals()[name]
     if name == "GraphState":
         from backend.langgraph.state import GraphState

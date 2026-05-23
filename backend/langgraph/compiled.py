@@ -40,28 +40,17 @@ async def init_compiled_graph() -> None:
     if _compiled_graph is not None:
         return
 
-    from backend.config import get_settings
     from backend.db.postgres.checkpointer import ensure_setup, get_pool_checkpointer
-
-    settings = get_settings()
 
     # Ensure checkpointer tables exist cluster-wide (Redis-locked, idempotent).
     await ensure_setup()
 
     pg_checkpointer = get_pool_checkpointer()
 
-    if settings.TEST_MODE:
-        from backend.langgraph.graphs.mock_graph import build_graph_builder
-        label = "mock_graph"
-    else:
-        from backend.langgraph.graphs.fin_trading_graph import build_graph_builder
-        label = "fin_trading_graph"
+    from backend.langgraph.graphs.fin_trading_graph import build_graph_builder
 
     _compiled_graph = build_graph_builder().compile(checkpointer=pg_checkpointer)
-    logger.info(
-        "[langgraph.compiled] graph compiled: %s (test_mode=%s)",
-        label, settings.TEST_MODE,
-    )
+    logger.info("[langgraph.compiled] graph compiled: fin_trading_graph")
 
 
 def get_compiled_graph() -> Any:

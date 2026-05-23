@@ -14,7 +14,7 @@ Celery layer (``stream_task.run_stream``):
 
 Public export
 -------------
-``analyze_query``         — ``NodeTask`` instance used by ``QueryNode.build_chain``.
+``analyze_query``          — ``NodeTask`` instance used by ``QueryNode.build_chain``.
 ``STREAM_PROMPT_BUILDERS`` — dict slice ``{"analyze_query": _build_analyze_query_prompt}``.
 """
 
@@ -169,5 +169,3 @@ analyze_query = NodeTask(
         NotImplementedError("analyze_query runs via the Celery stream worker.")
     ),
 )
-
-

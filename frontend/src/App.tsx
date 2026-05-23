@@ -3,24 +3,22 @@
  *
  * Left panel: thread history list (loaded from backend, persisted per-user).
  * Top-right header: UserButton (login / user menu).
- * Main area: QueryForm or ThreadView depending on selection.
+ * Main area: MainQuery or ThreadView depending on selection.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ConfigProvider, Layout, theme, Typography } from 'antd';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useHistory } from './hooks/useHistory';
 import { useCentrifugoPresence } from './hooks/useCentrifugoPresence';
 import { useBackgroundSseStatus } from './hooks/useBackgroundSseStatus';
-import QueryForm from './components/QueryForm';
 import MainQuery from './components/MainQuery';
 import ThreadView from './components/ThreadView';
-import ConcurrencyTest from './components/ConcurrencyTest';
 import UserButton from './components/UserButton';
 import UserHistory from './components/UserHistory';
-import { fetchSystemConfig } from './api/system';
+import { getGraphTopology } from './api/threads';
+import { setCachedTopology } from './cache';
 import type { GraphTopology, QueryResponse, SseInfo, ThreadSummary } from './types';
-import { setThreadViewer } from './api/threads';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -52,23 +50,18 @@ const AppInner: React.FC = () => {
   const { history, prepend, reload, updateEntry } = useHistory(user?.id);
   useCentrifugoPresence({ userId: user?.id });
 
-  const [testMode, setTestMode] = useState<boolean | null>(null);
-
+  // Prime the module-level topology cache at app startup so history threads
+  // can show the correctly-aligned graph immediately on click.
   useEffect(() => {
-    fetchSystemConfig()
-      .then((cfg) => setTestMode(cfg.test_mode))
-      .catch(() => setTestMode(false));
+    getGraphTopology()
+      .then(setCachedTopology)
+      .catch(() => {/* topology will be fetched lazily by useThreadData */});
   }, []);
 
   // Session-local cache of Centrifugo bootstrap tokens, keyed by thread_id.
   const [liveInfo, setLiveInfo] = useState<Record<string, LiveThreadInfo>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(true);
-  const [concurrencyResults, setConcurrencyResults] = useState<QueryResponse[] | null>(null);
-  // True when ThreadView was opened by clicking a row in the concurrency test grid.
-  const [fromConcurrency, setFromConcurrency] = useState(false);
-  // Preserved last concurrency batch so the grid can be restored on back navigation.
-  const lastConcurrencyResultsRef = useRef<QueryResponse[] | null>(null);
 
   function handleSubmit(result: QueryResponse) {
     const summary: ThreadSummary = {
@@ -89,40 +82,15 @@ const AppInner: React.FC = () => {
       },
     }));
     setActiveId(result.thread_id);
-    setConcurrencyResults(null);
-    setFromConcurrency(false);
-    setShowForm(false);
-  }
-
-  function handleConcurrencySubmit(results: QueryResponse[]) {
-    for (const r of results) {
-      setLiveInfo((prev) => ({
-        ...prev,
-        [r.thread_id]: { sseInfo: r.sse ?? null, llmInfo: r.llm ?? null, topology: null },
-      }));
-      prepend({
-        thread_id: r.thread_id,
-        query: r.query ?? r.thread_id,
-        status: r.status,
-        created_at: r.created_at ?? new Date().toISOString(),
-        completed_at: r.completed_at,
-        answer: r.answer,
-      });
-    }
-    setActiveId(null);
-    setConcurrencyResults(results);
-    lastConcurrencyResultsRef.current = results;
     setShowForm(false);
   }
 
   function handleSelectThread(threadId: string) {
     setActiveId(threadId);
-    setFromConcurrency(concurrencyResults !== null);
-    setConcurrencyResults(null);
     setShowForm(false);
-    // Register viewer flag on the backend so stream_task knows the user is
-    // watching this thread (covers running history threads — fire-and-forget).
-    setThreadViewer(threadId);
+    // Viewer flag is now managed inside useCentrifugoSse: set on connect,
+    // cleared on disconnect.  No premature flag here avoids CENTRIFUGO_003
+    // NACKs that occurred when the flag outlived the WebSocket subscription.
   }
 
   const activeEntry = history.find((t) => t.thread_id === activeId);
@@ -176,18 +144,8 @@ const AppInner: React.FC = () => {
             background: '#111',
           }}
         >
-          {showForm || (!activeEntry && !concurrencyResults) ? (
-            testMode === false ? (
-              <MainQuery onSubmit={handleSubmit} />
-            ) : (
-              <QueryForm onSubmit={handleSubmit} onConcurrencySubmit={handleConcurrencySubmit} />
-            )
-          ) : concurrencyResults ? (
-            <ConcurrencyTest
-              initialResults={concurrencyResults}
-              onSelectThread={handleSelectThread}
-              onStatusUpdate={(threadId, status) => updateEntry(threadId, { status })}
-            />
+          {showForm || !activeEntry ? (
+            <MainQuery onSubmit={handleSubmit} />
           ) : (
             <ThreadView
               key={activeEntry!.thread_id}
@@ -197,25 +155,17 @@ const AppInner: React.FC = () => {
               initialTopology={activeLive?.topology ?? null}
               onDone={reload}
               onStatusChange={(s) => updateEntry(activeEntry!.thread_id, { status: s })}
-              onBack={fromConcurrency ? () => {
-                setActiveId(null);
-                setFromConcurrency(false);
-                setConcurrencyResults(lastConcurrencyResultsRef.current);
-              } : undefined}
+
             />
           )}
         </Content>
       </Layout>
 
-      {/* Background SSE watchers — one per non-active session thread that is
-          NOT already being watched by ConcurrencyTest's own subscriptions. */}
+      {/* Background SSE watchers — one per non-active session thread. */}
       {Object.entries(liveInfo)
         .filter(([tid, info]) => {
           if (tid === activeId) return false;
           if (info.sseInfo === null) return false;
-          // ConcurrencyTest manages its own per-thread Centrifugo subscriptions;
-          // skip creating a duplicate BackgroundSseWatcher for those threads.
-          if (concurrencyResults?.some((r) => r.thread_id === tid)) return false;
           return true;
         })
         .map(([tid, info]) => (

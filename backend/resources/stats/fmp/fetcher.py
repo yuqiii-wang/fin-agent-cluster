@@ -45,6 +45,7 @@ _PERIOD_CONFIG: dict[str, tuple[int, str | None]] = {
     "1mo": (90,  None),
     "3mo": (180, None),
     "1y":  (730, None),
+    "2y":  (730, None),
 }
 
 
@@ -101,18 +102,20 @@ async def fetch(
         raise ValueError(STATS_PROVIDER_ERROR) from exc
 
     if response.status_code in (401, 403):
+        resp_body = response.text[:500]
         logger.error(
-            "fmp.fetch auth error symbol=%s status=%d [%s]",
-            symbol, response.status_code, STATS_FMP_AUTH_ERROR,
+            "fmp.fetch auth error symbol=%s status=%d body=%r [%s]",
+            symbol, response.status_code, resp_body, STATS_FMP_AUTH_ERROR,
         )
-        raise ValueError(STATS_FMP_AUTH_ERROR)
+        raise ValueError(f"{STATS_FMP_AUTH_ERROR}: status={response.status_code} body={resp_body!r}")
 
     if not response.is_success:
+        resp_body = response.text[:500]
         logger.error(
-            "fmp.fetch unexpected error symbol=%s status=%d [%s]",
-            symbol, response.status_code, STATS_PROVIDER_ERROR,
+            "fmp.fetch unexpected error symbol=%s status=%d body=%r [%s]",
+            symbol, response.status_code, resp_body, STATS_PROVIDER_ERROR,
         )
-        raise ValueError(STATS_PROVIDER_ERROR)
+        raise ValueError(f"{STATS_PROVIDER_ERROR}: status={response.status_code} body={resp_body!r}")
 
     raw = response.json()
 

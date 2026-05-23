@@ -14,6 +14,7 @@ import { Centrifuge, Subscription } from 'centrifuge';
 import type { SseEvent, SseInfo } from '../types';
 import { useLatestRef } from './refUtils';
 import { createSseClientBundle } from '../api/centrifugoSseClient';
+import { setThreadViewer, clearThreadViewer } from '../api/threads';
 
 interface Options {
   sseInfo: SseInfo | null;
@@ -61,6 +62,12 @@ export function useCentrifugoSse({ sseInfo, onEvent, done }: Options): void {
       // after this microtask but before the connection is torn down.
       cfRef.current = cf;
       subRef.current = sub;
+
+      // Set the viewer flag before opening the WebSocket.  This ensures the
+      // backend sees a live subscriber before publishing the first SSE event
+      // with the full ACK retry loop.  The flag is cleared in the cleanup
+      // function so stale flags never trigger ACK loops after disconnect.
+      setThreadViewer(threadId);
 
       sub.on('publication', (ctx) => {
         const ev = ctx.data as SseEvent;
@@ -128,6 +135,12 @@ export function useCentrifugoSse({ sseInfo, onEvent, done }: Options): void {
       const cfToClose = cfRef.current;
       subRef.current = null;
       cfRef.current = null;
+
+      // Clear the viewer flag so the backend treats this thread as unobserved
+      // once the WebSocket is torn down.  Prevents the full ACK retry loop
+      // from firing on stale flags during reconnection gaps (re-explore,
+      // refresh, navigation).  Fire-and-forget — non-fatal if it fails.
+      clearThreadViewer(threadId);
 
       // Capture and clear in-flight ACK promises.  We drain them before
       // actually disconnecting so that a `sub.publish()` started inside

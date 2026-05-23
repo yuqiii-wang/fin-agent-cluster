@@ -4,14 +4,25 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 import urllib.parse
 from collections.abc import AsyncIterator
-from typing import Any, Optional
+from typing import Any, Optional, Sequence, Union
 
 import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langchain_core.runnables import Runnable
+from langchain_core.tools import BaseTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from backend.config import get_settings
 
@@ -21,24 +32,51 @@ logger = logging.getLogger(__name__)
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
-def _to_ollama_messages(messages: list[BaseMessage]) -> list[dict[str, str]]:
+def _to_ollama_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     """Convert LangChain messages to Ollama /api/chat format.
+
+    Handles tool-call assistant turns and tool result turns so the agent loop
+    works correctly: AIMessage with tool_calls is serialised with the
+    ``tool_calls`` field; ToolMessage is serialised as role ``"tool"`` with
+    the tool function name extracted from the content.
 
     Args:
         messages: LangChain message list.
 
     Returns:
-        List of ``{"role": ..., "content": ...}`` dicts for the Ollama API.
+        List of Ollama-compatible message dicts for the /api/chat endpoint.
     """
     result = []
     for msg in messages:
         if isinstance(msg, HumanMessage):
-            role = "user"
+            result.append({"role": "user", "content": str(msg.content)})
         elif isinstance(msg, SystemMessage):
-            role = "system"
+            result.append({"role": "system", "content": str(msg.content)})
+        elif isinstance(msg, ToolMessage):
+            # Ollama expects role="tool" with optional name field.
+            result.append({
+                "role": "tool",
+                "content": str(msg.content),
+                "tool_call_id": msg.tool_call_id,
+            })
+        elif isinstance(msg, AIMessage):
+            entry: dict[str, Any] = {
+                "role": "assistant",
+                "content": str(msg.content) if msg.content else "",
+            }
+            if msg.tool_calls:
+                entry["tool_calls"] = [
+                    {
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": tc["args"],
+                        }
+                    }
+                    for tc in msg.tool_calls
+                ]
+            result.append(entry)
         else:
-            role = "assistant"
-        result.append({"role": role, "content": str(msg.content)})
+            result.append({"role": "assistant", "content": str(msg.content)})
     return result
 
 
@@ -95,6 +133,26 @@ class OllamaLLM(BaseChatModel):
             return None
         return self.http_proxy
 
+    def bind_tools(
+        self,
+        tools: Sequence[Union[dict[str, Any], type, Any, BaseTool]],
+        **kwargs: Any,
+    ) -> Runnable:
+        """Bind tools to this LLM so they are passed to the Ollama API.
+
+        Converts LangChain tool objects to OpenAI/Ollama function-call format
+        and returns a new Runnable with the tools embedded as bound kwargs.
+
+        Args:
+            tools:  LangChain tools, callables, Pydantic models, or raw dicts.
+            **kwargs: Additional kwargs forwarded to :py:meth:`bind`.
+
+        Returns:
+            A :class:`Runnable` that will pass ``tools`` to ``/api/chat``.
+        """
+        ollama_tools = [convert_to_openai_tool(t) for t in tools]
+        return self.bind(tools=ollama_tools, **kwargs)
+
     def _generate(
         self,
         messages: list[BaseMessage],
@@ -106,11 +164,16 @@ class OllamaLLM(BaseChatModel):
 
         Called by LangChain's ``invoke`` / thread-executor path.  Uses
         ``stream: false`` so the full response arrives in one JSON object.
+        When ``tools`` are present in ``kwargs`` (injected by
+        :py:meth:`bind_tools`), they are forwarded to the Ollama API and any
+        ``tool_calls`` in the response are parsed into the returned
+        :class:`~langchain_core.messages.AIMessage`.
 
         Args:
             messages:    LangChain messages.
             stop:        Optional stop sequences.
             run_manager: LangChain callback manager (unused).
+            **kwargs:    May include ``tools`` list from :py:meth:`bind_tools`.
 
         Returns:
             ``ChatResult`` wrapping the full assistant message.
@@ -125,6 +188,12 @@ class OllamaLLM(BaseChatModel):
             "stream": False,
             "options": options,
         }
+        if "tools" in kwargs:
+            request_body["tools"] = kwargs["tools"]
+        if "tool_choice" in kwargs:
+            request_body["tool_choice"] = kwargs["tool_choice"]
+        if "format" in kwargs:
+            request_body["format"] = kwargs["format"]
 
         url = f"{self.base_url}/api/chat"
         proxy = self._resolved_proxy()
@@ -138,14 +207,51 @@ class OllamaLLM(BaseChatModel):
                     )
                     resp.raise_for_status()
                 data = resp.json()
-                content = data.get("message", {}).get("content", "")
+                msg_data = data.get("message", {})
+                content = msg_data.get("content", "")
+                raw_tool_calls = msg_data.get("tool_calls", [])
         except httpx.ConnectError as exc:
             logger.error("[OllamaLLM] cannot connect to Ollama at %s — is it running? %s", url, exc)
             raise
         except httpx.TimeoutException as exc:
             logger.error("[OllamaLLM] request to %s timed out: %s", url, exc)
             raise
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=content))])
+
+        if raw_tool_calls:
+            tool_calls = [
+                {
+                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                    "name": tc["function"]["name"],
+                    "args": tc["function"].get("arguments", {}),
+                    "type": "tool_call",
+                }
+                for tc in raw_tool_calls
+            ]
+            ai_msg = AIMessage(content=content, tool_calls=tool_calls)
+        else:
+            ai_msg = AIMessage(content=content)
+        return ChatResult(generations=[ChatGeneration(message=ai_msg)])
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: Optional[list[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        """Fall back to the sync path when tools are bound.
+
+        ``_astream`` emits content tokens only; Ollama tool_calls are present
+        only on the non-streaming ``/api/chat`` response.  When ``tools`` is in
+        ``kwargs`` run ``_generate`` in a thread pool to avoid blocking the
+        event loop while ensuring tool_calls propagate correctly.
+        """
+        import asyncio
+        if "tools" in kwargs:
+            return await asyncio.to_thread(
+                lambda: self._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            )
+        return await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
     async def _astream(
         self,
@@ -212,7 +318,10 @@ class OllamaLLM(BaseChatModel):
                             continue
                         if data.get("done"):
                             if in_thinking:
-                                yield ChatGenerationChunk(message=AIMessageChunk(content="</think>"))
+                                try:
+                                    yield ChatGenerationChunk(message=AIMessageChunk(content="</think>"))
+                                except GeneratorExit:
+                                    return
                             break
                         msg = data.get("message", {})
                         thinking = msg.get("thinking", "")
@@ -221,12 +330,18 @@ class OllamaLLM(BaseChatModel):
                             if not in_thinking:
                                 in_thinking = True
                                 thinking = "<think>" + thinking
-                            yield ChatGenerationChunk(message=AIMessageChunk(content=thinking))
+                            try:
+                                yield ChatGenerationChunk(message=AIMessageChunk(content=thinking))
+                            except GeneratorExit:
+                                return
                         elif content:
                             if in_thinking:
                                 in_thinking = False
                                 content = "</think>" + content
-                            yield ChatGenerationChunk(message=AIMessageChunk(content=content))
+                            try:
+                                yield ChatGenerationChunk(message=AIMessageChunk(content=content))
+                            except GeneratorExit:
+                                return
         except httpx.ConnectError as exc:
             logger.error("[OllamaLLM] cannot connect to Ollama at %s — is it running? %s", url, exc)
             raise

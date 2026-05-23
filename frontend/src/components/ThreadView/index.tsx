@@ -127,9 +127,9 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
   const handleViewData = useCallback((
     label: string,
     data: unknown,
-    opts?: { mode?: import('../DataViewer/index').DataViewerMode; viewSchema?: Record<string, string>; fieldList?: boolean; nodeContext?: 'input' | 'output'; taskId?: string },
+    opts?: { mode?: import('../DataViewer/index').DataViewerMode; viewSchema?: Record<string, string>; fieldList?: boolean; nodeContext?: 'input' | 'output'; taskId?: string; activeStatsView?: string },
   ) => {
-    setDetailData({ label, data, mode: opts?.mode, viewSchema: opts?.viewSchema, fieldList: opts?.fieldList, nodeContext: opts?.nodeContext, taskId: opts?.taskId });
+    setDetailData({ label, data, mode: opts?.mode, viewSchema: opts?.viewSchema, fieldList: opts?.fieldList, nodeContext: opts?.nodeContext, taskId: opts?.taskId, activeStatsView: opts?.activeStatsView });
   }, []);
 
   // When the user selects a different node while a node's Input/Output panel is open,
@@ -263,7 +263,8 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
       if (ev.event === 'stream_start') setLlmEnabled(true);
       if (
         ev.event === 'node_status' || ev.event === 'task_status' ||
-        ev.event === 'done' || ev.event === 'stream_complete' || ev.event === 'query_status'
+        ev.event === 'done' || ev.event === 'thread_failed' || ev.event === 'thread_status' ||
+        ev.event === 'stream_complete' || ev.event === 'query_status'
       ) {
         refresh();
       }

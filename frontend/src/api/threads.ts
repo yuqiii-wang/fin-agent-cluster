@@ -2,7 +2,7 @@
  * Threads API client — wraps all /api/v1/threads/* and /api/v1/auth/centrifugo/* calls.
  */
 
-import type { CentrifugoTokenResponse, GraphTopology, NodeInfo, QueryResponse, TaskInfo, ThreadSummary, VersionGraphResponse } from '../types';
+import type { CentrifugoTokenResponse, GraphTopology, NodeInfo, NodeMeta, QueryResponse, TaskInfo, ThreadSummary, VersionGraphResponse, AgentCapabilities, Skill } from '../types';
 import { getStoredToken } from './auth';
 
 const BASE = '/api/v1';
@@ -91,6 +91,12 @@ export async function getGraphTopology(): Promise<GraphTopology> {
   return res.json();
 }
 
+export async function fetchNodeMetas(): Promise<NodeMeta[]> {
+  const res = await fetch(`${BASE}/graph/node-metas`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Get node metas failed: ${res.status}`);
+  return res.json();
+}
+
 /**
  * Resolve a UUID (thread_id / node_id / task_id) to its parent ThreadSummary.
  * Returns null if not found or UUID is not owned by this user.
@@ -118,6 +124,25 @@ export async function setThreadViewer(threadId: string): Promise<void> {
     });
   } catch {
     // Non-fatal — backend defaults to True for viewer detection on error.
+  }
+}
+
+/**
+ * Clear the viewer flags for `threadId`.
+ *
+ * Called when the Centrifugo SSE subscription is torn down (thread completed,
+ * navigation away, page unload).  Removing stale flags prevents the backend
+ * from entering the full ACK retry loop when no subscriber is present.
+ * Fire-and-forget — errors are swallowed.
+ */
+export async function clearThreadViewer(threadId: string): Promise<void> {
+  try {
+    await fetch(`${BASE}/threads/${threadId}/viewer`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+  } catch {
+    // Non-fatal.
   }
 }
 
@@ -246,5 +271,81 @@ export async function getVersionGraph(threadId: string, version: number): Promis
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`Get version graph failed: ${res.status}`);
+  return res.json();
+}
+
+// ── Agent capability endpoints ─────────────────────────────────────────────
+
+export async function getAgentCapabilities(threadId: string, nodeId: string): Promise<AgentCapabilities> {
+  const res = await fetch(`${BASE}/threads/${threadId}/nodes/${nodeId}/agent/capabilities`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Get agent capabilities failed: ${res.status}`);
+  return res.json();
+}
+
+export async function addAgentSkill(
+  threadId: string,
+  nodeId: string,
+  summary: string,
+  instructions: string,
+): Promise<Skill> {
+  const res = await fetch(`${BASE}/threads/${threadId}/nodes/${nodeId}/agent/skills`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ summary, instructions }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Add skill failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function forgetAgentSkill(
+  threadId: string,
+  nodeId: string,
+  skillId: string,
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/threads/${threadId}/nodes/${nodeId}/agent/skills/${skillId}/forget`,
+    { method: 'POST', headers: authHeaders() },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Forget skill failed: ${res.status}`);
+  }
+}
+
+export async function forgetAgentMemory(
+  threadId: string,
+  nodeId: string,
+  memoryId: string,
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/threads/${threadId}/nodes/${nodeId}/agent/memory/${memoryId}/forget`,
+    { method: 'POST', headers: authHeaders() },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Forget memory failed: ${res.status}`);
+  }
+}
+
+export async function compactAgentMemory(
+  threadId: string,
+  nodeId: string,
+  memoryIds: string[],
+  summary: string,
+): Promise<{ memory_id: string; status: string }> {
+  const res = await fetch(`${BASE}/threads/${threadId}/nodes/${nodeId}/agent/memory/compact`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ memory_ids: memoryIds, summary }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Compact memory failed: ${res.status}`);
+  }
   return res.json();
 }

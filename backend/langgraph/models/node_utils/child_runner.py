@@ -67,6 +67,7 @@ class ChildRunnerMixin:
             prev_node_ids=[parent_ctx.node_id],
             view_type=self.view_type,  # type: ignore[attr-defined]
             view_schema=self.view_schema,  # type: ignore[attr-defined]
+            stats_views=self.stats_views,  # type: ignore[attr-defined]
         )
         try:
             results = await self.orchestrate(ctx, node_input)  # type: ignore[attr-defined]

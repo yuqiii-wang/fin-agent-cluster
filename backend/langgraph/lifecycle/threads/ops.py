@@ -17,11 +17,13 @@ from backend.langgraph.lifecycle.threads.manager import (
 from backend.langgraph.lifecycle.threads.sql import (
     _CANCEL_ACTIVE_NODES,
     _CANCEL_ACTIVE_TASKS_BY_THREAD,
+    _FAIL_ACTIVE_NODES,
     _LIST_ACTIVE_THREAD_IDS,
     _UPDATE_THREAD_COMPLETED,
     _UPDATE_THREAD_STATUS,
 )
 from backend.langgraph.lifecycle.threads.sse import (
+    emit_node_failed_sse,
     emit_node_sse,
     emit_task_cancelled_sse,
     emit_thread_sse,
@@ -87,6 +89,20 @@ async def complete_thread(
         return  # Already terminal.
 
     get_thread_registry().cleanup_thread(thread_id)
+
+    if failed:
+        # Sweep any nodes still active — complete_node may have been skipped
+        # (e.g. fencing-token mismatch). Leaving them as 'running' creates a
+        # permanently stuck state visible to the user.
+        async with raw_conn() as conn:
+            cur = await conn.execute(_FAIL_ACTIVE_NODES, (thread_id,))
+            orphaned_nodes = await cur.fetchall()
+        for row in orphaned_nodes:
+            logger.error(
+                "[lifecycle:thread] orphaned node force-failed thread_id=%s node_id=%s node_name=%s",
+                thread_id, row["node_id"], row["node_name"],
+            )
+            await emit_node_failed_sse(thread_id, row["node_id"], row["node_name"], error)
 
     event = "done" if not failed else "thread_failed"
     logger.debug(

@@ -29,6 +29,18 @@ _CANCEL_ACTIVE_NODES = """
     RETURNING node_id, node_name
 """
 
+# Bulk-fail any nodes still active when the thread is marked failed.
+# Used by complete_thread(failed=True) as a catch-all for nodes whose
+# complete_node call was skipped (e.g. fencing-token mismatch on zombie detection).
+_FAIL_ACTIVE_NODES = """
+    UPDATE fin_agents.nodes
+    SET status     = 'failed',
+        updated_at = NOW()
+    WHERE thread_id = %s
+      AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
+    RETURNING node_id, node_name
+"""
+
 # Bulk-cancel all active tasks for the thread (RETURNING task_ids for SSE
 # and Celery revocation).
 _CANCEL_ACTIVE_TASKS_BY_THREAD = """
@@ -51,6 +63,7 @@ __all__ = [
     "_UPDATE_THREAD_STATUS",
     "_UPDATE_THREAD_COMPLETED",
     "_CANCEL_ACTIVE_NODES",
+    "_FAIL_ACTIVE_NODES",
     "_CANCEL_ACTIVE_TASKS_BY_THREAD",
     "_LIST_ACTIVE_THREAD_IDS",
 ]

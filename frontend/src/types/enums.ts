@@ -25,4 +25,6 @@ export enum NodeType {
   Typical = "Typical",
   Reference = "Reference",
   Subgraph = "Subgraph",
+  Workflow = "Workflow",
+  Agent = "Agent",
 }

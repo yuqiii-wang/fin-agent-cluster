@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Alert, Badge, Button, Card, Typography } from 'antd';
-import { StopOutlined } from '@ant-design/icons';
+import { CloseOutlined, StopOutlined } from '@ant-design/icons';
 import { COLOR_TEXT_MUTED } from '../../constants/styleColors';
 import { isThreadActive } from '../../constants/lifecycleStatus';
 import { STATUS_BADGE } from '../../constants/statusColors';
@@ -18,6 +18,8 @@ interface Props {
 
 const ThreadStatusBar: React.FC<Props> = ({ threadId, status, query, error, cancelling, onCancel }) => {
   const [hovered, setHovered] = useState(false);
+  const [errorHovered, setErrorHovered] = useState(false);
+  const [errorDismissed, setErrorDismissed] = useState(false);
 
   return (
     <Card
@@ -41,7 +43,19 @@ const ThreadStatusBar: React.FC<Props> = ({ threadId, status, query, error, canc
           </Button>
         )}
       </div>
-      {error && <Alert title={error} type="error" showIcon style={{ marginTop: 8 }} />}
+      {error && !errorDismissed && (
+        <Alert
+          message={error}
+          type="error"
+          showIcon
+          closable
+          closeIcon={<CloseOutlined style={{ visibility: errorHovered ? 'visible' : 'hidden' }} />}
+          onClose={() => setErrorDismissed(true)}
+          onMouseEnter={() => setErrorHovered(true)}
+          onMouseLeave={() => setErrorHovered(false)}
+          style={{ marginTop: 8 }}
+        />
+      )}
     </Card>
   );
 };

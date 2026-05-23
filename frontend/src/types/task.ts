@@ -7,6 +7,8 @@ export interface TaskInfo {
   node_id?: string;
   node_name: string;
   task_name: string;
+  /** Human-readable description of what this task does. */
+  description?: string;
   /** WorkStatus string value. */
   status: string;
   /** Task-level view type: Streaming | WebRequest | Stats | ToolCall | Markdown | Json. */

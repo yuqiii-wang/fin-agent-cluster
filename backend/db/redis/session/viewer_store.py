@@ -106,4 +106,30 @@ async def has_thread_viewer(thread_id: str) -> bool:
         return True  # Safe default — callers treat True as "publish events".
 
 
-__all__ = ["set_viewer", "has_app_viewer", "has_thread_viewer"]
+async def clear_viewer(user_id: str, thread_id: str) -> None:
+    """Remove the viewer flags for *user_id* and *thread_id* from Redis.
+
+    Called by the frontend when its Centrifugo SSE subscription is torn down
+    (thread completed, navigation away, page unload).  Clearing the flag ensures
+    subsequent backend ``notify()`` calls treat the thread as unobserved and
+    publish events to Centrifugo history only (no ACK retry loop), eliminating
+    the 15–30 s CENTRIFUGO_003 NACK storm that occurs when the viewer flag
+    outlives the actual WebSocket subscription.
+
+    Args:
+        user_id:   UUID of the user whose browser disconnected.
+        thread_id: UUID of the thread the user stopped viewing.
+    """
+    from backend.db.redis.client import get_client
+
+    try:
+        redis = await get_client(shard=0)
+        await redis.delete(_thread_viewer_key(thread_id), _app_viewer_key(user_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "[viewer_store] clear_viewer failed user_id=%s thread_id=%s: %s",
+            user_id, thread_id, exc,
+        )
+
+
+__all__ = ["set_viewer", "has_app_viewer", "has_thread_viewer", "clear_viewer"]

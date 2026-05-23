@@ -6,5 +6,5 @@
  */
 
 export { getCachedTaskOutput, setCachedTaskOutput, evictCachedTaskOutput } from './taskOutputCache';
-export { getCachedThreadData, setCachedThreadData, evictThreadData } from './threadDataCache';
+export { getCachedThreadData, setCachedThreadData, evictThreadData, getCachedTopology, setCachedTopology } from './threadDataCache';
 export type { ThreadCacheEntry } from './threadDataCache';

@@ -14,6 +14,7 @@ from backend.langgraph.lifecycle.threads.nodes.tasks.sql import (
     _INSERT_TASK_EXECUTION,
 )
 from backend.langgraph.lifecycle.threads.nodes.tasks.sse import emit_task_sse
+from backend.langgraph.models.task import get_task_description
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,10 @@ async def create_task(
     ``fin_agents.task_executions`` in the same connection. Then calls
     ``append_node_task_id`` to record the task_id on the node row.
 
+    The task description is resolved automatically from the global
+    ``_TASK_DESCRIPTIONS`` registry populated when ``NodeTask`` instances
+    are constructed at import time.
+
     Args:
         thread_id:    LangGraph thread UUID.
         node_id:      UUID5-derived owning node ID.
@@ -50,6 +55,7 @@ async def create_task(
     from backend.langgraph.lifecycle.threads.nodes.ops import append_node_task_id
     from backend.main_thread.context import get_fencing_token
 
+    description = get_task_description(task_name)
     fencing_token = get_fencing_token()
     views = stats_views or []
     t0 = time.monotonic()
@@ -57,7 +63,7 @@ async def create_task(
         async with raw_conn() as conn:
             await conn.execute(
                 _INSERT_TASK,
-                (task_id, thread_id, node_id, node_name, task_name, view_type, views, fencing_token),
+                (task_id, thread_id, node_id, node_name, task_name, description, view_type, views, fencing_token),
             )
             await conn.execute(
                 _INSERT_TASK_EXECUTION,

@@ -13,6 +13,7 @@ from backend.db.redis.session.viewer_store import (
     has_app_viewer,
     has_thread_viewer,
     set_viewer,
+    clear_viewer,
 )
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "get_user_id_for_thread",
     "set_thread_user",
     "set_viewer",
+    "clear_viewer",
     "has_app_viewer",
     "has_thread_viewer",
 ]

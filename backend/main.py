@@ -44,6 +44,16 @@ async def lifespan(app: FastAPI):
     from backend.langgraph.compiled import init_compiled_graph
     await init_compiled_graph()
 
+    # Pre-load macro instrument lists (economics + market_index) into the in-process
+    # cache so analyze_economics and prepare_index nodes never hit the DB on first run.
+    from backend.db.postgres.queries.fin_markets_macro import warm_macro_instruments
+    await warm_macro_instruments()
+
+    # Pre-load market index definitions into the in-process cache so stats calculations
+    # can resolve exchange → index → currency without per-request DB round-trips.
+    from backend.db.postgres.queries.fin_markets_indexes import warm_market_indexes
+    await warm_market_indexes()
+
     # Kill zombie Celery tasks from any previous process before re-dispatching
     # recoveries — prevents stale workers running in parallel with fresh tasks.
     from backend.main_thread import cleanup_stale_celery_tasks

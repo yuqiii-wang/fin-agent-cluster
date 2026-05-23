@@ -40,6 +40,19 @@ from pydantic import BaseModel
 I = TypeVar("I")
 O = TypeVar("O")
 
+# ---------------------------------------------------------------------------
+# Task description registry
+# ---------------------------------------------------------------------------
+# Populated automatically in NodeTask.__post_init__ so create_task can
+# look up the human-readable description by task_name without threading it
+# through every call site.
+_TASK_DESCRIPTIONS: dict[str, str] = {}
+
+
+def get_task_description(task_name: str) -> str:
+    """Return the registered description for *task_name*, or empty string."""
+    return _TASK_DESCRIPTIONS.get(task_name, "")
+
 
 @dataclass
 class NodeTask(Generic[I, O]):
@@ -63,7 +76,7 @@ class NodeTask(Generic[I, O]):
     handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
     def __post_init__(self) -> None:
-        """Validate that input_type and output_type are Pydantic BaseModel subclasses."""
+        """Validate types and register the description in the global registry."""
         if not (isinstance(self.input_type, type) and issubclass(self.input_type, BaseModel)):
             raise TypeError(
                 f"NodeTask '{self.name}': input_type must be a Pydantic BaseModel subclass, "
@@ -74,6 +87,7 @@ class NodeTask(Generic[I, O]):
                 f"NodeTask '{self.name}': output_type must be a Pydantic BaseModel subclass, "
                 f"got {self.output_type!r}"
             )
+        _TASK_DESCRIPTIONS[self.name] = self.description
 
     def get_input(self, payload: dict[str, Any]) -> I:
         """Parse and validate payload dict into the task's input Pydantic model.
@@ -97,5 +111,43 @@ class NodeTask(Generic[I, O]):
         """
         return self.output_type.model_validate(data)  # type: ignore[return-value]
 
+    def as_tool(
+        self,
+        node: Any,
+        ctx: Any,
+        sink: dict[str, Any],
+    ) -> Any:
+        """Convert this NodeTask to a LangChain ``StructuredTool`` for agent use.
 
-__all__ = ["NodeTask"]
+        The returned tool's coroutine delegates to ``node.run_task``, stores the
+        ``TaskOutput`` in *sink* under ``self.name``, and returns the output
+        content as a plain dict for the LLM.
+
+        Args:
+            node: The parent ``BaseNode`` instance that owns ``run_task()``.
+            ctx:  Current ``NodeContext`` for the running node.
+            sink: Mutable dict; the ``TaskOutput`` is stored here under
+                  ``self.name`` when the tool is invoked.
+
+        Returns:
+            A ``StructuredTool`` whose async coroutine runs this task.
+        """
+        from langchain_core.tools import StructuredTool
+
+        task_ref = self
+
+        async def _run(**kwargs: Any) -> dict[str, Any]:
+            inp = task_ref.input_type(**kwargs)
+            result = await node.run_task(task_ref, ctx, inp)
+            sink[task_ref.name] = result
+            return result.content.model_dump()
+
+        return StructuredTool.from_function(
+            coroutine=_run,
+            name=self.name,
+            description=self.description,
+            args_schema=self.input_type,
+        )
+
+
+__all__ = ["NodeTask", "get_task_description"]

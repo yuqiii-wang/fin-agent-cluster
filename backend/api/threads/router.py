@@ -155,3 +155,34 @@ async def register_viewer_route(
         raise HTTPException(status_code=401, detail="Invalid user token")
     await set_viewer(str(user.id), thread_id)
 
+
+@router.delete("/{thread_id}/viewer", status_code=204, tags=["thread"])
+async def unregister_viewer_route(
+    thread_id: TThreadId,
+    x_user_token: Annotated[str, Header(alias="X-User-Token")],
+) -> None:
+    """Clear the viewer flags for the calling user and *thread_id*.
+
+    Called by the frontend when its Centrifugo SSE subscription is torn down
+    (thread completed, navigation away, page unload).  Removing the flags
+    prevents stale viewer presence from triggering the full ACK retry loop on
+    subsequent backend ``notify()`` calls, eliminating CENTRIFUGO_003 NACKs.
+
+    Args:
+        thread_id:    LangGraph thread UUID.
+        x_user_token: Guest-auth bearer token from ``localStorage``.
+
+    Returns:
+        HTTP 204 No Content on success.
+
+    Raises:
+        HTTPException 401: If ``x_user_token`` is invalid.
+    """
+    from backend.db.redis.session.viewer_store import clear_viewer
+
+    user, _ = await ensure_guest(x_user_token)
+    if user is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Invalid user token")
+    await clear_viewer(str(user.id), thread_id)
+

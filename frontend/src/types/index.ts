@@ -23,9 +23,11 @@ export type { TaskInfo } from './task';
 export type { GuestAuthResponse, CentrifugoTokenResponse } from './auth';
 export type { SseEvent } from './sse';
 export type { SessionStatus } from './session';
-export type { GraphTopology, TopologyNodeDef, TopologyEdgeDef } from './topology';
+export type { GraphTopology, TopologyNodeDef, TopologyEdgeDef, NodeMeta, NodeConfigField } from './topology';
 
 export type { NodeConfig, UserPreference, UserPreferencesResponse } from './user';
+
+export type { AgentCapabilities, MemoryEntry, Skill, ToolInfo, MemoryEntryType, MemoryStatus, SkillStatus } from './agent';
 
 export type {
   AnalyzeQueryInput,

@@ -80,6 +80,7 @@ class NodeType(StrEnum):
     """
 
     WORKFLOW = "Workflow"
+    AGENT = "Agent"
     SUBGRAPH = "Subgraph"
 
 

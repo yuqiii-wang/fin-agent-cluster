@@ -57,3 +57,7 @@ async def re_explore_node_route(
     """
     return await re_explore_node(thread_id, node_id, input_override=body.input_override)
 
+
+from backend.api.threads.node.agent.router import router as agent_router  # noqa: E402
+router.include_router(agent_router)
+

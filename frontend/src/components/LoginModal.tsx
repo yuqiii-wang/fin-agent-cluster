@@ -11,7 +11,7 @@
 
 import React, { useState } from 'react';
 import { Alert, Button, Divider, Modal, Space, Typography } from 'antd';
-import { UserOutlined } from '@ant-design/icons';
+import { CloseOutlined, UserOutlined } from '@ant-design/icons';
 import { ensureGuest } from '../api/auth';
 import type { GuestAuthResponse } from '../types';
 
@@ -26,6 +26,7 @@ interface Props {
 const LoginModal: React.FC<Props> = ({ open, onClose, onSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorHovered, setErrorHovered] = useState(false);
 
   async function handleGuest() {
     setLoading(true);
@@ -55,7 +56,18 @@ const LoginModal: React.FC<Props> = ({ open, onClose, onSuccess }) => {
       }
     >
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
-        {error && <Alert type="error" message={error} showIcon />}
+        {error && (
+          <Alert
+            type="error"
+            message={error}
+            showIcon
+            closable
+            closeIcon={<CloseOutlined style={{ visibility: errorHovered ? 'visible' : 'hidden' }} />}
+            onClose={() => setError(null)}
+            onMouseEnter={() => setErrorHovered(true)}
+            onMouseLeave={() => setErrorHovered(false)}
+          />
+        )}
 
         <Text type="secondary" style={{ fontSize: 13 }}>
           Your thread history is persisted across sessions when you sign in.
