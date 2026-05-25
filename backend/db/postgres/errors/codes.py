@@ -32,6 +32,10 @@ PG_CHECKPOINTER_SETUP_FAILED = "PG_CHECKPOINTER_SETUP_FAILED"
 #: A database query function caught an exception and returned None / empty result.
 PG_QUERY_FAILED = "PG_QUERY_FAILED"
 
+#: The server terminated the connection mid-query (AdminShutdown / OperationalError).
+#: The caller retried and the retry also failed, or this is logged on the first retry attempt.
+PG_CONN_TERMINATED = "PG_CONN_TERMINATED"
+
 # ---------------------------------------------------------------------------
 # Description registry
 # ---------------------------------------------------------------------------
@@ -49,6 +53,11 @@ PG_ERRORS: dict[str, str] = {
     PG_CHECKPOINTER_SETUP_FAILED: (
         "The LangGraph checkpointer setup lock was released but setup did not complete. "
         "Check the backend logs for the root cause."
+    ),
+    PG_CONN_TERMINATED: (
+        "The PostgreSQL server terminated the connection mid-query (AdminShutdown / OperationalError). "
+        "The operation was retried; check for frequent occurrences which indicate pool misconfiguration "
+        "or recurring server restarts."
     ),
     PG_QUERY_FAILED: (
         "A database query failed and returned no result. "

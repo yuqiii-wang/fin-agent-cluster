@@ -341,6 +341,7 @@ const AgentNodeDetail: React.FC<Props> = ({
                   nodeRunning={nodeRunning}
                   onForget={handleForgetMemory}
                   onCompact={handleCompactMemory}
+                  onViewData={onViewData ? (label, data) => onViewData(label, data) : undefined}
                 />
               ) : null,
             },

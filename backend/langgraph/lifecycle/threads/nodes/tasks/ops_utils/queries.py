@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.db.postgres import raw_conn
+from backend.db.postgres import raw_conn, pg_retry
 from backend.langgraph.lifecycle.threads.nodes.tasks.sql import (
     _GET_EXISTING_TASK_FOR_NODE,
     _GET_LATEST_LLM_RESPONSE,
@@ -13,6 +13,7 @@ from backend.langgraph.lifecycle.threads.nodes.tasks.sql import (
 )
 
 
+@pg_retry()
 async def get_task_full(thread_id: str, task_id: str) -> dict[str, Any] | None:
     """Fetch a task row with its execution input from the DB.
 
@@ -29,6 +30,7 @@ async def get_task_full(thread_id: str, task_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+@pg_retry()
 async def get_paused_task_for_node(
     thread_id: str,
     node_id: str,
@@ -54,6 +56,7 @@ async def get_paused_task_for_node(
     return dict(row) if row else None
 
 
+@pg_retry()
 async def get_existing_task_for_node(
     thread_id: str,
     node_id: str,
@@ -79,6 +82,7 @@ async def get_existing_task_for_node(
     return dict(row) if row else None
 
 
+@pg_retry()
 async def get_latest_llm_response(task_id: str) -> dict[str, Any] | None:
     """Fetch the most recent LLM response record for a task.
 

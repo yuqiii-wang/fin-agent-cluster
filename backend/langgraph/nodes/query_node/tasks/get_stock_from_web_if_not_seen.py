@@ -11,7 +11,7 @@ LangGraph layer (``_get_stock_from_web_if_not_seen_task``):
     completion worker, returns a ``TaskOutput``.
 
 Celery layer (``_handler``):
-    Uses :class:`~backend.resources.info.InfoClient` (DDGS) to search for
+    Uses :class:`~backend.resources.news.NewsClient` (DDGS) to search for
     company/ticker information.  Returns a ``WebStockOutput``.
 
 Public export
@@ -31,7 +31,7 @@ from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.models import TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.query_node.models import WebStockInput, WebStockOutput
-from backend.resources.info import InfoClient
+from backend.resources.news import NewsClient
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ async def _handler(payload: dict) -> dict:
         Serialised ``WebStockOutput`` dict.
     """
     inp = WebStockInput.model_validate(payload)
-    client = InfoClient()
+    client = NewsClient()
     for search_term in (f"{inp.stock_name} company stock", inp.query):
         results = await client.search(search_term, max_results=1)
         if results:

@@ -5,6 +5,14 @@
 import type { CentrifugoTokenResponse, GraphTopology, NodeInfo, NodeMeta, QueryResponse, TaskInfo, ThreadSummary, VersionGraphResponse, AgentCapabilities, Skill } from '../types';
 import { getStoredToken } from './auth';
 
+/** API error that preserves the HTTP status code. */
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 const BASE = '/api/v1';
 
 function authHeaders(): Record<string, string> {
@@ -256,7 +264,7 @@ export async function reExploreNode(
     headers: authHeaders(),
     body: JSON.stringify({ input_override: inputOverride ?? null }),
   });
-  if (!res.ok) throw new Error(`Re-explore failed: ${res.status}`);
+  if (!res.ok) throw new ApiError(res.status, `Re-explore failed: ${res.status}`);
   return res.json();
 }
 

@@ -33,8 +33,22 @@ from backend.langgraph.models.common_tasks.calculate_corr import (
     CalculateCorrOutput,
     HANDLERS as _CC_HANDLERS,
 )
+from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news import (
+    get_news,
+    GetNewsInput,
+    GetNewsOutput,
+    digest_news,
+    DigestNewsInput,
+    DigestNewsOutput,
+    get_and_digest_news,
+    GetAndDigestNewsInput,
+    GetAndDigestNewsOutput,
+    HANDLERS as _GDN_HANDLERS,
+    STREAM_PROMPT_BUILDERS as _GDN_SPB,
+)
 
-HANDLERS: dict = {**_GS_HANDLERS, **_CS_HANDLERS, **_CC_HANDLERS}
+HANDLERS: dict = {**_GS_HANDLERS, **_CS_HANDLERS, **_CC_HANDLERS, **_GDN_HANDLERS}
+STREAM_PROMPT_BUILDERS: dict = {**_GDN_SPB}
 
 __all__ = [
     "get_stats",
@@ -46,5 +60,15 @@ __all__ = [
     "calculate_corr",
     "CalculateCorrInput",
     "CalculateCorrOutput",
+    "get_news",
+    "GetNewsInput",
+    "GetNewsOutput",
+    "digest_news",
+    "DigestNewsInput",
+    "DigestNewsOutput",
+    "get_and_digest_news",
+    "GetAndDigestNewsInput",
+    "GetAndDigestNewsOutput",
     "HANDLERS",
+    "STREAM_PROMPT_BUILDERS",
 ]

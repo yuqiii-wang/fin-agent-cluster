@@ -15,6 +15,7 @@ import type { NodeInfo } from '../../types';
 import type { GraphTopology } from '../../types';
 import type { Bubble, EdgeKind } from './types';
 import { SVG_H, INNER_RADIUS, NODE_RADIUS, SUBGRAPH_RADIUS, COLLAPSED_BUBBLE_SIZE, BUBBLE_RX } from './constants';
+// SVG_H is kept as the minimum height for the empty-state placeholder
 import { computeLayout } from './layout';
 import SubgraphBubble from './SubgraphBubble';
 import GraphEdge from './GraphEdge';
@@ -95,7 +96,7 @@ const NodeGraph: React.FC<Props> = ({ nodes, topology, selectedNodeId, onSelectN
   }, [nodes, selectedNodeId]);
 
   const layout = useMemo(() => computeLayout(nodes, expandedSubgraphIds), [nodes, expandedSubgraphIds]);
-  const { positions, svgW, topLevel, innerByParentId, topEdges, innerEdges, bubbles } = layout;
+  const { positions, svgW, svgH, topLevel, innerByParentId, topEdges, innerEdges, bubbles } = layout;
 
   /** Collapsed display bubble: a square centered at the full bubble's centre. */
   function collapsedBubble(bubble: Bubble): Bubble {
@@ -133,10 +134,11 @@ const NodeGraph: React.FC<Props> = ({ nodes, topology, selectedNodeId, onSelectN
   }
 
   return (
+    <div style={{ width: '100%', overflowX: 'auto', overflowY: 'auto' }}>
     <svg
       width="100%"
-      height={SVG_H}
-      viewBox={`0 0 ${svgW} ${SVG_H}`}
+      height={svgH}
+      viewBox={`0 0 ${svgW} ${svgH}`}
       preserveAspectRatio="xMidYMid meet"
       style={{ display: 'block', fontFamily: 'sans-serif', userSelect: 'none' }}
     >
@@ -334,6 +336,7 @@ const NodeGraph: React.FC<Props> = ({ nodes, topology, selectedNodeId, onSelectN
         );
       })}
     </svg>
+    </div>
   );
 };
 

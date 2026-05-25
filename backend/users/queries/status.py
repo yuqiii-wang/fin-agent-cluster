@@ -20,7 +20,7 @@ from backend.users.queries._sql import (
     _LIST_TASKS,
     _GET_TASK_BY_ID,
 )
-from backend.users.queries._helpers import _row_to_query_response, _row_to_node_info
+from backend.users.queries._helpers import _row_to_query_response, _row_to_node_info, _get_topology_safe
 
 
 async def get_query_status(thread_id: str) -> QueryResponse:
@@ -80,7 +80,7 @@ async def get_version_graph(thread_id: str, version: int) -> VersionGraphRespons
         else:
             fork_row = None
 
-        cur = await conn.execute(_LIST_NODES_BY_VERSION, (thread_id, version))
+        cur = await conn.execute(_LIST_NODES_BY_VERSION, (thread_id, version, thread_id, thread_id))
         node_rows = await cur.fetchall()
 
     if version > 0 and fork_row is None and not node_rows:
@@ -92,13 +92,84 @@ async def get_version_graph(thread_id: str, version: int) -> VersionGraphRespons
     fork_node = _row_to_node_info(fork_row) if fork_row else None
     source_version: int | None = fork_row["forked_from_version"] if fork_row else None
 
+    executed_nodes = [_row_to_node_info(r) for r in node_rows]
+    pending_nodes = _build_pending_frontier(thread_id, version, node_rows)
+
     return VersionGraphResponse(
         version=version,
         thread_id=thread_id,
         fork_node=fork_node,
         source_version=source_version,
-        nodes=[_row_to_node_info(r) for r in node_rows],
+        nodes=executed_nodes + pending_nodes,
     )
+
+
+def _build_pending_frontier(
+    thread_id: str,
+    version: int,
+    node_rows: list[Any],
+) -> list[NodeExecutionInfo]:
+    """Return +1 depth pending NodeExecutionInfo entries for a version graph.
+
+    Inspects the compiled graph topology to find nodes whose ALL predecessors
+    have run in this version but which have not started yet.  These are
+    returned as ``status='pending'`` entries (rendered grey in the UI) so the
+    version graph shows the complete expected topology, not just what ran.
+
+    Returns an empty list when the topology is unavailable or the frontier
+    is empty (all nodes ran, or next nodes lead to END).
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        version:   Fork generation being queried.
+        node_rows: Raw DB rows from ``_LIST_NODES_BY_VERSION``.
+
+    Returns:
+        List of :class:`NodeExecutionInfo` with ``status='pending'``.
+    """
+    topo = _get_topology_safe()
+    if topo is None:
+        return []
+
+    # Build ran-node map: node_name → node_id, keeping the highest-version row.
+    ran_node_id: dict[str, str] = {}
+    ran_node_ver: dict[str, int] = {}
+    ran_node_names: set[str] = set()
+    for r in node_rows:
+        name: str = r["node_name"]
+        v: int = r["version"] or 0
+        ran_node_names.add(name)
+        if v >= ran_node_ver.get(name, -1):
+            ran_node_ver[name] = v
+            ran_node_id[name] = r["node_id"]
+
+    # Predecessor map: to_node → [from_node, ...] built from topology edges.
+    pred_map: dict[str, list[str]] = {}
+    for edge in topo.edges:
+        pred_map.setdefault(edge.to_node, []).append(edge.from_node)
+
+    pending: list[NodeExecutionInfo] = []
+    for topo_node in topo.nodes:
+        name = topo_node.node_name
+        if name in ran_node_names:
+            continue
+        preds = pred_map.get(name, [])
+        if not preds:
+            continue  # root node — would have already run if reachable
+        if all(p in ran_node_names for p in preds):
+            prev_ids = [ran_node_id[p] for p in preds if p in ran_node_id]
+            pending.append(NodeExecutionInfo(
+                node_id=f"topology-{name}",
+                thread_id=thread_id,
+                node_name=name,
+                status="pending",
+                type=topo_node.node_type,
+                parallel_group=topo_node.parallel_group,
+                version=version,
+                prev_node_ids=prev_ids,
+            ))
+
+    return pending
 
 
 async def get_query_tasks(thread_id: str) -> SessionStatus:

@@ -78,17 +78,16 @@ class EntrypointMixin:
             and self.parallel_group == fork_parallel_group  # type: ignore[attr-defined]
             and self.node_name != state.get("fork_point_node_name")  # type: ignore[attr-defined]
         ):
-            # Find the latest completed version of this sibling node — NOT
-            # bounded by fork_source_version (which tracks the fork-point
-            # node's version history, not this sibling's).  E.g. if stats was
-            # re-explored to v1, and then news is re-explored (fork_source_version=0
-            # because news was at v0), we must use stats_v1, not stats_v0.
+            # Find the latest completed version of this sibling node.  Returns
+            # None when the sibling has never completed (e.g. always failed) —
+            # in that case fall through and let the node run fresh.
             sibling_version = await get_latest_sibling_node_version(
                 thread_id, self.node_name  # type: ignore[attr-defined]
             )
-            sibling_node_id = make_node_id(thread_id, self.node_name, sibling_version)  # type: ignore[attr-defined]
-            shared_record = self._build_node_record(sibling_node_id, sibling_version, [], "completed")  # type: ignore[attr-defined]
-            return {"nodes": {sibling_node_id: shared_record}}
+            if sibling_version is not None:
+                sibling_node_id = make_node_id(thread_id, self.node_name, sibling_version)  # type: ignore[attr-defined]
+                shared_record = self._build_node_record(sibling_node_id, sibling_version, [], "completed")  # type: ignore[attr-defined]
+                return {"nodes": {sibling_node_id: shared_record}}
 
         ctx = NodeContext(
             thread_id=thread_id,
@@ -105,7 +104,7 @@ class EntrypointMixin:
             node_id=node_id,
             node_name=self.node_name,  # type: ignore[attr-defined]
             node_type=self.node_type,  # type: ignore[attr-defined]
-            input_data=node_input.model_dump(),
+            input_data=node_input.model_dump(mode="json"),
             version=version,
             prev_node_ids=prev_node_ids,
             parallel_group=self.parallel_group,  # type: ignore[attr-defined]

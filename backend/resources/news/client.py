@@ -1,96 +1,328 @@
-"""News provider client.
+"""News client: FMP primary, DDGS fallback.
 
-Fetches news articles via httpx.  In mock mode (default when no real
-provider URL is configured) requests are handled in-process by
-:class:`~backend.resources.news.mock.transport.MockNewsTransport`.
-
-Provider label: ``"mock"`` (set on :attr:`NewsClient.provider`).
+``list_news`` tries FMP first when ``FMP_API_KEY`` is configured; if FMP
+returns an empty result set it falls back to ``DDGS().news()``.  ``search``
+always uses ``DDGS().text()`` for web-search snippets.
 
 Usage::
 
     from backend.resources.news.client import NewsClient
 
-    client = NewsClient()                       # uses mock transport
-    articles = await client.list_news("AAPL")
-    article  = await client.get_news("news-aapl-001")
+    client = NewsClient()
+    response = await client.list_news("AAPL")   # FMP → DDGS fallback
+    results  = await client.search("Apple stock outlook")  # always DDGS
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
+from datetime import datetime, timezone
 
 import httpx
+from ddgs import DDGS
 
-from backend.resources.news.mock.transport import MockNewsTransport
-from backend.resources.news.models import NewsArticle, NewsListResponse
+from backend.config import get_settings
+from backend.resources.news.errors import NEWS_NO_RESULTS, NEWS_SEARCH_FAILED
+from backend.resources.news.fmp.fetcher import fetch as fmp_fetch
+from backend.resources.news.models import InfoResult, NewsArticle, NewsListResponse
 
 logger = logging.getLogger(__name__)
 
-_MOCK_BASE_URL = "http://mock-news"
+_PROVIDER_FMP = "fmp"
+_PROVIDER_DDGS = "ddgs"
+
+
+def _timelimit_from_dt(from_dt: datetime | None) -> str | None:
+    """Convert a lower-bound datetime to a DDGS ``timelimit`` token.
+
+    Args:
+        from_dt: Optional start of the date window (UTC).
+
+    Returns:
+        One of ``"d"``, ``"w"``, ``"m"``, ``"y"``, or ``None``.
+    """
+    if from_dt is None:
+        return None
+    days_ago = (datetime.utcnow() - from_dt.replace(tzinfo=None)).days
+    if days_ago <= 1:
+        return "d"
+    if days_ago <= 7:
+        return "w"
+    if days_ago <= 31:
+        return "m"
+    return "y"
+
+
+def _article_id(url: str | None, title: str) -> str:
+    """Build a deterministic article ID from url and title."""
+    return "ddgs-" + hashlib.sha256(f"{url or title}".encode()).hexdigest()[:16]
+
+
+def _parse_ddgs_date(raw: str | None) -> datetime:
+    """Parse a DDGS date string to a UTC-aware datetime.
+
+    Args:
+        raw: Raw date string from DDGS.
+
+    Returns:
+        UTC-aware :class:`datetime`, falling back to ``now`` on parse failure.
+    """
+    if not raw:
+        return datetime.now(tz=timezone.utc)
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+    ):
+        try:
+            dt = datetime.strptime(raw, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except ValueError:
+            continue
+    return datetime.now(tz=timezone.utc)
 
 
 class NewsClient:
-    """Async news provider client backed by a configurable httpx transport.
+    """News and web-search client.
+
+    ``list_news`` tries FMP when ``FMP_API_KEY`` is set; if FMP returns an
+    empty result set it automatically falls back to DDGS news search.
+    ``search`` always uses DDGS text search.
 
     Attributes:
-        provider: Short identifier for the active provider, e.g. ``"mock"``.
+        provider: Reflects the provider actually used for the last
+                  ``list_news`` call — ``"fmp"`` or ``"ddgs"``.
     """
 
-    provider: str = "mock"
+    provider: str
 
     def __init__(self) -> None:
-        """Initialise with the mock transport."""
-        self._http = httpx.AsyncClient(
-            base_url=_MOCK_BASE_URL,
-            transport=MockNewsTransport(),
-        )
+        """Initialise, reading FMP credentials from settings."""
+        settings = get_settings()
+        self._fmp_api_key: str | None = settings.FMP_API_KEY
+        self._fmp_base_url: str = settings.FMP_BASE_URL
+        self.provider = _PROVIDER_FMP if self._fmp_api_key else _PROVIDER_DDGS
 
     async def list_news(
         self,
         symbol: str | None = None,
-        limit: int = 10,
+        topics: list[str] | None = None,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
+        limit: int = 20,
     ) -> NewsListResponse:
-        """Fetch a list of news articles, optionally filtered by symbol.
+        """Fetch news articles, with FMP → DDGS fallback on empty.
+
+        Tries FMP when ``FMP_API_KEY`` is configured.  Falls back to DDGS
+        news search when FMP returns an empty result set (or is not configured).
 
         Args:
-            symbol: Equity ticker to filter on, or ``None`` for all.
-            limit:  Maximum number of articles to return.
+            symbol:  Equity ticker, e.g. ``"AAPL"``.
+            topics:  Topic keywords to narrow the search.
+            from_dt: Start of the date window (UTC).
+            to_dt:   End of the date window (UTC).
+            limit:   Maximum number of articles to return.
 
         Returns:
-            :class:`~backend.resources.news.models.NewsListResponse`.
+            :class:`NewsListResponse` with up to *limit* articles.
         """
-        params: dict[str, str | int] = {"limit": limit}
-        if symbol is not None:
-            params["symbol"] = symbol
+        if self._fmp_api_key:
+            async with httpx.AsyncClient(
+                base_url=self._fmp_base_url,
+                params={"apikey": self._fmp_api_key},
+                timeout=15.0,
+            ) as http:
+                try:
+                    articles = await fmp_fetch(
+                        symbol=symbol,
+                        topics=topics,
+                        from_dt=from_dt,
+                        to_dt=to_dt,
+                        limit=limit,
+                        http=http,
+                    )
+                except Exception:
+                    articles = []
 
-        logger.debug("news.list_news provider=%s symbol=%s limit=%d", self.provider, symbol, limit)
-        response = await self._http.get("/news", params=params)
-        if not response.is_success:
-            raise ValueError(
-                f"news.list_news failed: status={response.status_code} body={response.text[:500]!r}"
-            )
-        items = [NewsArticle.model_validate(row) for row in response.json()]
-        return NewsListResponse(items=items, total=len(items))
+            if articles:
+                self.provider = _PROVIDER_FMP
+                return NewsListResponse(items=articles, total=len(articles))
 
-    async def get_news(self, article_id: str) -> NewsArticle | None:
-        """Fetch a single news article by ID.
+        # FMP empty or not configured — fall back to DDGS
+        return await self._ddgs_news(symbol=symbol, topics=topics, from_dt=from_dt, limit=limit)
+
+    async def _ddgs_news(
+        self,
+        symbol: str | None,
+        topics: list[str] | None,
+        from_dt: datetime | None,
+        limit: int,
+    ) -> NewsListResponse:
+        """Fetch news articles from DDGS.
 
         Args:
-            article_id: Unique article identifier.
+            symbol:  Equity ticker used as base query.
+            topics:  Topic keywords appended to the query.
+            from_dt: Start of date window mapped to DDGS timelimit.
+            limit:   Maximum number of articles.
 
         Returns:
-            :class:`~backend.resources.news.models.NewsArticle`, or ``None`` if not found.
+            :class:`NewsListResponse`.
         """
-        logger.debug("news.get_news provider=%s id=%s", self.provider, article_id)
-        response = await self._http.get(f"/news/{article_id}")
-        if response.status_code == 404:
-            return None
-        if not response.is_success:
-            raise ValueError(
-                f"news.get_news failed: status={response.status_code} body={response.text[:500]!r}"
-            )
-        return NewsArticle.model_validate(response.json())
+        parts: list[str] = []
+        if symbol:
+            parts.append(symbol)
+        if topics:
+            parts.extend(topics)
+        query = " ".join(parts) if parts else "market news"
 
-    async def aclose(self) -> None:
-        """Close the underlying httpx client."""
-        await self._http.aclose()
+        timelimit = _timelimit_from_dt(from_dt)
+
+        loop = asyncio.get_event_loop()
+        try:
+            raw: list[dict] = await loop.run_in_executor(
+                None,
+                lambda: list(DDGS().news(query, max_results=limit, timelimit=timelimit)),
+            )
+        except Exception as exc:
+            logger.error("[%s] DDGS news search failed query=%r: %s", NEWS_SEARCH_FAILED, query, exc)
+            self.provider = _PROVIDER_DDGS
+            return NewsListResponse(items=[], total=0)
+
+        if not raw:
+            logger.error("[%s] DDGS news returned no results for query=%r", NEWS_NO_RESULTS, query)
+            self.provider = _PROVIDER_DDGS
+            return NewsListResponse(items=[], total=0)
+
+        self.provider = _PROVIDER_DDGS
+        articles = [
+            NewsArticle(
+                id=_article_id(r.get("url"), r.get("title", "")),
+                symbol=symbol,
+                title=r.get("title", ""),
+                source=_PROVIDER_DDGS,
+                source_name=r.get("source"),
+                published_at=_parse_ddgs_date(r.get("date")),
+                content=r.get("body", ""),
+                url=r.get("url"),
+            )
+            for r in raw
+        ]
+        return NewsListResponse(items=articles, total=len(articles))
+
+    async def search(
+        self,
+        query: str,
+        topics: list[str] | None = None,
+        from_dt: datetime | None = None,
+        max_results: int = 3,
+    ) -> list[InfoResult]:
+        """Search the web and return up to *max_results* snippets via DDGS text.
+
+        Args:
+            query:       Free-form search query.
+            topics:      Optional topic keywords appended to *query*.
+            from_dt:     Optional lower bound on recency mapped to DDGS timelimit.
+            max_results: Maximum number of results to return.
+
+        Returns:
+            List of :class:`InfoResult` objects, possibly empty on failure.
+        """
+        full_query = query
+        if topics:
+            full_query = f"{query} {' '.join(topics)}"
+
+        timelimit = _timelimit_from_dt(from_dt)
+
+        loop = asyncio.get_event_loop()
+        try:
+            raw: list[dict] = await loop.run_in_executor(
+                None,
+                lambda: list(DDGS().text(full_query, max_results=max_results, timelimit=timelimit)),
+            )
+        except Exception as exc:
+            logger.error("[%s] DDGS text search failed query=%r: %s", NEWS_SEARCH_FAILED, full_query, exc)
+            return []
+
+        if not raw:
+            logger.error("[%s] DDGS text search returned no results for query=%r", NEWS_NO_RESULTS, full_query)
+            return []
+
+        return [
+            InfoResult(
+                url=r.get("href", ""),
+                title=r.get("title", ""),
+                content=r.get("body", ""),
+            )
+            for r in raw
+        ]
+
+
+__all__ = ["NewsClient"]
+
+
+def _timelimit_from_dt(from_dt: datetime | None) -> str | None:
+    """Convert a lower-bound datetime to a DDGS ``timelimit`` token.
+
+    Args:
+        from_dt: Optional start of the date window (UTC).
+
+    Returns:
+        One of ``"d"``, ``"w"``, ``"m"``, ``"y"``, or ``None`` when no
+        time constraint should be applied.
+    """
+    if from_dt is None:
+        return None
+    days_ago = (datetime.utcnow() - from_dt.replace(tzinfo=None)).days
+    if days_ago <= 1:
+        return "d"
+    if days_ago <= 7:
+        return "w"
+    if days_ago <= 31:
+        return "m"
+    return "y"
+
+
+def _article_id(url: str | None, title: str) -> str:
+    """Build a deterministic article ID from url and title."""
+    key = f"{url or title}"
+    return "ddgs-" + hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def _parse_ddgs_date(raw: str | None) -> datetime:
+    """Parse a DDGS date string to a UTC-aware datetime.
+
+    Args:
+        raw: Raw date string from DDGS, e.g. ``"2026-05-24T10:30:00+00:00"``.
+
+    Returns:
+        UTC-aware :class:`datetime`, falling back to ``now`` on parse failure.
+    """
+    if not raw:
+        return datetime.now(tz=timezone.utc)
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+    ):
+        try:
+            dt = datetime.strptime(raw, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except ValueError:
+            continue
+    return datetime.now(tz=timezone.utc)
+
+
+__all__ = ["NewsClient"]

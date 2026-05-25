@@ -22,6 +22,7 @@ __all__ = [
     "get_indexes_for_exchange",
     "get_primary_index_for_exchange",
     "derive_yf_exchange_from_ticker",
+    "is_index_ticker",
     "upsert_stock_index_memberships",
     "get_symbol_index_codes",
 ]
@@ -100,6 +101,8 @@ _indexes_by_code: dict[str, MarketIndex] = {}
 # keyed by each yf_exchange_code string; value is the list of matching indexes
 # sorted by sort_order ascending so [0] is always the primary index.
 _indexes_by_exchange: dict[str, list[MarketIndex]] = {}
+# set of all known index tickers (e.g. '^GSPC', '000300.SS') for fast O(1) lookup.
+_index_tickers: set[str] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -150,8 +153,12 @@ async def load_market_indexes() -> list[MarketIndex]:
         for exc in by_exchange:
             by_exchange[exc].sort(key=lambda x: x.sort_order)
 
+        tickers: set[str] = {idx.ticker for idx in indexes if idx.ticker}
+
         _indexes_by_code = by_code
         _indexes_by_exchange = by_exchange
+        _index_tickers.clear()
+        _index_tickers.update(tickers)
         return indexes
     except Exception as exc:
         logger.error("[%s] load_market_indexes failed: %s", PG_QUERY_FAILED, exc)
@@ -165,6 +172,7 @@ async def warm_market_indexes() -> None:
     """
     _indexes_by_code.clear()
     _indexes_by_exchange.clear()
+    _index_tickers.clear()
     await load_market_indexes()
 
 
@@ -210,6 +218,24 @@ def get_primary_index_for_exchange(yf_exchange: str) -> MarketIndex | None:
     """
     bucket = _indexes_by_exchange.get(yf_exchange)
     return bucket[0] if bucket else None
+
+
+def is_index_ticker(symbol: str) -> bool:
+    """Return ``True`` when *symbol* is a known market-index ticker.
+
+    Checks the ``_index_tickers`` set populated by :func:`warm_market_indexes`
+    (e.g. ``'^GSPC'``, ``'^HSI'``, ``'000300.SS'``).  This allows correct
+    ``instrument_type`` routing in stats persistence so index tickers are stored
+    as ``'index'`` rather than ``'equity'``.
+
+    Args:
+        symbol: Uppercase ticker symbol to test.
+
+    Returns:
+        ``True`` if the symbol is a known market-index ticker, else ``False``.
+        Always returns ``False`` before :func:`warm_market_indexes` has run.
+    """
+    return symbol in _index_tickers
 
 
 def derive_yf_exchange_from_ticker(symbol: str) -> str:

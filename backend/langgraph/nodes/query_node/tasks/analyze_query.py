@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import logging
 
-from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
+from langchain_core.messages import BaseMessage
+from langchain_core.prompts import ChatPromptTemplate
 from langgraph.func import task
 from pydantic import BaseModel, Field
 
@@ -66,6 +67,24 @@ class AnalyzeQueryOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Prompt template (module-level global)
+# ---------------------------------------------------------------------------
+
+_ANALYZE_QUERY_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a financial assistant. Extract the stock ticker symbol for the company "
+     "mentioned in user queries. Respond with valid JSON only, using this exact schema:\n"
+     '{{"stock_name": "<TICKER>", "not_seen": false}}\n\n'
+     "stock_name MUST be the official exchange ticker symbol (e.g. AAPL, MSFT, TSLA), "
+     "NOT the company name. Always convert company names to their primary US-listed ticker.\n"
+     "Set not_seen to true if you cannot determine a publicly traded ticker for the query. "
+     "If not_seen is true, still put your best-guess ticker in stock_name.\n"
+     "No explanation, only the JSON."),
+    ("human", "Query: {query}"),
+])
+
+
+# ---------------------------------------------------------------------------
 # Streaming prompt builder — imported by stream_task.py
 # ---------------------------------------------------------------------------
 
@@ -80,20 +99,7 @@ def _build_analyze_query_prompt(payload: dict) -> list[BaseMessage]:
         LangChain message list (SystemMessage + HumanMessage) for the streaming LLM.
     """
     inp = AnalyzeQueryInput.model_validate(payload)
-    system_content = (
-        "You are a financial assistant. Extract the primary company name or stock ticker "
-        "from user queries. Respond with valid JSON only, using this exact schema:\n"
-        '{"stock_name": "<company name or ticker>", "not_seen": false}\n\n'
-        "Set not_seen to true if you do not recognise the company or stock, or if the query "
-        "does not mention a specific publicly traded company. "
-        "If not_seen is true, still try your best to extract what the user might be referring to "
-        "in stock_name.\n"
-        "No explanation, only the JSON."
-    )
-    return [
-        SystemMessage(content=system_content),
-        HumanMessage(content=f"Query: {inp.query}"),
-    ]
+    return _ANALYZE_QUERY_PROMPT.format_messages(query=inp.query)
 
 
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_analyze_query_prompt}
@@ -110,6 +116,9 @@ async def _analyze_query_task(
 ) -> TaskOutput[AnalyzeQueryOutput]:
     """LangGraph @task: delegates analyze_query to the Celery stream worker.
 
+    The pg cache check is handled upstream by ``run_task`` via ``pg_cache_fn``.
+    This function is only reached on a cache miss.
+
     Tokens are streamed to the frontend via Centrifugo.  The final answer is
     parsed as JSON to extract ``stock_name`` and ``not_seen``.
 
@@ -120,7 +129,8 @@ async def _analyze_query_task(
         TaskOutput wrapping the AnalyzeQueryOutput from the Celery stream worker.
     """
     ctx = task_input.ctx
-    payload = task_input.content.model_dump()
+    content = task_input.content
+    payload = content.model_dump()
 
     await create_task(
         ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,

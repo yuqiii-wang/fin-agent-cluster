@@ -20,7 +20,7 @@ from backend.db.postgres.engine import (
     get_read_session_factory,
     get_session_factory,
 )
-from backend.db.postgres.connection import raw_conn
+from backend.db.postgres.connection import raw_conn, pg_retry
 from backend.db.postgres.checkpointer import checkpointer, ensure_setup, get_pool_checkpointer
 from backend.db.postgres.init_ import init_db
 from backend.db.postgres.pool import (
@@ -39,6 +39,7 @@ __all__ = [
     "get_session_factory",
     "get_read_session_factory",
     "raw_conn",
+    "pg_retry",
     "checkpointer",
     "ensure_setup",
     "get_pool_checkpointer",

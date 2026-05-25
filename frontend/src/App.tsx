@@ -16,7 +16,7 @@ import MainQuery from './components/MainQuery';
 import ThreadView from './components/ThreadView';
 import UserButton from './components/UserButton';
 import UserHistory from './components/UserHistory';
-import { getGraphTopology } from './api/threads';
+import { getGraphTopology, submitQuery } from './api/threads';
 import { setCachedTopology } from './cache';
 import type { GraphTopology, QueryResponse, SseInfo, ThreadSummary } from './types';
 
@@ -93,6 +93,11 @@ const AppInner: React.FC = () => {
     // NACKs that occurred when the flag outlived the WebSocket subscription.
   }
 
+  async function handleRestartAsNew(query: string) {
+    const result = await submitQuery(query);
+    handleSubmit(result);
+  }
+
   const activeEntry = history.find((t) => t.thread_id === activeId);
   const activeLive = activeId ? (liveInfo[activeId] ?? null) : null;
 
@@ -155,7 +160,7 @@ const AppInner: React.FC = () => {
               initialTopology={activeLive?.topology ?? null}
               onDone={reload}
               onStatusChange={(s) => updateEntry(activeEntry!.thread_id, { status: s })}
-
+              onRestartAsNew={handleRestartAsNew}
             />
           )}
         </Content>

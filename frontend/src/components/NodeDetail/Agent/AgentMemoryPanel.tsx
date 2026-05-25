@@ -54,14 +54,66 @@ function contentSummary(entry: MemoryEntry): string {
   return JSON.stringify(c).slice(0, 120);
 }
 
+/** Convert a memory entry to a markdown string for the data viewer. */
+function contentMarkdown(entry: MemoryEntry): string {
+  const c = entry.content;
+  const typeLabel = entry.entry_type.replace(/_/g, ' ');
+  const header = `**#${entry.seq_num} · ${typeLabel}**`;
+
+  if (entry.entry_type === 'reasoning') {
+    return `${header}\n\n${String(c.text ?? '')}`;
+  }
+
+  if (entry.entry_type === 'tool_call') {
+    const args = JSON.stringify(c.args ?? {}, null, 2);
+    return `${header}\n\n**Tool:** \`${c.name}\`\n\n**Arguments:**\n\`\`\`json\n${args}\n\`\`\``;
+  }
+
+  if (entry.entry_type === 'task_result') {
+    const result = c.result as Record<string, unknown> | undefined ?? {};
+    const lines: string[] = [`${header}\n\n**Task:** \`${c.tool_name}\``];
+    const knownKeys = ['iteration', 'confirmed_peers', 'rejected_peers', 'corr_scores'];
+    if (result.iteration !== undefined) lines.push(`\n**Iteration:** ${result.iteration}`);
+    if (Array.isArray(result.confirmed_peers) && result.confirmed_peers.length > 0)
+      lines.push(`\n**Confirmed peers:** ${(result.confirmed_peers as string[]).join(', ')}`);
+    if (Array.isArray(result.rejected_peers) && result.rejected_peers.length > 0)
+      lines.push(`\n**Rejected peers:** ${(result.rejected_peers as string[]).join(', ')}`);
+    if (result.corr_scores && typeof result.corr_scores === 'object') {
+      const rows = Object.entries(result.corr_scores as Record<string, number>)
+        .map(([sym, v]) => `| ${sym} | ${typeof v === 'number' ? v.toFixed(4) : v} |`);
+      if (rows.length > 0)
+        lines.push(`\n\n| Symbol | Correlation |\n|--------|-------------|\n${rows.join('\n')}`);
+    }
+    // Any extra keys not already rendered
+    const extras = Object.entries(result).filter(([k]) => !knownKeys.includes(k));
+    if (extras.length > 0)
+      lines.push(`\n\n\`\`\`json\n${JSON.stringify(Object.fromEntries(extras), null, 2)}\n\`\`\``);
+    return lines.join('');
+  }
+
+  if (entry.entry_type === 'compacted_summary') {
+    return `${header}\n\n${String(c.summary ?? '')}`;
+  }
+
+  if (entry.entry_type === 'skill_applied') {
+    const parts = [`${header}`];
+    if (c.summary) parts.push(`\n\n**Summary:** ${c.summary}`);
+    if (c.instructions) parts.push(`\n\n**Instructions:**\n\n${c.instructions}`);
+    return parts.join('');
+  }
+
+  return `${header}\n\n\`\`\`json\n${JSON.stringify(c, null, 2)}\n\`\`\``;
+}
+
 interface Props {
   memory: MemoryEntry[];
   nodeRunning: boolean;
   onForget: (memoryId: string) => Promise<void>;
   onCompact: (memoryIds: string[], summary: string) => Promise<void>;
+  onViewData?: (label: string, data: string) => void;
 }
 
-const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCompact }) => {
+const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCompact, onViewData }) => {
   const [showAll, setShowAll] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [compactOpen, setCompactOpen] = useState(false);
@@ -151,7 +203,9 @@ const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCo
               borderLeft: `3px solid ${isActive ? '#1677ff33' : '#333'}`,
               background: isSelected ? COLOR_SURFACE_RAISED : 'transparent',
               opacity: isActive ? 1 : 0.45,
+              cursor: onViewData ? 'pointer' : 'default',
             }}
+            onClick={onViewData ? () => onViewData(`Memory #${entry.seq_num} · ${entry.entry_type.replace(/_/g, ' ')}`, contentMarkdown(entry)) : undefined}
           >
             {isActive && (
               <Checkbox

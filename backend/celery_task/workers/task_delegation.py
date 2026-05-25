@@ -343,8 +343,8 @@ async def delegate_stream(
     from backend.langgraph.lifecycle.pause_flag import get_task_pause_snapshot
     snapshot = await get_task_pause_snapshot(task_id)
     if snapshot:
-        from backend.celery_task.workers.tasks.stream_task import (  # noqa: PLC2701
-            _detect_and_compress_repetition as _compress,
+        from backend.celery_task.workers.tasks.stream_utils import (
+            detect_and_compress_repetition as _compress,
         )
         non_rep, rep_block, rep_count = _compress(snapshot)
         compressed = (

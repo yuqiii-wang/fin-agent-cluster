@@ -66,12 +66,19 @@ class TaskInput(BaseModel, Generic[T]):
     """Typed input envelope for a @task.
 
     Attributes:
-        ctx: Full thread → node → task identity chain.
+        ctx:    Full thread → node → task identity chain.
         content: Biz-specific input; type is fixed by the concrete subclass.
+        memory: In-flight agent memory accumulated by the enclosing agent node
+                across its execution loop.  Empty list on the first iteration.
+                Entries are opaque dicts whose schema is defined by the node
+                that manages the memory (e.g. ``prepare_peers`` writes
+                ``{"symbol", "corr", "status"}`` entries after each
+                ``analyze_peer_corr`` call).  Read-only inside task functions.
     """
 
     ctx: TaskContext
     content: T
+    memory: list[dict] = Field(default_factory=list)
 
 
 class TaskOutput(BaseModel, Generic[T]):

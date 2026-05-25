@@ -347,6 +347,14 @@ class IndexStatsSQL:
           AND bar_time >= %s
     """
 
+    COUNT_BY_SYMBOL_GRANULARITY = """
+        SELECT COUNT(*) AS row_count
+        FROM fin_markets.quant_stats
+        WHERE symbol = %s
+          AND instrument_type = 'index'
+          AND granularity = %s
+    """
+
     GET_RECENT = """
         SELECT bar_time, open, high, low, close, volume, rsi_14, macd_line, macd_signal
         FROM fin_markets.quant_stats

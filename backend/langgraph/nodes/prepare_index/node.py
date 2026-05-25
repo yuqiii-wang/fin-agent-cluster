@@ -70,6 +70,7 @@ class AnalyzeIndexNode(BaseNode[AnalyzeIndexInput, AnalyzeIndexOutput]):
     node_type = NodeType.WORKFLOW
     display_name = "Analyze Index"
     category = "Analysis"
+    parallel_group: ClassVar[str] = "analyze_parallel"
     config_fields: ClassVar[list[dict]] = [
         {
             "key": "human_in_the_loop",

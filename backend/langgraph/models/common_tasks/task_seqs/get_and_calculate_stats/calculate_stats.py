@@ -48,8 +48,9 @@ from backend.db.postgres import raw_conn
 from backend.db.postgres.queries.fin_markets_indexes import (
     derive_yf_exchange_from_ticker,
     get_primary_index_for_exchange,
+    is_index_ticker,
 )
-from backend.db.postgres.queries.fin_markets_quant import OhlcvStatsSQL
+from backend.db.postgres.queries.fin_markets_quant import IndexStatsSQL, OhlcvStatsSQL
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import (
     STATS_TASK_CALC_ERROR,
@@ -286,11 +287,16 @@ async def _handler(payload: dict) -> dict:
 
     matrix = record.content
 
+    # Determine instrument type: market-index tickers (e.g. '^GSPC', '000300.SS') are
+    # stored as 'index'; all other symbols are stored as 'equity'.
+    _is_index = is_index_ticker(symbol)
+    _stats_sql = IndexStatsSQL if _is_index else OhlcvStatsSQL
+
     # --- bypass path: return existing row count without recomputing indicators ---
     if inp.bypass:
         async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
-                OhlcvStatsSQL.COUNT_BY_SYMBOL_GRANULARITY, (symbol, granularity)
+                _stats_sql.COUNT_BY_SYMBOL_GRANULARITY, (symbol, granularity)
             )
             count_row = await cur.fetchone()
         # Build df_split from raw OHLCV (no indicators on bypass path).
@@ -339,7 +345,7 @@ async def _handler(payload: dict) -> dict:
     # --- batch upsert to quant_stats ---
     async with raw_conn() as conn:
         for params in params_list:
-            await conn.execute(OhlcvStatsSQL.UPSERT, params)
+            await conn.execute(_stats_sql.UPSERT, params)
 
     df_split = _build_slim_df_split(df, with_indicators=True)
     return CalculateStatsOutput(

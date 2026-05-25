@@ -2,7 +2,8 @@ import type { NodeInfo } from '../../types';
 import type { EdgeKind, InnerSlot, Layout, TopSlot } from './types';
 import {
   MARGIN_X, SLOT_W_REGULAR, INNER_STEP, INNER_VERT_STEP, INNER_RADIUS,
-  CENTER_Y, BUBBLE_PAD_X, BUBBLE_PAD_Y, COND_VERT_STEP,
+  CENTER_Y, BUBBLE_PAD_X, BUBBLE_PAD_Y, COND_VERT_STEP, NODE_RADIUS,
+  SVG_H,
 } from './constants';
 
 /** Group sibling nodes into ordered slots (parallel groups collapse into one slot). */
@@ -217,7 +218,13 @@ export function computeLayout(nodes: NodeInfo[], expandedSubgraphIds: Set<string
     innerEdges.set(parentId, edges);
   }
 
-  return { positions, svgW, topLevel, topSlots, innerByParentId, topEdges, innerEdges, bubbles };
+  // Compute dynamic height: ensure the SVG is tall enough to show all nodes
+  // plus their labels (NODE_RADIUS + ~30px for label text and margin).
+  const yValues = Object.values(positions).map(p => p.y);
+  const maxNodeY = yValues.length > 0 ? Math.max(...yValues) : CENTER_Y;
+  const svgH = Math.max(SVG_H, maxNodeY + NODE_RADIUS + 30);
+
+  return { positions, svgW, svgH, topLevel, topSlots, innerByParentId, topEdges, innerEdges, bubbles };
 }
 
 /** Build an SVG line path between two circles, stopping at their radii. */

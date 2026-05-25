@@ -103,7 +103,11 @@ const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, nodes, t
     : (typeof detailData.data !== 'string' ? detailData.data : undefined);
   const effectiveText = isCompletedStream
     ? undefined
-    : (typeof detailData.data === 'string' ? detailData.data : undefined);
+    : (typeof detailData.data === 'string'
+      ? detailData.data
+      : (resolvedMode === 'markdown' && typeof (detailData.data as Record<string, unknown> | null)?.markdown === 'string'
+        ? (detailData.data as Record<string, unknown>).markdown as string
+        : undefined));
   const effectiveViewSchema = isCompletedStream
     ? (streamTask!.view_schema as Record<string, string> | undefined)
     : detailData.viewSchema;

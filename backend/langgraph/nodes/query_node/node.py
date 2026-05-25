@@ -90,9 +90,10 @@ class QueryNode(BaseNode[QueryNodeInput, QueryNodeOutput]):
     def build_chain(self, ctx: NodeContext) -> Runnable[QueryNodeInput, dict[str, TaskOutput]]:
         """Chain: analyze_query → (optional web tasks) → get_and_calculate_stats."""
         async def _orchestrate(node_input: QueryNodeInput) -> dict[str, TaskOutput]:
-            # Step 1: extract stock name from query
+            # Step 1: extract stock name from query.
             analyze_result = await self.run_task(analyze_query, ctx, AnalyzeQueryInput(query=node_input.query))
             results: dict[str, TaskOutput] = {analyze_query.name: analyze_result}
+
             stock_name = analyze_result.content.stock_name
 
             # Step 2: web resolution when LLM did not recognise the stock

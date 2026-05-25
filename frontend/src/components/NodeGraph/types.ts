@@ -23,6 +23,7 @@ export interface Bubble {
 export interface Layout {
   positions: Record<string, { x: number; y: number }>;
   svgW: number;
+  svgH: number;
   topLevel: NodeInfo[];
   topSlots: TopSlot[];
   innerByParentId: Map<string, NodeInfo[]>;

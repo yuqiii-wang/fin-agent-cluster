@@ -30,7 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from langgraph.func import task
 from pydantic import BaseModel, Field
@@ -47,7 +47,7 @@ from backend.langgraph.models.common_tasks.errors.codes import (
     STATS_TASK_PERIOD_FALLBACK,
     STATS_TASK_PROVIDER_FALLBACK,
 )
-from backend.langgraph.models.models import TaskInput, TaskOutput
+from backend.langgraph.models.models import NodeContext, TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
 from backend.resources.news.client import NewsClient
 from backend.resources.news.models import NewsArticle
@@ -58,6 +58,7 @@ from backend.resources.stats.routing import provider_for_symbol
 logger = logging.getLogger(__name__)
 
 _TASK_NAME = "get_stats"
+_CACHE_TTL_HOURS = 4
 
 # Ordered fallback chain: if the requested period returns no data, try the next shorter period.
 _PERIOD_FALLBACKS: dict[str, list[str]] = {
@@ -181,6 +182,9 @@ async def _handler(payload: dict) -> dict:
     provider, period fallbacks are attempted before moving to the next
     provider.  The first successful result is cached and returned.
 
+    The pg cache check is handled upstream by ``run_task`` via ``pg_cache_fn``.
+    This function is only reached on a cache miss.
+
     Args:
         payload: Serialised :class:`GetStatsInput` dict.
 
@@ -193,130 +197,150 @@ async def _handler(payload: dict) -> dict:
     inp = GetStatsInput.model_validate(payload)
     symbol = inp.symbol.upper()
     method = "list_stats"
-    today_utc = date.today()  # calendar day in UTC
-    ttl_cutoff = datetime(today_utc.year, today_utc.month, today_utc.day, tzinfo=timezone.utc)
     bypass_cutoff = datetime.now(timezone.utc) - timedelta(minutes=inp.bypass_threshold_minutes)
 
     providers = _build_provider_chain(symbol)
     news_client = NewsClient()
     last_error: str | None = None
 
-    try:
-        for provider in providers:
-            stats_client = StatsClient(symbol=symbol, force_provider=provider)
-            try:
-                source = stats_client.provider
-                cache_key = _make_cache_key(source, method, symbol, inp.period)
-
-                # --- cache check ---
-                async with raw_conn(readonly=True) as conn:
-                    cur = await conn.execute(QuantRawSQL.GET_CACHED, (cache_key, ttl_cutoff))
-                    row = await cur.fetchone()
-
-                if row is not None:
-                    cached: dict = row["output"]
-                    stats_record = StatsRecord.model_validate(cached["stats_record"])
-                    news_articles = [NewsArticle.model_validate(a) for a in cached.get("news_articles", [])]
-                    created_at: datetime = row["created_at"]
-                    if created_at.tzinfo is None:
-                        created_at = created_at.replace(tzinfo=timezone.utc)
-
-                    bypass_calculate = False
-                    if created_at >= bypass_cutoff:
-                        granularity = PERIOD_TO_GRANULARITY.get(inp.period)
-                        if granularity:
-                            async with raw_conn(readonly=True) as conn:
-                                cur = await conn.execute(
-                                    OhlcvStatsSQL.COUNT_BY_SYMBOL_GRANULARITY, (symbol, granularity)
-                                )
-                                count_row = await cur.fetchone()
-                            bypass_calculate = count_row is not None and count_row["row_count"] > 0
-
-                    return GetStatsOutput(
-                        stats_record=stats_record,
-                        news_articles=news_articles,
-                        from_cache=True,
-                        bypass_calculate=bypass_calculate,
-                    ).model_dump(mode="json")
-
-                # --- fetch from provider with period fallback ---
-                periods_to_try = [inp.period] + _PERIOD_FALLBACKS.get(inp.period, [])
-                stats_record: StatsRecord | None = None
-                actual_period = inp.period
-                provider_fetch_failed = False
-                for period_attempt in periods_to_try:
-                    try:
-                        stats_resp = await stats_client.list_stats(symbol, period_attempt, limit=1)
-                    except Exception as exc:
-                        last_error = f"provider={provider} period={period_attempt}: {exc}"
-                        logger.error(
-                            "[%s] symbol=%s provider=%s period=%s error=%s, trying next provider",
-                            STATS_TASK_PROVIDER_FALLBACK, symbol, provider, period_attempt, exc,
-                        )
-                        provider_fetch_failed = True
-                        break
-                    if stats_resp.items:
-                        stats_record = stats_resp.items[0]
-                        actual_period = period_attempt
-                        break
-
-                if provider_fetch_failed or stats_record is None:
-                    if not provider_fetch_failed:
-                        last_error = f"provider={provider} returned no data for symbol={symbol} period={inp.period}"
-                        logger.error(
-                            "[%s] symbol=%s provider=%s returned no data, trying next provider",
-                            STATS_TASK_PROVIDER_FALLBACK, symbol, provider,
-                        )
-                    continue
-
-                if actual_period != inp.period:
+    for provider in providers:
+        stats_client = StatsClient(symbol=symbol, force_provider=provider)
+        try:
+            source = stats_client.provider
+            cache_key = _make_cache_key(source, method, symbol, inp.period)
+            periods_to_try = [inp.period] + _PERIOD_FALLBACKS.get(inp.period, [])
+            stats_record: StatsRecord | None = None
+            actual_period = inp.period
+            provider_fetch_failed = False
+            for period_attempt in periods_to_try:
+                try:
+                    stats_resp = await stats_client.list_stats(symbol, period_attempt, limit=1)
+                except Exception as exc:
+                    last_error = f"provider={provider} period={period_attempt}: {exc}"
                     logger.error(
-                        "[%s] symbol=%s period=%s unavailable, fell back to period=%s",
-                        STATS_TASK_PERIOD_FALLBACK, symbol, inp.period, actual_period,
+                        "[%s] symbol=%s provider=%s period=%s error=%s, trying next provider",
+                        STATS_TASK_PROVIDER_FALLBACK, symbol, provider, period_attempt, exc,
                     )
+                    provider_fetch_failed = True
+                    break
+                if stats_resp.items:
+                    stats_record = stats_resp.items[0]
+                    actual_period = period_attempt
+                    break
 
-                news_resp = await news_client.list_news(symbol, limit=inp.news_limit)
-                news_articles = news_resp.items
-
-                # --- persist in quant_raw (thread_id=None → cache is thread-agnostic) ---
-                output_payload: dict = {
-                    "stats_record": stats_record.model_dump(mode="json"),
-                    "news_articles": [a.model_dump(mode="json") for a in news_articles],
-                }
-                async with raw_conn() as conn:
-                    await conn.execute(
-                        QuantRawSQL.INSERT,
-                        (
-                            None,
-                            "common_tasks/get_stats",
-                            source,
-                            method,
-                            symbol,
-                            cache_key,
-                            json.dumps({"symbol": symbol, "period": inp.period}),
-                            json.dumps(output_payload),
-                        ),
+            if provider_fetch_failed or stats_record is None:
+                if not provider_fetch_failed:
+                    last_error = f"provider={provider} returned no data for symbol={symbol} period={inp.period}"
+                    logger.error(
+                        "[%s] symbol=%s provider=%s returned no data, trying next provider",
+                        STATS_TASK_PROVIDER_FALLBACK, symbol, provider,
                     )
+                continue
 
-                yf_exchange = stats_record.yf_exchange or derive_yf_exchange_from_ticker(symbol)
-                await upsert_stock_index_memberships(symbol, yf_exchange)
+            if actual_period != inp.period:
+                logger.error(
+                    "[%s] symbol=%s period=%s unavailable, fell back to period=%s",
+                    STATS_TASK_PERIOD_FALLBACK, symbol, inp.period, actual_period,
+                )
 
-                return GetStatsOutput(
-                    stats_record=stats_record,
-                    news_articles=news_articles,
-                    from_cache=False,
-                ).model_dump(mode="json")
+            news_resp = await news_client.list_news(symbol, limit=inp.news_limit)
+            news_articles = news_resp.items
 
-            finally:
-                await stats_client.aclose()
+            # --- persist in quant_raw (thread_id=None → cache is thread-agnostic) ---
+            output_payload: dict = {
+                "stats_record": stats_record.model_dump(mode="json"),
+                "news_articles": [a.model_dump(mode="json") for a in news_articles],
+            }
+            async with raw_conn() as conn:
+                await conn.execute(
+                    QuantRawSQL.INSERT,
+                    (
+                        None,
+                        "common_tasks/get_stats",
+                        source,
+                        method,
+                        symbol,
+                        cache_key,
+                        json.dumps({"symbol": symbol, "period": inp.period}),
+                        json.dumps(output_payload),
+                    ),
+                )
 
-        raise ValueError(
-            f"[{STATS_TASK_NO_DATA}] No stats data for symbol={symbol} period={inp.period} "
-            f"from any provider. Last error: {last_error}"
+            yf_exchange = stats_record.yf_exchange or derive_yf_exchange_from_ticker(symbol)
+            await upsert_stock_index_memberships(symbol, yf_exchange)
+
+            return GetStatsOutput(
+                stats_record=stats_record,
+                news_articles=news_articles,
+                from_cache=False,
+            ).model_dump(mode="json")
+
+        finally:
+            await stats_client.aclose()
+
+    raise ValueError(
+        f"[{STATS_TASK_NO_DATA}] No stats data for symbol={symbol} period={inp.period} "
+        f"from any provider. Last error: {last_error}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# PG cache function
+# ---------------------------------------------------------------------------
+
+
+async def _get_stats_pg_cache(
+    inp: GetStatsInput, ctx: NodeContext
+) -> GetStatsOutput | None:
+    """Check pg for a recent ``quant_raw`` record matching the same input parameters.
+
+    Queries each provider's cache key in fallback order using a 4-hour TTL.
+    On a hit, checks whether the cached entry is fresh enough to bypass
+    downstream stats recomputation.
+
+    Args:
+        inp: Typed task input.
+        ctx: Current node context (unused; present for signature compatibility).
+
+    Returns:
+        ``GetStatsOutput`` with ``from_cache=True`` on a cache hit, or ``None``.
+    """
+    symbol = inp.symbol.upper()
+    method = "list_stats"
+    ttl_cutoff = datetime.now(timezone.utc) - timedelta(hours=_CACHE_TTL_HOURS)
+    bypass_cutoff = datetime.now(timezone.utc) - timedelta(minutes=inp.bypass_threshold_minutes)
+    providers = _build_provider_chain(symbol)
+
+    for provider in providers:
+        cache_key = _make_cache_key(provider, method, symbol, inp.period)
+        async with raw_conn(readonly=True) as conn:
+            cur = await conn.execute(QuantRawSQL.GET_CACHED, (cache_key, ttl_cutoff))
+            row = await cur.fetchone()
+        if row is None:
+            continue
+        cached: dict = row["output"]
+        stats_record = StatsRecord.model_validate(cached["stats_record"])
+        news_articles = [NewsArticle.model_validate(a) for a in cached.get("news_articles", [])]
+        created_at: datetime = row["created_at"]
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        bypass_calculate = False
+        if created_at >= bypass_cutoff:
+            granularity = PERIOD_TO_GRANULARITY.get(inp.period)
+            if granularity:
+                async with raw_conn(readonly=True) as conn:
+                    cur = await conn.execute(
+                        OhlcvStatsSQL.COUNT_BY_SYMBOL_GRANULARITY, (symbol, granularity)
+                    )
+                    count_row = await cur.fetchone()
+                bypass_calculate = count_row is not None and count_row["row_count"] > 0
+        return GetStatsOutput(
+            stats_record=stats_record,
+            news_articles=news_articles,
+            from_cache=True,
+            bypass_calculate=bypass_calculate,
         )
-
-    finally:
-        await news_client.aclose()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -375,6 +399,7 @@ get_stats = NodeTask(
     output_type=GetStatsOutput,
     task_fn=_get_stats_task,
     handler=_handler,
+    pg_cache_fn=_get_stats_pg_cache,
 )
 
 HANDLERS: dict = {_TASK_NAME: _handler}

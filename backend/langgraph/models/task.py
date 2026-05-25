@@ -32,7 +32,7 @@ in the Celery worker.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Generic, TypeVar
 
 from pydantic import BaseModel
@@ -66,6 +66,12 @@ class NodeTask(Generic[I, O]):
         output_type: Pydantic model type for the task output content.
         task_fn: The ``@task``-decorated async function (LangGraph orchestration layer).
         handler: Pure async handler ``(payload: dict) -> dict`` (Celery execution layer).
+        pg_cache_fn: Optional async function ``(input: I, ctx: NodeContext) -> O | None``
+            called by ``run_task`` before invoking ``task_fn``.  When it returns a
+            non-``None`` output, ``run_task`` short-circuits with a ``ToolCall``
+            lifecycle record and returns the cached result — skipping both ``task_fn``
+            and the Celery dispatch.  All tasks that previously implemented per-task
+            cache checks should register their check here.
     """
 
     name: str
@@ -74,6 +80,7 @@ class NodeTask(Generic[I, O]):
     output_type: type[O]
     task_fn: Callable  # @task-decorated; awaited by BaseNode.run_task()
     handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+    pg_cache_fn: Callable[..., Awaitable[Any]] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Validate types and register the description in the global registry."""

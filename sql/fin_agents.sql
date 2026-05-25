@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
     thread_id TEXT NOT NULL UNIQUE,
     user_id TEXT,
     query TEXT NOT NULL,
+    -- Deterministic MD5 fingerprint of the raw query string; used for O(1)
+    -- same-query cache lookups without a full-text scan.
+    query_hash TEXT GENERATED ALWAYS AS (md5(query)) STORED,
     answer TEXT,
     status fin_agents.query_status NOT NULL DEFAULT 'connecting',
     is_ack      BOOLEAN NOT NULL DEFAULT FALSE,
@@ -40,6 +43,7 @@ CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
 
 CREATE INDEX IF NOT EXISTS fin_agents_user_queries_user_id_idx ON fin_agents.user_queries (user_id);
 CREATE INDEX IF NOT EXISTS fin_agents_user_queries_created_at_idx ON fin_agents.user_queries (created_at DESC);
+CREATE INDEX IF NOT EXISTS fin_agents_user_queries_query_hash_idx ON fin_agents.user_queries (query_hash);
 
 
 -- Dedup guard — same-minute resubmission guard.

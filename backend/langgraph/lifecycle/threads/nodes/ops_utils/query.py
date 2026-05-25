@@ -84,7 +84,7 @@ async def read_node_output(node_id: str) -> dict:
 async def get_latest_sibling_node_version(
     thread_id: str,
     node_name: str,
-) -> int:
+) -> int | None:
     """Return the latest completed version of a parallel sibling node.
 
     Used by the parallel sibling shortcut.  The sibling's latest completed
@@ -97,18 +97,21 @@ async def get_latest_sibling_node_version(
         node_name: Sibling node name to look up.
 
     Returns:
-        Highest completed version, or 0 if none exists.
+        Highest completed version, or ``None`` if no completed version exists.
+        ``None`` signals the caller that the sibling has never completed and
+        must run fresh rather than taking the shortcut path.
     """
     try:
         async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
-                "SELECT COALESCE(MAX(version), 0) AS v"
+                "SELECT MAX(version) AS v"
                 " FROM fin_agents.nodes"
                 " WHERE thread_id = %s AND node_name = %s AND status = 'completed'",
                 (thread_id, node_name),
             )
             row = await cur.fetchone()
-        return int(row["v"]) if row else 0
+        v = row["v"] if row else None
+        return int(v) if v is not None else None
     except Exception as exc:
         logger.error(
             "[%s] get_latest_sibling_node_version DB error node_name=%s: %s",

@@ -161,6 +161,15 @@ async def re_explore_node(
         fork_configurable["checkpoint_ns"] = snap_conf["checkpoint_ns"]
     fork_config = {"configurable": fork_configurable}
 
+    # If parallel_group was NULL in DB (nodes created before parallel_group
+    # class vars were set), fall back to the topology as the canonical source.
+    if not pg and not is_topology_only:
+        from backend.api.graph.topology import GRAPH_TOPOLOGY
+        for _topo_node in GRAPH_TOPOLOGY.nodes:
+            if _topo_node.node_name == node_name and _topo_node.parallel_group:
+                pg = _topo_node.parallel_group
+                break
+
     new_generation = await get_next_fork_generation(thread_id)
     state_update: dict = {
         "fork_generation": new_generation,
@@ -169,6 +178,43 @@ async def re_explore_node(
     }
     if pg:
         state_update["fork_parallel_group"] = pg
+
+    # Refresh checkpoint: pre-populate sibling NodeRecords so the forked
+    # checkpoint carries each sibling at its furthest completed version.
+    # This means subsequent re-explores fork from a checkpoint that already
+    # has the correct sibling states, without relying solely on the shortcut
+    # path in entrypoint.py.  Siblings with no completed version are skipped
+    # (they will run fresh via the normal path).
+    if pg and not is_topology_only:
+        from backend.api.graph.topology import GRAPH_TOPOLOGY
+        from backend.langgraph.lifecycle.ids import make_node_id as _make_node_id
+        from backend.langgraph.lifecycle.threads.nodes import get_latest_sibling_node_version
+
+        sibling_nodes: dict = {}
+        for _topo_node in GRAPH_TOPOLOGY.nodes:
+            if _topo_node.parallel_group != pg or _topo_node.node_name == node_name:
+                continue
+            sibling_version = await get_latest_sibling_node_version(
+                thread_id, _topo_node.node_name
+            )
+            if sibling_version is None:
+                continue
+            sibling_node_id = _make_node_id(thread_id, _topo_node.node_name, sibling_version)
+            sibling_nodes[sibling_node_id] = {
+                "node_id": sibling_node_id,
+                "task_ids": [],
+                "metadata": {
+                    "node_name": _topo_node.node_name,
+                    "type": _topo_node.node_type,
+                    "status": "completed",
+                    "version": sibling_version,
+                },
+                "prev_node_ids": [],
+                "next_node_ids": [],
+            }
+        if sibling_nodes:
+            state_update["nodes"] = sibling_nodes
+
     if input_override:
         state_update.update(input_override)
 

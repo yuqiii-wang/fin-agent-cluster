@@ -19,6 +19,7 @@ from backend.db.postgres.errors.codes import (
     PG_CHECKPOINTER_TIMEOUT,
     PG_CHECKPOINTER_SETUP_FAILED,
     PG_QUERY_FAILED,
+    PG_CONN_TERMINATED,
 )
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "PG_CHECKPOINTER_TIMEOUT",
     "PG_CHECKPOINTER_SETUP_FAILED",
     "PG_QUERY_FAILED",
+    "PG_CONN_TERMINATED",
 ]

@@ -66,7 +66,26 @@ _GET_VERSION_FORK_NODE = """
     LIMIT 1
 """
 
+# Fetch all nodes that belong to a given fork-generation AND any cross-version
+# predecessor nodes reachable by following prev_node_ids recursively.
+# This ensures that when a re-explore reuses sibling nodes from an earlier version
+# (via the parallel shortcut), those shared nodes still appear in the version graph.
+#
+# Params: (thread_id, version, thread_id, thread_id)
 _LIST_NODES_BY_VERSION = """
+    WITH RECURSIVE reachable(node_id, prev_node_ids) AS (
+        -- Seed: nodes explicitly in this fork generation.
+        SELECT n.node_id, n.prev_node_ids
+        FROM fin_agents.nodes n
+        WHERE n.thread_id = %s AND n.version = %s
+        UNION
+        -- Expand: follow prev_node_ids to pull in shared predecessors from
+        -- earlier versions (e.g. sibling nodes reused via shortcut path).
+        SELECT n.node_id, n.prev_node_ids
+        FROM fin_agents.nodes n
+        INNER JOIN reachable r ON n.node_id = ANY(r.prev_node_ids)
+        WHERE n.thread_id = %s
+    )
     SELECT n.node_id, n.thread_id, n.node_name, n.status, n.type,
            n.parent_node_id, n.parallel_group,
            n.version, n.checkpoint_id, n.prev_node_ids, n.next_node_ids, n.task_ids,
@@ -74,9 +93,9 @@ _LIST_NODES_BY_VERSION = """
            ne.input, ne.output,
            n.started_at, n.elapsed_ms, n.updated_at
     FROM fin_agents.nodes n
+    INNER JOIN reachable ON reachable.node_id = n.node_id
     LEFT JOIN fin_agents.node_executions ne ON ne.node_id = n.node_id
     WHERE n.thread_id = %s
-      AND n.version   = %s
     ORDER BY n.started_at
 """
 

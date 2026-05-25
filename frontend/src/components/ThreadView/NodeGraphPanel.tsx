@@ -77,7 +77,7 @@ const NodeGraphPanel: React.FC<Props> = ({
       {sidebarOpen && selectedNode ? (
         <Splitter style={{ height: 380 }}>
           <Splitter.Panel defaultSize="60%" min="40%">
-            <div style={{ padding: '8px 0' }}>
+            <div style={{ padding: '8px 0', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
               <NodeGraph
                 nodes={versionNodes}
                 topology={topology}
@@ -107,7 +107,7 @@ const NodeGraphPanel: React.FC<Props> = ({
           </Splitter.Panel>
         </Splitter>
       ) : (
-        <div style={{ height: 380 }}>
+        <div style={{ height: 380, overflowY: 'auto' }}>
           <NodeGraph
             nodes={versionNodes}
             topology={topology}

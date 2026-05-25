@@ -182,6 +182,22 @@ class BaseNode(
             return await self.build_agent(ctx, node_input)
         return await self.build_chain(ctx).ainvoke(node_input)
 
+    def update_agent_memory(self, ctx: NodeContext, entries: list[dict]) -> None:
+        """Append *entries* to the in-flight agent memory for this execution.
+
+        Memory is stored in ``ctx.metadata["agent_memory"]`` so it is
+        scoped to the current node execution (``NodeContext`` is created fresh
+        per ``__call__``).  Concurrent executions across threads each hold
+        their own ``NodeContext``, so there is no shared-state risk.
+
+        Args:
+            ctx:     The ``NodeContext`` for the current execution.
+            entries: New memory entries to append.  Schema is defined by the
+                     caller; ``prepare_peers`` uses
+                     ``{"symbol": str, "corr": float, "status": str}``.
+        """
+        ctx.metadata.setdefault("agent_memory", []).extend(entries)
+
     @abstractmethod
     def build_output(self, results: dict[str, TaskOutput]) -> O:
         """Select and compose node output from task results."""

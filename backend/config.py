@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     DB_CONNECT_TIMEOUT_SECONDS: int = 8
     # ── LLM provider selection ─────────────────────────────────────────────
     # Which LLM backend to use: ark | gemini | ollama | mock
-    LLM_PROVIDER: str = "ark"
+    LLM_PROVIDER: str = "ollama"
 
     # ── Volcano Engine ARK / Doubao ──────────────────────────────────────────
     ARK_API_KEY: Optional[str] = None
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
 
     # ── Embedding ─────────────────────────────────────────────────────────────
     # Provider: google | ollama | mock
-    EMBEDDING_PROVIDER: str = "google"
+    EMBEDDING_PROVIDER: str = "ollama"
     GOOGLE_EMBEDDING_MODEL: str = "models/text-embedding-004"
     GOOGLE_EMBEDDING_DIMENSIONS: int = 768
 

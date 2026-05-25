@@ -1,5 +1,8 @@
 CREATE SCHEMA IF NOT EXISTS fin_markets;
 
+-- Enable pgvector extension for vector similarity search on embeddings.
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- news_raw: logs every call to a news/search API (yfinance news, alpha vantage news & sentiment, web search)
 -- 4-hour cache — same cache_key within the TTL returns the stored output
 -- thread_id is nullable so the same cached record can be reused across different threads
@@ -151,20 +154,19 @@ CREATE TABLE IF NOT EXISTS fin_markets.news_stats (
     source          TEXT          NOT NULL,                     -- 'yfinance', 'alpha_vantage', 'web_search'
     -- article identity
     symbol          TEXT,                                       -- primary ticker; NULL for topic news
-    url_hash        TEXT          NOT NULL,                     -- sha256(url) for dedup index
+    url             TEXT,                                       -- original article URL (for display/linking)
+    url_hash        TEXT          NOT NULL,                     -- sha256(url or title) for deduplication
     title           TEXT          NOT NULL,
+    content         TEXT,                                       -- full article text (if available); otherwise a snippet or summary from the provider
     source_name     TEXT,                                       -- publisher / media outlet name
     published_at    TIMESTAMPTZ,                                -- when the article was published (UTC)
     -- AI-generated enrichment
-    ai_summary      TEXT,                                       -- 2-3 sentence AI summary
-    summary_embedding FLOAT[],                                 -- embedding of ai_summary via Google text-embedding-004 (768 dims); stored as float array, no pgvector required
+    summary         TEXT,                                       -- 2-3 sentence AI summary
+    summary_embedding vector(768),                              -- 768-dim pgvector embedding (text-embedding-004 / qwen3-0.6b-emb)
     sentiment_level TEXT          REFERENCES fin_markets.sentiment_levels(code),
-    sector          TEXT          REFERENCES fin_markets.news_sectors(code),
-    topic_level1    TEXT          REFERENCES fin_markets.news_topic_level1(code),
-    topic_level2    TEXT          REFERENCES fin_markets.news_topic_level2(code),
-    impact_category TEXT          REFERENCES fin_markets.news_impact_categories (code),
+    topic           TEXT          REFERENCES fin_markets.news_topics(code),
                                                                 -- level3 event code, e.g. 'earnings_beat' → news_impact_categories.code
-    topics          TEXT[]        NOT NULL DEFAULT '{}',        -- free-form tags beyond the structured classification
+    tags            TEXT[]        NOT NULL DEFAULT '{}',        -- free-form tags for display and filtering, e.g. ['earnings', 'optimistic']
     -- timestamps
     created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     CONSTRAINT news_stats_uniq UNIQUE (source, url_hash)
@@ -177,9 +179,12 @@ CREATE INDEX IF NOT EXISTS fin_markets_news_stats_sentiment_idx
 CREATE INDEX IF NOT EXISTS fin_markets_news_stats_published_at_idx
     ON fin_markets.news_stats (published_at DESC);
 CREATE INDEX IF NOT EXISTS fin_markets_news_stats_impact_idx
-    ON fin_markets.news_stats (topic_level1, topic_level2, published_at DESC);
-CREATE INDEX IF NOT EXISTS fin_markets_news_stats_impact_category_idx
-    ON fin_markets.news_stats (impact_category, published_at DESC);
+    ON fin_markets.news_stats (topic, published_at DESC);
+-- HNSW index for fast approximate nearest-neighbour cosine similarity on embeddings.
+CREATE INDEX IF NOT EXISTS fin_markets_news_stats_embedding_hnsw_idx
+    ON fin_markets.news_stats USING hnsw (summary_embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64)
+    WHERE summary_embedding IS NOT NULL;
 
 
 -- sec_profiles: one row per security — slow-changing identity and profile data

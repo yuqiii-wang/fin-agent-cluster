@@ -36,7 +36,8 @@ _checkpointer_pool: AsyncConnectionPool | None = None
 _raw_pool: AsyncConnectionPool | None = None
 _raw_read_pool: AsyncConnectionPool | None = None
 
-_DEFAULT_SEARCH_PATH = "fin_markets,fin_agents"
+DEFAULT_SEARCH_PATH = "fin_markets,fin_agents,public"
+_DEFAULT_SEARCH_PATH = DEFAULT_SEARCH_PATH  # internal alias
 
 
 async def open_pools() -> None:

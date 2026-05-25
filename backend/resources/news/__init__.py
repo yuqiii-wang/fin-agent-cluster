@@ -1,22 +1,22 @@
 """News provider package.
 
-Provides news article models, mock data, and the httpx client.
+Provides news article and web-search models, and the DDGS-backed client.
 
 Sub-packages
 ------------
-mock    — in-process mock transport + static articles for offline / test use.
 errors  — news-specific error codes.
 
 Exports
 -------
-NewsClient       — Async httpx client (mock provider by default).
+NewsClient       — DDGS-backed async client.
 NewsArticle      — Pydantic model for a single article.
 NewsListResponse — Pydantic model for a paginated list.
+InfoResult       — Pydantic model for a web-search result.
 """
 
 from __future__ import annotations
 
 from backend.resources.news.client import NewsClient
-from backend.resources.news.models import NewsArticle, NewsListResponse
+from backend.resources.news.models import InfoResult, NewsArticle, NewsListResponse
 
-__all__ = ["NewsClient", "NewsArticle", "NewsListResponse"]
+__all__ = ["NewsClient", "NewsArticle", "NewsListResponse", "InfoResult"]

@@ -52,19 +52,22 @@ export function getNodesForVersion(allNodes: NodeInfo[], version: number, topolo
     }
     frontier = next;
   }
-  // Also include parallel siblings: nodes that appear in version-N nodes' prev_node_ids
-  // and share a parallel_group with a version-N node (but are not themselves version-N).
+  // Also include parallel siblings: nodes that share a parallel_group with a version-N node
+  // and branch off from a shared ancestor (at least one predecessor is already in allSharedIds).
+  // These are sibling nodes in the same fan-out group, NOT predecessors of the forked node.
+  // Exclude any node whose node_name matches a version-N node name — that is the "old version"
+  // of the same node, which must not appear alongside the new forked copy.
   const parallelGroupsInVersionN = new Set(
     versionNNodes.map(n => n.parallel_group).filter((g): g is string => g != null));
+  const versionNNodeNames = new Set(versionNNodes.map(n => n.node_name));
   if (parallelGroupsInVersionN.size > 0) {
-    const versionNPrevIds = new Set(versionNNodes.flatMap(n => n.prev_node_ids ?? []));
     for (const n of realNodes) {
       if (
         !allSharedIds.has(n.node_id) &&
-        !versionNNodes.some(v => v.node_id === n.node_id) &&
+        !versionNNodeNames.has(n.node_name) &&
         n.parallel_group != null &&
         parallelGroupsInVersionN.has(n.parallel_group) &&
-        versionNPrevIds.has(n.node_id)
+        (n.prev_node_ids ?? []).some(pid => allSharedIds.has(pid))
       ) {
         allSharedIds.add(n.node_id);
       }

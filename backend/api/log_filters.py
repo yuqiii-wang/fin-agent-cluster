@@ -36,6 +36,10 @@ class HealthCheckThrottleFilter(logging.Filter):
     _SUPPRESSED: frozenset[str] = frozenset(
         {"/api/v1/centrifugo/publish"}
     )
+    # Paths where INFO records are suppressed but WARNING+ are passed through.
+    _INFO_SUPPRESSED: frozenset[str] = frozenset(
+        {"/metrics"}
+    )
 
     def __init__(self) -> None:
         """Initialise counters and the interval clock."""
@@ -65,6 +69,9 @@ class HealthCheckThrottleFilter(logging.Filter):
 
         if path in self._SUPPRESSED:
             return False
+
+        if path in self._INFO_SUPPRESSED:
+            return record.levelno >= logging.WARNING
 
         if path not in self._THROTTLED:
             return True

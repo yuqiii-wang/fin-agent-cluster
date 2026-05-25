@@ -335,7 +335,7 @@ def _compress_thinking(thinking: str) -> tuple[str, str, int]:
     Returns:
         ``(non_repeating, repeating_block, repeat_count)``
     """
-    from backend.celery_task.workers.tasks.stream_task import _detect_and_compress_repetition
+    from backend.celery_task.workers.tasks.stream_utils import detect_and_compress_repetition as _detect_and_compress_repetition
     return _detect_and_compress_repetition(thinking)
 
 

@@ -3,7 +3,7 @@
 Exports
 -------
 Node callables (registered with LangGraph StateGraph):
-    query_node, prepare_peers_node, prepare_macro_node, prepare_index_node
+    query_node, prepare_peers_node, prepare_macro_stats_node, prepare_index_node
 
 HANDLERS registry (consumed by the Celery completion worker):
     Flat dict mapping task_name → async handler assembled from each node's
@@ -19,12 +19,13 @@ NODE_REGISTRY:
 from backend.langgraph.nodes.query_node import query_node
 from backend.langgraph.nodes.query_node import HANDLERS as _QH
 from backend.langgraph.nodes.prepare_peers import prepare_peers_node
-from backend.langgraph.nodes.prepare_macro import prepare_macro_node
+from backend.langgraph.nodes.prepare_macro_stats import prepare_macro_stats_node
 from backend.langgraph.nodes.prepare_index import prepare_index_node
+from backend.langgraph.nodes.prepare_news import prepare_news_node
 from backend.langgraph.models.common_tasks import HANDLERS as _CTH
 
 # Global HANDLERS registry consumed by completion_task.run_completion.
-# prepare_peers, prepare_macro, prepare_index have no completion-worker handlers
+# prepare_peers, prepare_macro_stats, prepare_index have no completion-worker handlers
 # (all tasks stream via Celery stream worker).
 HANDLERS: dict = {**_QH, **_CTH}
 
@@ -34,15 +35,16 @@ NODE_REGISTRY: dict = {
     for node in [
         query_node,
         prepare_peers_node,
-        prepare_macro_node,
+        prepare_macro_stats_node,
         prepare_index_node,
+        prepare_news_node,
     ]
 }
 
 __all__ = [
     "query_node",
     "prepare_peers_node",
-    "prepare_macro_node",
+    "prepare_macro_stats_node",
     "prepare_index_node",
     "HANDLERS",
     "NODE_REGISTRY",

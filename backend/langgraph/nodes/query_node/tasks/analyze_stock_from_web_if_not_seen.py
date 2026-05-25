@@ -29,7 +29,8 @@ from __future__ import annotations
 import json
 import logging
 
-from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage
+from langchain_core.messages import BaseMessage
+from langchain_core.prompts import ChatPromptTemplate
 from langgraph.func import task
 from pydantic import BaseModel, Field
 
@@ -81,6 +82,26 @@ class AnalyzeWebStockOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Prompt template (module-level global)
+# ---------------------------------------------------------------------------
+
+_ANALYZE_WEB_STOCK_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a financial analyst. Identify company names and stock tickers from web content. "
+     "Respond with valid JSON only:\n"
+     '{{"stock_name": "<exact company name or ticker>", "not_seen": false}}\n\n'
+     "Set not_seen to true ONLY if the web content clearly does not match any known publicly "
+     "traded company. No explanation, only the JSON."),
+    ("human",
+     'The user asked: "{query}"\n\n'
+     'We could not initially identify the stock "{stock_name}". '
+     "We fetched the following information from the web:\n\n"
+     "{web_section}\n\n"
+     "Based on this information, identify the exact company name and primary stock ticker symbol."),
+])
+
+
+# ---------------------------------------------------------------------------
 # Streaming prompt builder — imported by stream_task.py
 # ---------------------------------------------------------------------------
 
@@ -100,24 +121,11 @@ def _build_analyze_web_stock_prompt(payload: dict) -> list[BaseMessage]:
         if inp.web_content
         else "No web content was retrieved."
     )
-    system_content = (
-        "You are a financial analyst. Identify company names and stock tickers from web content. "
-        "Respond with valid JSON only:\n"
-        '{"stock_name": "<exact company name or ticker>", "not_seen": false}\n\n'
-        "Set not_seen to true ONLY if the web content clearly does not match any known publicly "
-        "traded company. No explanation, only the JSON."
+    return _ANALYZE_WEB_STOCK_PROMPT.format_messages(
+        query=inp.query,
+        stock_name=inp.stock_name,
+        web_section=web_section,
     )
-    human_content = (
-        f'The user asked: "{inp.query}"\n\n'
-        f'We could not initially identify the stock "{inp.stock_name}". '
-        f"We fetched the following information from the web:\n\n"
-        f"{web_section}\n\n"
-        f"Based on this information, identify the exact company name and primary stock ticker symbol."
-    )
-    return [
-        SystemMessage(content=system_content),
-        HumanMessage(content=human_content),
-    ]
 
 
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_analyze_web_stock_prompt}

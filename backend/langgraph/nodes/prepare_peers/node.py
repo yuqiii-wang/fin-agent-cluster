@@ -44,6 +44,7 @@ from uuid import uuid4
 
 from backend.db.postgres.queries.fin_markets_indexes import get_symbol_index_codes
 from backend.db.postgres.types import NodeType
+from backend.langgraph.agent.memory.ops import append_memory_entry, get_max_seq_num
 from backend.langgraph.lifecycle import read_node_output
 from backend.langgraph.models.models import NodeContext, TaskContext, TaskOutput
 from backend.langgraph.models.node import BaseNode
@@ -73,6 +74,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _MAX_ITERATIONS: int = 3
+# Number of confirmed peers required to exit the loop early.
+_MIN_CONFIRMED_TO_EXIT: int = 2
 # Pearson abs(r) ≥ this value is treated as a validated peer.
 _CORR_THRESHOLD: float = 0.75
 # Period used when fetching and computing stats for peer validation.
@@ -98,6 +101,7 @@ class AnalyzePeersNode(BaseNode[AnalyzePeersInput, AnalyzePeersOutput]):
     node_type = NodeType.AGENT
     display_name = "Analyze Peers"
     category = "Analysis"
+    parallel_group: ClassVar[str] = "analyze_parallel"
     config_fields: ClassVar[list[dict]] = [
         {
             "key": "human_in_the_loop",
@@ -354,10 +358,46 @@ class AnalyzePeersNode(BaseNode[AnalyzePeersInput, AnalyzePeersOutput]):
             results[f"{analyze_peer_corr.name}_iter{iteration}"] = apc_out
 
             excluded.extend(apc_out.content.rejected_peers)
+            # Exclude confirmed peers too so subsequent iterations propose fresh symbols.
+            excluded.extend(apc_out.content.confirmed_peers)
             all_confirmed.extend(apc_out.content.confirmed_peers)
 
-            if apc_out.content.confirmed_peers:
-                break  # Accepted peers found — exit early
+            # Update base agent node memory with this iteration's corr results.
+            # Subsequent propose_peer_stocks calls receive it via TaskInput.memory.
+            mem_entries = [
+                {
+                    "symbol": sym,
+                    "corr": round(corr_val, 4),
+                    "status": "confirmed" if sym in apc_out.content.confirmed_peers else "rejected",
+                }
+                for sym, corr_val in iter_peer_corrs.items()
+            ]
+            self.update_agent_memory(ctx, mem_entries)
+            # Persist to DB so the UI Memory tab reflects this iteration's results.
+            seq_num = await get_max_seq_num(ctx.node_id) + 1
+            await append_memory_entry(
+                ctx.thread_id,
+                ctx.node_id,
+                "task_result",
+                {
+                    "tool_name": "analyze_peer_corr",
+                    "result": {
+                        "iteration": iteration,
+                        "confirmed_peers": apc_out.content.confirmed_peers,
+                        "rejected_peers": apc_out.content.rejected_peers,
+                        "corr_scores": {sym: round(v, 4) for sym, v in iter_peer_corrs.items()},
+                    },
+                },
+                seq_num,
+            )
+
+            # Exit early once enough peers are confirmed across all iterations.
+            _seen: set[str] = set()
+            unique_confirmed_so_far = [
+                s for s in all_confirmed if not (_seen.__contains__(s) or _seen.add(s))
+            ]
+            if len(unique_confirmed_so_far) >= _MIN_CONFIRMED_TO_EXIT:
+                break  # Enough validated peers found — exit early
 
         # ── Final selection: top peers by abs corr with target ────────────────
         seen: set[str] = set()

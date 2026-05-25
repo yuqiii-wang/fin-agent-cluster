@@ -31,8 +31,6 @@ async def _check_db_conn() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage app startup and shutdown for this main thread instance."""
-    logger.info("[startup] using mock LLM provider")
-    logger.info("[startup] using mock embedding provider")
     # Open shared PostgreSQL connection pools first — raw_conn() and the
     # checkpointer both draw from these pools; must be open before any DB call.
     from backend.db.postgres.pool import open_pools, close_pools as _close_pools

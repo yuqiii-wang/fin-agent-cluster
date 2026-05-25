@@ -14,7 +14,7 @@ class NewsRawSQL:
     """Queries against ``fin_markets.news_raw`` (news API cache)."""
 
     GET_CACHED = """
-        SELECT output
+        SELECT id, source, output
         FROM fin_markets.news_raw
         WHERE cache_key = %s
           AND created_at > %s
@@ -48,45 +48,80 @@ class NewsRawSQL:
         WHERE created_at < NOW() - INTERVAL '4 hours'
     """
 
+    GET_BY_ID = """
+        SELECT id, source, method, output, created_at
+        FROM fin_markets.news_raw
+        WHERE id = %s
+    """
+
 
 class NewsStatsSQL:
     """Queries against ``fin_markets.news_stats`` (enriched per-article table)."""
 
     UPSERT = """
         INSERT INTO fin_markets.news_stats (
-            news_raw_id, source, symbol, url_hash, title, source_name, published_at,
-            ai_summary, summary_embedding, sentiment_level,
-            sector, topic_level1, topic_level2, impact_category,
-            topics, region
+            news_raw_id, source, symbol, url, url_hash, title, content, source_name, published_at,
+            summary, summary_embedding,
+            sentiment_level, topic,
+            tags
         ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s,
-            %s,
-            %s,
-            %s,
-            %s, %s, %s,
-            %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s::vector,
+            %s, %s,
+            %s
         )
         ON CONFLICT (source, url_hash) DO UPDATE SET
             news_raw_id       = COALESCE(EXCLUDED.news_raw_id,       fin_markets.news_stats.news_raw_id),
-            ai_summary        = COALESCE(EXCLUDED.ai_summary,        fin_markets.news_stats.ai_summary),
+            url               = COALESCE(EXCLUDED.url,               fin_markets.news_stats.url),
+            content           = COALESCE(EXCLUDED.content,           fin_markets.news_stats.content),
+            summary           = COALESCE(EXCLUDED.summary,           fin_markets.news_stats.summary),
             summary_embedding = COALESCE(EXCLUDED.summary_embedding, fin_markets.news_stats.summary_embedding),
             sentiment_level   = COALESCE(EXCLUDED.sentiment_level,   fin_markets.news_stats.sentiment_level),
-            sector            = COALESCE(EXCLUDED.sector,            fin_markets.news_stats.sector),
-            topic_level1     = COALESCE(EXCLUDED.topic_level1,     fin_markets.news_stats.topic_level1),
-            topic_level2     = COALESCE(EXCLUDED.topic_level2,     fin_markets.news_stats.topic_level2),
-            impact_category   = COALESCE(EXCLUDED.impact_category,   fin_markets.news_stats.impact_category),
-            region            = COALESCE(EXCLUDED.region,            fin_markets.news_stats.region),
-            topics            = CASE
-                                    WHEN array_length(EXCLUDED.topics, 1) > 0
-                                    THEN EXCLUDED.topics
-                                    ELSE fin_markets.news_stats.topics
+            topic             = COALESCE(EXCLUDED.topic,             fin_markets.news_stats.topic),
+            tags              = CASE
+                                    WHEN array_length(EXCLUDED.tags, 1) > 0
+                                    THEN EXCLUDED.tags
+                                    ELSE fin_markets.news_stats.tags
                                 END
     """
 
     GET_RECENT_BY_SYMBOL = """
-        SELECT id, title, sentiment_level, sector, published_at
+        SELECT id, title, sentiment_level, published_at
         FROM fin_markets.news_stats
         WHERE symbol = %s
         ORDER BY published_at DESC
         LIMIT %s
+    """
+
+    GET_BY_NEWS_RAW_ID = """
+        SELECT id, title, url, source, source_name, published_at,
+               sentiment_level, topic,
+               summary, tags, symbol
+        FROM fin_markets.news_stats
+        WHERE news_raw_id = %s
+        ORDER BY published_at DESC NULLS LAST
+    """
+
+    GET_SUMMARIES_BY_NEWS_RAW_ID = """
+        SELECT url_hash, summary, sentiment_level, topic, tags
+        FROM fin_markets.news_stats
+        WHERE news_raw_id = %s
+          AND summary IS NOT NULL
+    """
+
+    GET_EMBEDDINGS_BY_NEWS_RAW_ID = """
+        SELECT url_hash, summary_embedding::text AS summary_embedding
+        FROM fin_markets.news_stats
+        WHERE news_raw_id = %s
+          AND summary_embedding IS NOT NULL
+    """
+
+
+class NewsTopicsSQL:
+    """Queries against ``fin_markets.news_topics`` (static topic taxonomy)."""
+
+    GET_ALL_CODES = """
+        SELECT code
+        FROM fin_markets.news_topics
+        ORDER BY code
     """

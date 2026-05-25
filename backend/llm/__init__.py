@@ -3,6 +3,8 @@ Unified LLM interface for the backend.
 The Interface is a dict that by what key to get the LLM provider.
 """
 
-from backend.llm.factory import LLMProvider, get_llm
+from backend.llm.embedding import EmbeddingClient
+from backend.llm.factory import EmbeddingProvider, LLMProvider, get_completion_llm, get_embedder, get_llm
 
-__all__ = ["get_llm", "LLMProvider"]
+__all__ = ["EmbeddingClient", "EmbeddingProvider", "LLMProvider", "get_completion_llm", "get_embedder", "get_llm"]
+

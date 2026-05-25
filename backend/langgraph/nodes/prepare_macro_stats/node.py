@@ -17,7 +17,7 @@ No correlation analysis is performed.
 Predecessor
 -----------
 ``query_node`` — must be completed before ``analyze_economics`` starts.
-Runs in parallel with ``prepare_peers`` and ``prepare_index``.
+Runs in parallel with ``prepare_peers``, ``prepare_macro_stats``, and ``prepare_index``.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats imp
 from backend.langgraph.models.models import NodeContext
 from backend.langgraph.models.node import BaseNode
 from backend.langgraph.models.task import NodeTask
-from backend.langgraph.nodes.prepare_macro.models import (
+from backend.langgraph.nodes.prepare_macro_stats.models import (
     AnalyzeEconomicsInput,
     AnalyzeEconomicsOutput,
     EconomicsInstrumentResult,
@@ -53,10 +53,11 @@ _INSTRUMENT_CATEGORY: str = "macro"
 class AnalyzeMacroNode(BaseNode[AnalyzeEconomicsInput, AnalyzeEconomicsOutput]):
     """Workflow node: fetches and calculates stats for macro commodity instruments."""
 
-    node_name = "prepare_macro"
+    node_name = "prepare_macro_stats"
     node_type = NodeType.WORKFLOW
     display_name = "Analyze Macro"
     category = "Analysis"
+    parallel_group: ClassVar[str] = "analyze_parallel"
     config_fields: ClassVar[list[dict]] = [
         {
             "key": "human_in_the_loop",
@@ -182,4 +183,4 @@ class AnalyzeMacroNode(BaseNode[AnalyzeEconomicsInput, AnalyzeEconomicsOutput]):
 
 
 # Module-level callable registered with LangGraph StateGraph.
-prepare_macro_node = AnalyzeMacroNode()
+prepare_macro_stats_node = AnalyzeMacroNode()

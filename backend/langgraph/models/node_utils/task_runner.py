@@ -6,7 +6,6 @@ from typing import Any
 
 from langchain_core.runnables import RunnableLambda
 
-from backend.langgraph.lifecycle import make_task_id
 from backend.langgraph.models.models import NodeContext, TaskContext, TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
 
@@ -41,6 +40,7 @@ class TaskRunnerMixin:
         Returns:
             ``TaskOutput`` with the same ``TaskContext`` and typed content.
         """
+        from backend.langgraph.lifecycle import complete_task, create_task, make_task_id
         from backend.langgraph.lifecycle.threads.nodes.tasks.ops import (
             get_existing_task_for_node,
             get_task_full,
@@ -90,7 +90,30 @@ class TaskRunnerMixin:
             task_id=task_id,
             task_name=node_task.name,
         )
-        result = await node_task.task_fn(TaskInput(ctx=task_ctx, content=content))
+
+        # ------------------------------------------------------------------
+        # PG cache short-circuit: call pg_cache_fn before delegating to
+        # task_fn / Celery.  On a hit the mixin emits a ToolCall lifecycle
+        # record and returns immediately — no Celery dispatch needed.
+        # ------------------------------------------------------------------
+        if node_task.pg_cache_fn is not None:
+            cached_content = await node_task.pg_cache_fn(content, ctx)
+            if cached_content is not None:
+                payload = content.model_dump(mode="json")
+                await create_task(
+                    task_ctx.thread_id, task_ctx.node_id, task_ctx.node_name,
+                    task_ctx.task_id, task_ctx.task_name, payload,
+                    view_type="ToolCall",
+                )
+                await complete_task(
+                    task_ctx.thread_id, task_ctx.node_id, task_ctx.node_name,
+                    task_ctx.task_id, task_ctx.task_name,
+                    output_data=cached_content.model_dump(mode="json"),
+                    view_type="ToolCall",
+                )
+                return TaskOutput(ctx=task_ctx, content=cached_content)
+
+        result = await node_task.task_fn(TaskInput(ctx=task_ctx, content=content, memory=ctx.metadata.get("agent_memory", [])))
         # LangGraph @task may return a checkpoint-cached result where the generic
         # TaskOutput[T].content was deserialized as a plain dict instead of the
         # concrete Pydantic model.  Re-validate here to guarantee callers always

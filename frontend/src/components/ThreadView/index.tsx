@@ -14,7 +14,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLatestRef } from '../../hooks/refUtils';
-import { Button, Card, Spin, Typography } from 'antd';
+import { Button, Card, Input, Modal, Spin, Typography } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import NodeTimeline from '../NodeTimeline';
 import DataViewer from '../DataViewer/index';
@@ -27,8 +27,8 @@ import { getNodesForVersion } from './versionUtils';
 import { useCentrifugoSse } from '../../hooks/useCentrifugoSse';
 import { useCentrifugoLlm } from '../../hooks/useCentrifugoLlm';
 import { useThreadData } from '../../hooks/useThreadData';
-import { getLlmToken, getSseToken, cancelThread, cancelNode, cancelTask, reExploreNode } from '../../api/threads';
-import { evictThreadData } from '../../cache';
+import { getLlmToken, getSseToken, cancelThread, cancelNode, cancelTask, reExploreNode, ApiError } from '../../api/threads';
+import { evictThreadData, getCachedThreadData } from '../../cache';
 import { isThreadTerminal, isThreadActive } from '../../constants/lifecycleStatus';
 import type { NodeInfo, SseEvent, SseInfo, GraphTopology } from '../../types';
 import type { DetailData } from './types';
@@ -48,9 +48,11 @@ interface Props {
   onStatusChange?: (status: string) => void;
   /** When set, shows a ← back button that navigates back (e.g. to the concurrency grid). */
   onBack?: () => void;
+  /** Called when re-explore fails because backend data is missing — parent should open a new thread with this query. */
+  onRestartAsNew?: (query: string) => void;
 }
 
-const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInfo: initialLlmInfo, initialTopology, onDone, onStatusChange, onBack }) => {
+const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInfo: initialLlmInfo, initialTopology, onDone, onStatusChange, onBack, onRestartAsNew }) => {
   const { thread, nodes, tasks, topology, refresh } = useThreadData(threadId, initialTopology ?? null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [tokenStreams, setTokenStreams] = useState<Record<string, string>>({});
@@ -65,6 +67,11 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
   // Re-explore modal state
   const [reExploreTarget, setReExploreTarget] = useState<NodeInfo | null>(null);
   const [reExploring, setReExploring] = useState(false);
+
+  // Re-explore not-found modal: null = closed, string = cached query, empty string = no cache
+  const [reExploreNotFound, setReExploreNotFound] = useState<{ cachedQuery: string | null } | null>(null);
+  const [reExploreNotFoundInput, setReExploreNotFoundInput] = useState('');
+  const [reExploreNotFoundLoading, setReExploreNotFoundLoading] = useState(false);
 
   const maxVersion = useMemo(
     () => Math.max(0, ...nodes.filter(n => !n.is_topology_only).map(n => n.version ?? 0)),
@@ -175,12 +182,33 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
         setPendingTargetVersion(result.fork_version);
       }
       refresh();
-    } catch {
-      // Error surfaced by SSE status change; modal stays open so user can retry.
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        setReExploreTarget(null);
+        const cached = getCachedThreadData(threadId);
+        const cachedQuery = cached?.thread.query ?? null;
+        setReExploreNotFoundInput(cachedQuery ?? '');
+        setReExploreNotFound({ cachedQuery });
+      }
+      // Other errors: SSE will reflect status; modal stays open for retry.
     } finally {
       setReExploring(false);
     }
   }, [threadId, refresh]);
+
+  const handleNotFoundRestart = useCallback(async () => {
+    const query = reExploreNotFoundInput.trim();
+    if (!query) return;
+    setReExploreNotFoundLoading(true);
+    try {
+      await onRestartAsNew?.(query);
+      setReExploreNotFound(null);
+    } catch {
+      // keep modal open
+    } finally {
+      setReExploreNotFoundLoading(false);
+    }
+  }, [reExploreNotFoundInput, onRestartAsNew]);
 
   const onDoneRef = useLatestRef(onDone);
   const onDoneFiredRef = useRef(false);
@@ -307,6 +335,7 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
         error={thread.error}
         cancelling={cancelling}
         onCancel={handleCancelThread}
+        onRefresh={refresh}
       />
 
       <NodeGraphPanel
@@ -372,6 +401,45 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
         onCancel={() => setReExploreTarget(null)}
         prevNodes={reExplorePrevNodes}
       />
+
+      <Modal
+        open={reExploreNotFound !== null}
+        title={reExploreNotFound?.cachedQuery != null ? 'Backend graph data missing' : 'Thread not found'}
+        onCancel={() => setReExploreNotFound(null)}
+        footer={[
+          <Button key="cancel" onClick={() => setReExploreNotFound(null)}>Cancel</Button>,
+          <Button
+            key="confirm"
+            type="primary"
+            loading={reExploreNotFoundLoading}
+            disabled={!reExploreNotFoundInput.trim()}
+            onClick={handleNotFoundRestart}
+          >
+            {reExploreNotFound?.cachedQuery != null ? 'Start anew' : 'Submit'}
+          </Button>,
+        ]}
+      >
+        {reExploreNotFound?.cachedQuery != null ? (
+          <>
+            <p>Backend is missing this graph thread data. Starting anew with version 0.</p>
+            <Input.TextArea
+              value={reExploreNotFoundInput}
+              onChange={e => setReExploreNotFoundInput(e.target.value)}
+              autoSize={{ minRows: 2, maxRows: 6 }}
+            />
+          </>
+        ) : (
+          <>
+            <p>Graph thread not found nor cached query. Please re-input your query:</p>
+            <Input.TextArea
+              value={reExploreNotFoundInput}
+              onChange={e => setReExploreNotFoundInput(e.target.value)}
+              autoSize={{ minRows: 2, maxRows: 6 }}
+              placeholder="Enter your query..."
+            />
+          </>
+        )}
+      </Modal>
     </div>
   );
 };

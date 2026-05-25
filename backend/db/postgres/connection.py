@@ -7,23 +7,65 @@ Pure SELECT queries should pass ``readonly=True`` to be routed to the **replica*
 pool (``get_raw_read_pool()``).  When no replica is configured both pools target
 the primary, so the parameter is safe to add without any infrastructure change.
 
-For the default search_path (``fin_markets,fin_agents``) connections are
+For the default search_path (``fin_markets,fin_agents,public``) connections are
 acquired from the appropriate shared pool — zero TCP overhead per call after
 pool open.
 
 For non-default search_paths a dedicated connection is opened and closed for
 that call (rare in practice; all hot-path callers use the default).
+
+:func:`pg_retry` — decorator that retries a DB coroutine once on transient
+``psycopg.OperationalError`` (covers ``AdminShutdown``, broken-pipe, etc.).
+The pool discards the broken connection automatically; the retry acquires a
+fresh one.
 """
 
+import functools
+import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Callable, TypeVar
 
+import psycopg
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
 from backend.config import get_settings
+from backend.db.postgres.pool import DEFAULT_SEARCH_PATH as _DEFAULT_SEARCH_PATH
 
-_DEFAULT_SEARCH_PATH = "fin_markets,fin_agents"
+_logger = logging.getLogger(__name__)
+_T = TypeVar("_T")
+
+
+def pg_retry(max_retries: int = 1) -> Callable:
+    """Decorator: retry the wrapped async DB coroutine on transient connection errors.
+
+    ``psycopg.OperationalError`` covers server-side terminations such as
+    ``AdminShutdown``, broken-pipe after idle-timeout, and similar transient
+    faults.  The pool automatically discards the broken connection on exit, so
+    the retry always acquires a fresh one.
+
+    Non-transient errors (``IntegrityError``, ``ProgrammingError``, etc.) are
+    not caught and propagate immediately.
+
+    Args:
+        max_retries: Number of additional attempts after the first failure.
+            Defaults to 1 (two attempts total).
+    """
+    def decorator(fn: Callable[..., _T]) -> Callable[..., _T]:
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):  # type: ignore[return]
+            for attempt in range(max_retries + 1):
+                try:
+                    return await fn(*args, **kwargs)
+                except psycopg.OperationalError as exc:
+                    if attempt >= max_retries:
+                        raise
+                    _logger.error(
+                        "[PG_CONN_TERMINATED] transient DB error in %s (attempt %d/%d), retrying: %s",
+                        fn.__qualname__, attempt + 1, max_retries + 1, exc,
+                    )
+        return wrapper  # type: ignore[return-value]
+    return decorator
 
 
 @asynccontextmanager
@@ -43,7 +85,7 @@ async def raw_conn(
 
     Args:
         search_path: PostgreSQL search_path string applied to the connection.
-            Defaults to ``'fin_markets,fin_agents'``.
+            Defaults to ``'fin_markets,fin_agents,public'``.
         readonly:    When ``True``, acquire from the read-replica pool.
             Defaults to ``False`` (primary/write pool).
     """

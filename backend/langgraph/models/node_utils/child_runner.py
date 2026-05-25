@@ -60,7 +60,7 @@ class ChildRunnerMixin:
             node_name=self.node_name,  # type: ignore[attr-defined]
             node_type=self.node_type,  # type: ignore[attr-defined]
             parent_node_id=parent_ctx.node_id,
-            input_data=node_input.model_dump(),
+            input_data=node_input.model_dump(mode="json"),
             parallel_group=parallel_group,
             parallel_branch=effective_branch,
             version=version,

@@ -20,21 +20,29 @@ class StateUtilsMixin:
         """Look up a node_id from the current nodes dict by node_name.
 
         Scans ``state["nodes"]`` for a record whose metadata.node_name matches.
-        Used by downstream nodes to find their predecessor's node_id so they
-        can call ``read_node_output(node_id)``.
+        When multiple versions of the same node exist (e.g. original v0 and a
+        re-explore v1 both in state from checkpoint accumulation), returns the
+        node_id for the **highest version** so downstream nodes always read
+        from the most recent completed execution.
 
         Args:
             state:     Current GraphState.
             node_name: The ``node_name`` to search for.
 
         Returns:
-            The matching node_id string, or ``None`` if not found.
+            The matching node_id string for the highest-version record,
+            or ``None`` if not found.
         """
+        best_id: str | None = None
+        best_version: int = -1
         for node_id, record in (state.get("nodes") or {}).items():
             meta = record.get("metadata") or {}
             if meta.get("node_name") == node_name:
-                return node_id
-        return None
+                v = meta.get("version", 0)
+                if v > best_version:
+                    best_version = v
+                    best_id = node_id
+        return best_id
 
     def _build_node_record(
         self,
