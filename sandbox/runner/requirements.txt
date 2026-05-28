@@ -1,0 +1,8 @@
+# Web framework
+fastapi==0.136.0
+uvicorn[standard]==0.44.0
+# Data validation
+pydantic==2.13.2
+pydantic-settings==2.13.1
+# PostgreSQL driver — available to sandboxed user scripts via PG_SANDBOX_DSN env var
+psycopg[binary]==3.2.9

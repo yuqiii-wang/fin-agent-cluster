@@ -40,21 +40,48 @@ ON CONFLICT (code) DO UPDATE SET
 -- news_topics: top-level news domain taxonomy
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS fin_markets.news_topics (
-    code TEXT PRIMARY KEY
+    code        TEXT PRIMARY KEY,
+    description TEXT
 );
 
-INSERT INTO fin_markets.news_topics (code) VALUES
-    ('Corporate'),
-    ('Geopolitical'),
-    ('Market Structure'),
-    ('Sector & Industry'),
-    ('Regulatory & Legal'),
-    ('Macroeconomic')
-ON CONFLICT (code) DO NOTHING;
+INSERT INTO fin_markets.news_topics (code, description) VALUES
+    ('Corporate',          'Company earnings, M&A, leadership changes, and corporate events'),
+    ('Geopolitical',       'International relations, conflicts, sanctions, military, and political risk'),
+    ('Market Structure',   'Exchange rules, liquidity, market microstructure, and trading mechanisms'),
+    ('Sector & Industry',  'Sector-level trends, supply chains, and industry dynamics'),
+    ('Regulatory & Legal', 'Government regulations, legal rulings, compliance, and enforcement actions'),
+    ('Macroeconomic',      'GDP, inflation, employment, central bank policy, and broad economic indicators')
+ON CONFLICT (code) DO UPDATE SET
+    description = EXCLUDED.description;
 
 
 -- Drop legacy generic statics table if it exists
 DROP TABLE IF EXISTS fin_markets.statics;
+
+-- ---------------------------------------------------------------------------
+-- instrument_types: valid instrument_type codes for fin_markets.quant_stats
+--   code        → instrument type key (e.g. 'equity', 'crypto')
+--   label       → human-readable name (e.g. 'Equity', 'Cryptocurrency')
+--   description → one-line description of the instrument class
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fin_markets.instrument_types (
+    code        TEXT    PRIMARY KEY,
+    label       TEXT    NOT NULL,
+    description TEXT
+);
+
+INSERT INTO fin_markets.instrument_types (code, label, description)
+VALUES
+    ('equity',    'Equity',        'Exchange-listed stocks and ETFs (e.g. AAPL, 005930.KS)'),
+    ('crypto',    'Cryptocurrency','Cryptocurrency spot pairs (e.g. BTC-USD, ETH-USD)'),
+    ('commodity',       'Commodity',       'Commodity futures tickers (e.g. NG=F nat gas, CL=F crude oil)'),
+    ('precious_metal', 'Precious Metal',  'Precious metal futures tickers (e.g. GC=F gold, SI=F silver)'),
+    ('index',          'Index',           'Market-benchmark index tickers (e.g. ^GSPC, 000300.SS)'),
+    ('futures',   'Futures',       'Dated derivative contracts with explicit contract_ticker'),
+    ('options',   'Options',       'Options flow snapshots with calls/puts open interest')
+ON CONFLICT (code) DO UPDATE SET
+    label       = EXCLUDED.label,
+    description = EXCLUDED.description;
 
 -- ---------------------------------------------------------------------------
 -- currencies: ISO 4217 currency reference data
@@ -133,7 +160,9 @@ VALUES
     ('gold',    'GC=F',  'Gold',                 'macro',        'USD', 'global', 1),
     ('silver',  'SI=F',  'Silver',               'macro',        'USD', 'global', 2),
     ('nat_gas', 'NG=F',  'Natural Gas',          'macro',        'USD', 'global', 3),
-    ('oil',     'CL=F',  'Crude Oil (WTI)',       'macro',        'USD', 'global', 4),
+    ('oil',     'CL=F',  'Crude Oil (WTI)',      'macro',        'USD', 'global', 4),
+    ('bitcoin', 'BTC-USD','Bitcoin',             'macro',        'USD', 'global', 5),
+    ('ethereum','ETH-USD','Ethereum',            'macro',        'USD', 'global', 6),
     ('sofr_3m', 'SR3=F', 'SOFR 3-Month Futures', 'market_index', 'USD', 'amer',   1)
 ON CONFLICT (code) DO UPDATE SET
     symbol        = EXCLUDED.symbol,

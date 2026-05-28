@@ -15,6 +15,7 @@ NEWS_TASK_DIGEST_ERROR = "NEWS_TASK_DIGEST_ERROR"
 NEWS_TASK_EMBED_ERROR = "NEWS_TASK_EMBED_ERROR"
 NEWS_TASK_SUMMARY_WARN = "NEWS_TASK_SUMMARY_WARN"
 NEWS_TASK_EMB_WARN = "NEWS_TASK_EMB_WARN"
+NEWS_TASK_ALL_PROVIDERS_EMPTY = "NEWS_TASK_ALL_PROVIDERS_EMPTY"
 
 STATS_TASK_ERRORS: dict[str, str] = {
     STATS_TASK_NO_DATA: "No stats data returned from provider for the given symbol/period.",
@@ -26,12 +27,57 @@ STATS_TASK_ERRORS: dict[str, str] = {
     STATS_TASK_PROVIDER_FALLBACK: "Primary provider returned no data; fell back to an alternative provider.",
 }
 
+DERIV_TASK_OPTIONS_FETCH_ERROR = "DERIV_TASK_OPTIONS_FETCH_ERROR"
+DERIV_TASK_FUTURES_FETCH_ERROR = "DERIV_TASK_FUTURES_FETCH_ERROR"
+DERIV_TASK_NO_OPTIONS = "DERIV_TASK_NO_OPTIONS"
+
+DERIV_TASK_ERRORS: dict[str, str] = {
+    DERIV_TASK_OPTIONS_FETCH_ERROR: "Failed to fetch options chain for one or more expiry dates.",
+    DERIV_TASK_FUTURES_FETCH_ERROR: "Failed to fetch futures contract OHLCV; result skipped.",
+    DERIV_TASK_NO_OPTIONS: "No options data returned for the symbol after processing all expiry dates.",
+}
+
 NEWS_TASK_ERRORS: dict[str, str] = {
     NEWS_TASK_FETCH_ERROR: "Failed to fetch news or info from provider; partial results may be available.",
     NEWS_TASK_DIGEST_ERROR: "LLM digest call failed for one or more articles.",
     NEWS_TASK_EMBED_ERROR: "Embedding generation failed for one or more article summaries.",
     NEWS_TASK_SUMMARY_WARN: "do_summary task failed (soft); digest_news continues without LLM summaries.",
     NEWS_TASK_EMB_WARN: "do_emb task failed (soft); digest_news continues without vector embeddings.",
+    NEWS_TASK_ALL_PROVIDERS_EMPTY: "All news providers (FMP and DDGS) returned empty results after retry — task failed.",
+}
+
+PDF_TASK_CONVERT_ERROR = "PDF_TASK_CONVERT_ERROR"
+PDF_TASK_SOURCE_NOT_FOUND = "PDF_TASK_SOURCE_NOT_FOUND"
+PDF_TASK_INVALID_SOURCE = "PDF_TASK_INVALID_SOURCE"
+
+PDF_TASK_ERRORS: dict[str, str] = {
+    PDF_TASK_CONVERT_ERROR: "markitdown conversion failed; check the PDF is a valid, non-encrypted document.",
+    PDF_TASK_SOURCE_NOT_FOUND: "PDF file not found at the specified path.",
+    PDF_TASK_INVALID_SOURCE: "source must be an absolute file path or an http/https URL.",
+}
+
+WEB_TASK_FETCH_ERROR = "WEB_TASK_FETCH_ERROR"
+WEB_TASK_INVALID_URL = "WEB_TASK_INVALID_URL"
+WEB_TASK_CONVERT_ERROR = "WEB_TASK_CONVERT_ERROR"
+WEB_TASK_STUDY_ERROR = "WEB_TASK_STUDY_ERROR"
+
+WEB_TASK_ERRORS: dict[str, str] = {
+    WEB_TASK_FETCH_ERROR: "httpx HTTP request failed; check URL reachability and network connectivity.",
+    WEB_TASK_INVALID_URL: "URL must use http or https scheme.",
+    WEB_TASK_CONVERT_ERROR: "markitdown HTML conversion failed; the page may contain malformed markup.",
+    WEB_TASK_STUDY_ERROR: "LLM content assessment failed or returned an unexpected structure.",
+}
+
+WEB_KNOWLEDGE_URL_NO_SYMBOL = "WEB_KNOWLEDGE_URL_NO_SYMBOL"
+
+WEB_KNOWLEDGE_URL_ERRORS: dict[str, str] = {
+    WEB_KNOWLEDGE_URL_NO_SYMBOL: "No symbol provided; cannot propose a web knowledge URL.",
+}
+
+LLM_ORCH_DECIDE_ERROR = "LLM_ORCH_DECIDE_ERROR"
+
+LLM_ORCH_ERRORS: dict[str, str] = {
+    LLM_ORCH_DECIDE_ERROR: "LLM orchestration failed to produce a valid decision or returned an unexpected structure.",
 }
 
 __all__ = [
@@ -48,5 +94,23 @@ __all__ = [
     "NEWS_TASK_EMBED_ERROR",
     "NEWS_TASK_SUMMARY_WARN",
     "NEWS_TASK_EMB_WARN",
+    "NEWS_TASK_ALL_PROVIDERS_EMPTY",
     "NEWS_TASK_ERRORS",
+    "DERIV_TASK_OPTIONS_FETCH_ERROR",
+    "DERIV_TASK_FUTURES_FETCH_ERROR",
+    "DERIV_TASK_NO_OPTIONS",
+    "DERIV_TASK_ERRORS",
+    "PDF_TASK_CONVERT_ERROR",
+    "PDF_TASK_SOURCE_NOT_FOUND",
+    "PDF_TASK_INVALID_SOURCE",
+    "PDF_TASK_ERRORS",
+    "WEB_TASK_FETCH_ERROR",
+    "WEB_TASK_INVALID_URL",
+    "WEB_TASK_CONVERT_ERROR",
+    "WEB_TASK_STUDY_ERROR",
+    "WEB_TASK_ERRORS",
+    "WEB_KNOWLEDGE_URL_NO_SYMBOL",
+    "WEB_KNOWLEDGE_URL_ERRORS",
+    "LLM_ORCH_DECIDE_ERROR",
+    "LLM_ORCH_ERRORS",
 ]

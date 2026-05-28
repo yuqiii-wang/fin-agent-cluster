@@ -29,6 +29,7 @@ async def create_task(
     *,
     view_type: str = "ToolCall",
     stats_views: list[str] | None = None,
+    cache_ttl_seconds: int = 0,
 ) -> None:
     """Persist a new task row and emit a ``task_status: running`` SSE event.
 
@@ -41,16 +42,18 @@ async def create_task(
     are constructed at import time.
 
     Args:
-        thread_id:    LangGraph thread UUID.
-        node_id:      UUID5-derived owning node ID.
-        node_name:    Human-readable node name.
-        task_id:      Unique task UUID (from ``make_task_id``).
-        task_name:    Handler key (e.g. ``"analyze_query"``).
-        input_data:   Serialisable input payload for the task.
-        view_type:    ``fin_agents.task_view_types`` value (default ``"ToolCall"``).
-                      Pass ``"Streaming"`` for LLM streaming tasks.
-        stats_views:  Ordered list of applicable stats view type names (Stats tasks only).
-                      E.g. ``["DataFrame", "CandleStick"]``.
+        thread_id:          LangGraph thread UUID.
+        node_id:            UUID5-derived owning node ID.
+        node_name:          Human-readable node name.
+        task_id:            Unique task UUID (from ``make_task_id``).
+        task_name:          Handler key (e.g. ``"analyze_query"``).
+        input_data:         Serialisable input payload for the task.
+        view_type:          ``fin_agents.task_view_types`` value (default ``"ToolCall"``).
+                            Pass ``"Streaming"`` for LLM streaming tasks.
+        stats_views:        Ordered list of applicable stats view type names (Stats tasks only).
+                            E.g. ``["DataFrame", "CandleStick"]``.
+        cache_ttl_seconds:  Stored as 0 at creation; ``complete_task`` sets it to the
+                            configured NodeTask TTL only on healthy completion.
     """
     from backend.langgraph.lifecycle.threads.nodes.ops import append_node_task_id
     from backend.main_thread.context import get_fencing_token
@@ -63,7 +66,7 @@ async def create_task(
         async with raw_conn() as conn:
             await conn.execute(
                 _INSERT_TASK,
-                (task_id, thread_id, node_id, node_name, task_name, description, view_type, views, fencing_token),
+                (task_id, thread_id, node_id, node_name, task_name, description, view_type, views, fencing_token, cache_ttl_seconds),
             )
             await conn.execute(
                 _INSERT_TASK_EXECUTION,

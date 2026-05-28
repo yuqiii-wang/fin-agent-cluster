@@ -2,7 +2,7 @@
  * Threads API client — wraps all /api/v1/threads/* and /api/v1/auth/centrifugo/* calls.
  */
 
-import type { CentrifugoTokenResponse, GraphTopology, NodeInfo, NodeMeta, QueryResponse, TaskInfo, ThreadSummary, VersionGraphResponse, AgentCapabilities, Skill } from '../types';
+import type { CentrifugoTokenResponse, GraphTopology, NodeInfo, NodeMeta, QueryResponse, TaskInfo, ThreadSummary, VersionGraphResponse, AgentCapabilities, AgentStepStatesResponse, Skill, NodeSkillsResponse } from '../types';
 import { getStoredToken } from './auth';
 
 /** API error that preserves the HTTP status code. */
@@ -102,6 +102,12 @@ export async function getGraphTopology(): Promise<GraphTopology> {
 export async function fetchNodeMetas(): Promise<NodeMeta[]> {
   const res = await fetch(`${BASE}/graph/node-metas`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Get node metas failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchNodeSkills(): Promise<NodeSkillsResponse[]> {
+  const res = await fetch(`${BASE}/graph/node-skills`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Get node skills failed: ${res.status}`);
   return res.json();
 }
 
@@ -268,6 +274,18 @@ export async function reExploreNode(
   return res.json();
 }
 
+export async function invalidateNodeCache(threadId: string, nodeId: string): Promise<{ invalidated: number }> {
+  const res = await fetch(`${BASE}/threads/${threadId}/nodes/${nodeId}/invalidate-cache`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Invalidate node cache failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 /**
  * Fetch version graph data for a specific fork generation.
  *
@@ -355,5 +373,16 @@ export async function compactAgentMemory(
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Compact memory failed: ${res.status}`);
   }
+  return res.json();
+}
+
+export async function getAgentStepStates(
+  threadId: string,
+  nodeId: string,
+): Promise<AgentStepStatesResponse> {
+  const res = await fetch(`${BASE}/threads/${threadId}/nodes/${nodeId}/agent/step-states`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Get agent step states failed: ${res.status}`);
   return res.json();
 }

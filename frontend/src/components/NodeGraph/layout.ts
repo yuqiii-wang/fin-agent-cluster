@@ -218,10 +218,25 @@ export function computeLayout(nodes: NodeInfo[], expandedSubgraphIds: Set<string
     innerEdges.set(parentId, edges);
   }
 
-  // Compute dynamic height: ensure the SVG is tall enough to show all nodes
-  // plus their labels (NODE_RADIUS + ~30px for label text and margin).
-  const yValues = Object.values(positions).map(p => p.y);
-  const maxNodeY = yValues.length > 0 ? Math.max(...yValues) : CENTER_Y;
+  // Shift positions down if any node extends above the top margin.
+  // CENTER_Y is a fixed anchor; with many parallel nodes the top ones get
+  // negative y-coordinates and are clipped by the SVG viewport.
+  const MARGIN_TOP = NODE_RADIUS + 20;
+  const allY = Object.values(positions).map(p => p.y);
+  const minNodeY = allY.length > 0 ? Math.min(...allY) : CENTER_Y;
+  const yOffset = Math.max(0, MARGIN_TOP - minNodeY);
+  if (yOffset > 0) {
+    for (const name of Object.keys(positions)) {
+      positions[name] = { x: positions[name].x, y: positions[name].y + yOffset };
+    }
+    for (const [id, bubble] of bubbles.entries()) {
+      bubbles.set(id, { ...bubble, y: bubble.y + yOffset });
+    }
+  }
+
+  // Dynamic height: ensure the SVG is tall enough to show all nodes plus
+  // their labels (NODE_RADIUS + ~30 px for label text and margin).
+  const maxNodeY = allY.length > 0 ? Math.max(...allY) + yOffset : CENTER_Y;
   const svgH = Math.max(SVG_H, maxNodeY + NODE_RADIUS + 30);
 
   return { positions, svgW, svgH, topLevel, topSlots, innerByParentId, topEdges, innerEdges, bubbles };

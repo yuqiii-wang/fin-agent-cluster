@@ -19,7 +19,7 @@ export type {
 
 export type { SseInfo, QueryResponse, ThreadSummary, VersionGraphResponse } from './thread';
 export type { NodeInfo } from './node';
-export type { TaskInfo } from './task';
+export type { TaskInfo, TaskRunEntry } from './task';
 export type { GuestAuthResponse, CentrifugoTokenResponse } from './auth';
 export type { SseEvent } from './sse';
 export type { SessionStatus } from './session';
@@ -27,7 +27,7 @@ export type { GraphTopology, TopologyNodeDef, TopologyEdgeDef, NodeMeta, NodeCon
 
 export type { NodeConfig, UserPreference, UserPreferencesResponse } from './user';
 
-export type { AgentCapabilities, MemoryEntry, Skill, ToolInfo, MemoryEntryType, MemoryStatus, SkillStatus } from './agent';
+export type { AgentCapabilities, AgentStepStatesResponse, MemoryEntry, Skill, StepStateEntry, ToolInfo, MemoryEntryType, MemoryStatus, SkillStatus, NodeSkillFile, NodeSkillsResponse } from './agent';
 
 export type {
   AnalyzeQueryInput,

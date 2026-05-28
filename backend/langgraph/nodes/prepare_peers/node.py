@@ -4,31 +4,28 @@ Hierarchy
 ---------
 Thread
   └── prepare_peers  (Agent)
-        ├── propose_peer_stocks         (@task → Celery Streaming)             [×1–3]
-        ├── get_and_calculate_stats     (TaskSeq → get_stats + calculate_stats)  [×N per iteration, one per peer]
-        ├── calculate_corr              (@task → Celery Completion)              [×N per iteration, one per peer]
-        └── analyze_peer_corr           (@task → pure computation)               [×1 per iteration]
+        ├── propose_peer_urls           (@task → Celery Streaming)              [×1–3]
+        ├── navigate_web                (TaskSeq → crawl+md+study+sandbox)       [×1 per iteration]
+        ├── get_and_calculate_stats     (TaskSeq → get_stats + calculate_stats)   [×N per iteration]
+        ├── calculate_corr              (@task → Celery Completion)              [×N per iteration]
+        ├── analyze_peer_corr           (@task → pure computation)               [×1 per iteration]
+        └── peer_orchestration          (@task → Celery Streaming)               [×1 per iteration]
 
-Agent design — validation loop
--------------------------------
-The node runs a deterministic corr-validation loop (up to 3 iterations):
+Agent design — LLM-orchestrated step loop
+------------------------------------------
+Each iteration executes a dict of named steps (``AGENT_STEPS``) in ``STEP_ORDER``.
+After every iteration (or mid-iteration failure), ``peer_orchestration`` consults
+the LLM to decide the next action:
 
-  1. ``propose_peer_stocks`` (streaming LLM) → 5–8 ticker symbols. [FIRST]
-  2. ``get_and_calculate_stats`` for target (first iteration) and all new peers in parallel.
-  3. ``calculate_corr([target, peer])`` for each valid peer in parallel.
-  4. ``analyze_peer_corr`` — threshold-filter all corr scores; confirmed peers trigger
-     early exit, rejected extend the excluded list for the next round. [LAST]
+  * ``"finish"``          — enough peers confirmed; exit early.
+  * ``"next_iteration"``  — start a fresh iteration from ``propose_url``.
+  * ``"retry_from_step"`` — restart the next iteration from a specific step with
+                            LLM-supplied ``input_overrides`` (e.g. custom URL, peer list).
+  * ``"fail"``            — no recovery possible; use best-available peers.
 
 After the loop the top ``_MAX_CONFIRMED_PEERS`` confirmed peers by abs(r) are
 selected.  If no peer met the threshold the best available are returned
 (fallback: top ``_MIN_FALLBACK_PEERS``).
-
-Correlation threshold rationale
---------------------------------
-For equity pairs Pearson ≥ 0.75 indicates a strong price co-movement
-consistent with shared sector/macro exposure.  Values below 0.4 suggest
-unrelated price drivers; values above 0.8 often indicate near-identical
-exposure.  0.75 is the gate for "genuine peer".
 
 Predecessor
 -----------
@@ -37,34 +34,40 @@ Predecessor
 
 from __future__ import annotations
 
-import asyncio
 import logging
+from pathlib import Path
 from typing import Any, ClassVar
 from uuid import uuid4
 
-from backend.db.postgres.queries.fin_markets_indexes import get_symbol_index_codes
 from backend.db.postgres.types import NodeType
 from backend.langgraph.agent.memory.ops import append_memory_entry, get_max_seq_num
 from backend.langgraph.lifecycle import read_node_output
+from backend.langgraph.models.common_tasks import calculate_corr
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats import (
+    get_and_calculate_stats,
+)
+from backend.langgraph.models.common_tasks.task_seqs.navigate_web import navigate_web
 from backend.langgraph.models.models import NodeContext, TaskContext, TaskOutput
 from backend.langgraph.models.node import BaseNode
 from backend.langgraph.models.task import NodeTask
-from backend.langgraph.models.common_tasks import (
-    calculate_corr, CalculateCorrInput, CalculateCorrOutput,
+from backend.langgraph.nodes.prepare_peers.agent_steps import (
+    AGENT_STEPS,
+    STEP_ORDER,
+    IterationStepState,
+    StepRunContext,
 )
-from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats import (
-    get_and_calculate_stats,
-    GetAndCalculateStatsInput,
+from backend.langgraph.nodes.prepare_peers.models import (
+    AgentGlobalState,
+    AnalyzePeersInput,
+    AnalyzePeersOutput,
 )
-from backend.langgraph.nodes.prepare_peers.models import AnalyzePeersInput, AnalyzePeersOutput
-from backend.langgraph.nodes.prepare_peers.tasks.analyze_peer_corr import (
-    analyze_peer_corr,
-    AnalyzePeerCorrInput,
+from backend.langgraph.nodes.prepare_peers.tasks.analyze_peer_corr import analyze_peer_corr
+from backend.langgraph.nodes.prepare_peers.tasks.peer_orchestration import (
+    PeerOrchestrationInput,
+    TopCorrPeer,
+    peer_orchestration,
 )
-from backend.langgraph.nodes.prepare_peers.tasks.propose_peer_stocks import (
-    propose_peer_stocks,
-    ProposePeerStocksInput,
-)
+from backend.langgraph.nodes.prepare_peers.tasks.propose_peer_urls import propose_peer_urls
 from backend.langgraph.state import GraphState
 
 logger = logging.getLogger(__name__)
@@ -76,22 +79,42 @@ logger = logging.getLogger(__name__)
 _MAX_ITERATIONS: int = 3
 # Number of confirmed peers required to exit the loop early.
 _MIN_CONFIRMED_TO_EXIT: int = 2
-# Pearson abs(r) ≥ this value is treated as a validated peer.
-_CORR_THRESHOLD: float = 0.75
-# Period used when fetching and computing stats for peer validation.
-# '2y' → yfinance fetches ~500 daily bars → stored as '1day' granularity.
-# Daily bars give enough history for SMA_20/50/200 and EMA_12/26 to be fully populated.
-_VALIDATION_PERIOD: str = "2y"
-# quant_stats granularity for _VALIDATION_PERIOD (from calculate_stats period map).
-_VALIDATION_GRANULARITY: str = "1day"
-# Correlation lookback in bars — 252 ≈ one year of trading days.
-_CORR_WINDOW_BARS: int = 252
 # Max peers to keep in final output.
 _MAX_CONFIRMED_PEERS: int = 5
 # Minimum peers to return even when none reach the corr threshold (fallback).
 _MIN_FALLBACK_PEERS: int = 3
 # Summary key in the results dict that carries loop metadata to build_output.
 _SUMMARY_KEY: str = "__peer_validation_summary__"
+
+# JSON schema injected into navigate_web / study_web_content so the transform
+# script's stdout JSON has a ``peers`` list of ticker symbols.
+_PEERS_OUTPUT_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "peers": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of equity ticker symbols of peer/comparable companies.",
+        },
+        "industry": {
+            "type": "string",
+            "description": "Primary industry sector of the target company.",
+        },
+    },
+    "required": ["peers", "industry"],
+}
+
+_PEER_DISCOVERY_OBJECTIVE = (
+    "Identify the peer or comparable companies for the target stock {stock_name} shown on "
+    "this page. Find their FULL COMPANY NAMES as written in the text (e.g. 'Microsoft', "
+    "'Amazon', 'Alphabet'). Map each found company name to its primary exchange ticker "
+    "symbol. Only include companies clearly mentioned as peers or competitors — do not "
+    "invent or guess companies not present in the page."
+)
+
+_PEERS_EXTRACTION_SKILL: str = (
+    Path(__file__).parent / "skills" / "get_peers.md"
+).read_text(encoding="utf-8")
 
 
 class AnalyzePeersNode(BaseNode[AnalyzePeersInput, AnalyzePeersOutput]):
@@ -132,12 +155,21 @@ class AnalyzePeersNode(BaseNode[AnalyzePeersInput, AnalyzePeersOutput]):
     ]
     view_type = "Stats"
     tasks: ClassVar[list[NodeTask]] = [
-        propose_peer_stocks,
+        propose_peer_urls,
+        *navigate_web.tasks,
         *get_and_calculate_stats.tasks,
         calculate_corr,
         analyze_peer_corr,
+        peer_orchestration,
     ]
     _prev_node_names: ClassVar[list[str]] = ["query_node"]
+
+    # ── Agent step loop configuration ──────────────────────────────────────
+    agent_global_state_class: ClassVar[type] = AgentGlobalState
+    agent_steps: ClassVar[dict] = AGENT_STEPS
+    agent_step_order: ClassVar[list[str]] = STEP_ORDER
+    agent_orchestration_task: ClassVar[NodeTask] = peer_orchestration
+    _agent_max_iterations: ClassVar[int] = _MAX_ITERATIONS
 
     async def build_input(self, state: GraphState) -> AnalyzePeersInput:
         """Read stock_name from query_node's completed node_executions row.
@@ -155,288 +187,233 @@ class AnalyzePeersNode(BaseNode[AnalyzePeersInput, AnalyzePeersOutput]):
             stock_name = output.get("stock_name", "")
         return AnalyzePeersInput(stock_name=stock_name)
 
-    async def build_agent(
-        self, ctx: NodeContext, node_input: AnalyzePeersInput
-    ) -> dict[str, TaskOutput]:
-        """Deterministic corr-validation loop: propose → stats → corr → analyze.
-
-        Up to ``_MAX_ITERATIONS`` rounds, in strict task order:
-          1. ``propose_peer_stocks`` (streaming LLM) → 5–8 peer ticker symbols. [FIRST]
-          2. ``get_and_calculate_stats`` for target (first iteration only) and all
-             new peers in parallel.
-          3. ``calculate_corr([target, peer])`` for each valid peer in parallel.
-          4. ``analyze_peer_corr`` — threshold-filter corr scores; confirmed peers
-             trigger early exit, rejected extend the excluded list. [LAST per iteration]
-
-        After the loop the top ``_MAX_CONFIRMED_PEERS`` confirmed peers by abs(r) are
-        selected.  Falls back to the best available when no peer met the threshold.
+    async def _create_agent_global_state(
+        self, node_input: AnalyzePeersInput
+    ) -> AgentGlobalState:
+        """Initialise cross-iteration state with the uppercased target ticker.
 
         Args:
-            ctx:        Node context carrying thread/node/task identity.
-            node_input: Typed input with ``stock_name``.
+            node_input: Typed node input containing the raw stock name.
 
         Returns:
-            Keyed ``TaskOutput`` dict with a ``_SUMMARY_KEY`` entry that carries
-            the final peer selection to ``build_output``.
+            Fresh ``AgentGlobalState`` for this agent run.
         """
-        target = node_input.stock_name.upper()
-        results: dict[str, TaskOutput] = {}
-        excluded: list[str] = []
-        all_peer_corr: dict[str, float] = {}
-        all_confirmed: list[str] = []
-        industry = ""
-        iterations_run = 0
-        target_stats_fetched = False
-        # sym → pandas split-orient OHLCV dict for StackCandleStick rendering.
-        df_split_map: dict[str, dict] = {}
-        # sym → raw (signed) correlation values per metric for the DataFrame view.
-        all_corr_detail: dict[str, dict] = {}
+        return AgentGlobalState(target=node_input.stock_name.upper())
 
-        async def _fetch_stats(sym: str) -> str:
-            """Fetch and compute stats for *sym*; returns sym on success."""
-            seq_out = await get_and_calculate_stats.run(
-                self.run_task, ctx,
-                GetAndCalculateStatsInput(symbol=sym, period=_VALIDATION_PERIOD),
-            )
-            if seq_out.calculate_stats.df_split:
-                df_split_map[sym] = seq_out.calculate_stats.df_split
-            return sym
+    def _create_agent_step_state(
+        self,
+        iteration: int,
+        global_state: AgentGlobalState,
+        input_overrides: dict,
+    ) -> IterationStepState:
+        """Reset per-iteration state for *iteration*.
 
-        async def _calc_corr(sym: str) -> tuple[str, float, TaskOutput]:
-            """Compute pairwise corr for *sym* vs *target*; returns (sym, abs_corr, output)."""
-            corr_out = await self.run_task(
-                calculate_corr, ctx,
-                CalculateCorrInput(
-                    symbols=[target, sym],
-                    granularity=_VALIDATION_GRANULARITY,
-                    window_bars=_CORR_WINDOW_BARS,
+        Args:
+            iteration:       Current outer iteration counter (1-based).
+            global_state:    Cross-iteration state (not mutated here).
+            input_overrides: LLM-supplied overrides forwarded from orchestration.
+
+        Returns:
+            Fresh ``IterationStepState`` for this iteration.
+        """
+        return IterationStepState(iteration=iteration, input_overrides=input_overrides)
+
+    def _create_step_context(
+        self,
+        ctx: NodeContext,
+        global_state: AgentGlobalState,
+        step_state: IterationStepState,
+        results: dict[str, TaskOutput],
+        node_input: AnalyzePeersInput,
+    ) -> StepRunContext:
+        """Assemble the ``StepRunContext`` bundle passed to every step function.
+
+        Args:
+            ctx:          Current node context.
+            global_state: Cross-iteration global state.
+            step_state:   This iteration's step state.
+            results:      Accumulated ``TaskOutput`` dict (mutable reference).
+            node_input:   Typed node input.
+
+        Returns:
+            Populated ``StepRunContext``.
+        """
+        return StepRunContext(
+            run_task=self.run_task,
+            ctx=ctx,
+            g=global_state,
+            s=step_state,
+            results=results,
+            stock_name=node_input.stock_name,
+            peers_output_schema=_PEERS_OUTPUT_SCHEMA,
+            peer_discovery_objective=_PEER_DISCOVERY_OBJECTIVE,
+            peers_extraction_skill=_PEERS_EXTRACTION_SKILL,
+        )
+
+    def _build_orchestration_input(
+        self,
+        global_state: AgentGlobalState,
+        step_state: IterationStepState,
+        failed_step: str | None,
+        results: dict[str, TaskOutput],
+        iteration: int,
+    ) -> PeerOrchestrationInput:
+        """Build input for the ``peer_orchestration`` LLM task.
+
+        Args:
+            global_state: Cross-iteration state after this iteration's steps.
+            step_state:   This iteration's step state.
+            failed_step:  Name of the failing step, or ``None`` when all succeeded.
+            results:      Accumulated ``TaskOutput`` dict.
+            iteration:    Current iteration number.
+
+        Returns:
+            Populated ``PeerOrchestrationInput``.
+        """
+        g, s = global_state, step_state
+        seen: set[str] = set()
+        unique_confirmed = [
+            sym
+            for sym in g.all_confirmed
+            if not (sym in seen or seen.add(sym))  # type: ignore[func-returns-value]
+        ]
+        failure_reason = (
+            s.step_results[failed_step].failure_reason
+            if failed_step and failed_step in s.step_results
+            else None
+        )
+        return PeerOrchestrationInput(
+            iteration=iteration,
+            target=g.target,
+            confirmed_count=len(unique_confirmed),
+            excluded_url_count=len(g.excluded_urls),
+            excluded_peer_count=len(g.excluded_peers),
+            step_results=list(s.step_results.values()),
+            failed_step=failed_step,
+            failure_reason=failure_reason,
+            top_corr_peers=[
+                TopCorrPeer(symbol=sym, corr=round(v, 4))
+                for sym, v in sorted(
+                    g.all_peer_corr.items(), key=lambda x: x[1], reverse=True
+                )[:5]
+            ],
+            min_confirmed_to_exit=_MIN_CONFIRMED_TO_EXIT,
+            max_iterations=_MAX_ITERATIONS,
+        )
+
+    async def _post_iteration_hook(
+        self,
+        ctx: NodeContext,
+        global_state: AgentGlobalState,
+        step_state: IterationStepState,
+        results: dict[str, TaskOutput],
+    ) -> None:
+        """Append per-iteration peer corr scores to agent memory.
+
+        Args:
+            ctx:          Node context.
+            global_state: Cross-iteration global state.
+            step_state:   This iteration's step state.
+            results:      Accumulated ``TaskOutput`` dict (not mutated here).
+        """
+        s = step_state
+        if s.apc_output is None:
+            return
+        mem_entries = [
+            {
+                "symbol": sym,
+                "corr": round(corr_val, 4),
+                "status": (
+                    "confirmed" if sym in s.apc_output.confirmed_peers else "rejected"
                 ),
-            )
-            content: CalculateCorrOutput = corr_out.content
-            # Prefer SMA/EMA indicator correlation (smoother signal); fall back to
-            # raw close-price correlation when indicator data is unavailable.
-            indicator_corr = max(
-                (
-                    abs(mat.get(target, {}).get(sym, 0.0))
-                    for mat in content.indicator_matrices.values()
-                ),
-                default=0.0,
-            )
-            corr_val = indicator_corr or abs(content.matrix.get(target, {}).get(sym, 0.0))
-            # Collect detailed (signed) corr values for the correlation DataFrame.
-            sym_detail = {
-                "close_corr": content.matrix.get(target, {}).get(sym),
-                "sma_20_corr": content.indicator_matrices.get("sma_20", {}).get(target, {}).get(sym),
-                "sma_50_corr": content.indicator_matrices.get("sma_50", {}).get(target, {}).get(sym),
-                "ema_12_corr": content.indicator_matrices.get("ema_12", {}).get(target, {}).get(sym),
-                "ema_26_corr": content.indicator_matrices.get("ema_26", {}).get(target, {}).get(sym),
             }
-            # Keep detail from the iteration with the highest abs corr.
-            if corr_val > all_peer_corr.get(sym, 0.0) or sym not in all_corr_detail:
-                all_corr_detail[sym] = sym_detail
-            return sym, corr_val, corr_out
-
-        for iteration in range(1, _MAX_ITERATIONS + 1):
-            iterations_run = iteration
-
-            # ── Step 1: propose_peer_stocks (FIRST task) ─────────────────────
-            propose_out = await self.run_task(
-                propose_peer_stocks, ctx,
-                ProposePeerStocksInput(
-                    stock_name=node_input.stock_name,
-                    excluded_peers=excluded,
-                    iteration=iteration,
-                ),
-            )
-            results[f"{propose_peer_stocks.name}_iter{iteration}"] = propose_out
-            industry = propose_out.content.industry
-
-            new_peers = [
-                p for p in propose_out.content.peers
-                if p and p not in excluded and p != target
-            ]
-            if not new_peers:
-                logger.error(
-                    "[prepare_peers] iter=%d LLM returned no new peers (excluded=%s)",
-                    iteration, excluded,
-                )
-                break
-
-            # ── Step 2: get stats in parallel (target first iter + all new peers) ──
-            syms_to_fetch = ([] if target_stats_fetched else [target]) + new_peers
-            stats_gather = await asyncio.gather(
-                *[_fetch_stats(sym) for sym in syms_to_fetch],
-                return_exceptions=True,
-            )
-
-            if not target_stats_fetched:
-                target_res = stats_gather[0]
-                if isinstance(target_res, Exception):
-                    raise ValueError(
-                        f"[AP-003] Target stock {target!r} stats fetch/calc failed: {target_res}"
-                    ) from target_res
-                target_stats_fetched = True
-                peer_stats_iter = zip(new_peers, stats_gather[1:])
-            else:
-                peer_stats_iter = zip(new_peers, stats_gather)
-
-            failed_syms: set[str] = set()
-            for sym, res in peer_stats_iter:
-                if isinstance(res, Exception):
-                    failed_syms.add(sym)
-                    excluded.append(sym)
-                    logger.error(
-                        "[prepare_peers] iter=%d stats failed for %s: %s", iteration, sym, res,
-                    )
-
-            valid_peers = [s for s in new_peers if s not in failed_syms]
-            if not valid_peers:
-                logger.error("[prepare_peers] iter=%d all peers failed stats fetch", iteration)
-                continue  # AP-004
-
-            # ── Co-index filter (post-stats): retain only peers that share ≥1 benchmark index ──
-            # stock_index_memberships is populated by calculate_stats, so this must run after step 2.
-            target_index_set = await get_symbol_index_codes(target)
-            if target_index_set:
-                index_check = await asyncio.gather(
-                    *[get_symbol_index_codes(sym) for sym in valid_peers],
-                    return_exceptions=True,
-                )
-                index_filtered: list[str] = []
-                for sym, res in zip(valid_peers, index_check):
-                    if isinstance(res, Exception):
-                        index_filtered.append(sym)  # fail-open
-                    elif res.isdisjoint(target_index_set):
-                        excluded.append(sym)
-                        logger.error(
-                            "[prepare_peers] iter=%d peer=%s removed: no shared index with target",
-                            iteration, sym,
-                        )
-                    else:
-                        index_filtered.append(sym)
-                valid_peers = index_filtered
-
-            if not valid_peers:
-                logger.error(
-                    "[prepare_peers] iter=%d all peers removed by co-index filter (excluded=%s)",
-                    iteration, excluded,
-                )
-                continue
-
-            # ── Step 3: calculate_corr per peer in parallel ───────────────────
-            corr_gather = await asyncio.gather(
-                *[_calc_corr(sym) for sym in valid_peers],
-                return_exceptions=True,
-            )
-
-            iter_peer_corrs: dict[str, float] = {}
-            for sym, res in zip(valid_peers, corr_gather):
-                if isinstance(res, Exception):
-                    excluded.append(sym)
-                    logger.error(
-                        "[prepare_peers] iter=%d corr failed for %s: %s", iteration, sym, res,
-                    )
-                else:
-                    sym2, corr_val, corr_out = res
-                    iter_peer_corrs[sym2] = corr_val
-                    all_peer_corr[sym2] = max(all_peer_corr.get(sym2, 0.0), corr_val)
-                    results[f"{calculate_corr.name}_{sym2}_iter{iteration}"] = corr_out
-
-            if not iter_peer_corrs:
-                logger.error("[prepare_peers] iter=%d all peers failed corr", iteration)
-                continue  # AP-004
-
-            # ── Step 4: analyze_peer_corr (LAST task per iteration) ───────────
-            apc_out = await self.run_task(
-                analyze_peer_corr, ctx,
-                AnalyzePeerCorrInput(
-                    target=target,
-                    peer_correlations=iter_peer_corrs,
-                    corr_threshold=_CORR_THRESHOLD,
-                ),
-            )
-            results[f"{analyze_peer_corr.name}_iter{iteration}"] = apc_out
-
-            excluded.extend(apc_out.content.rejected_peers)
-            # Exclude confirmed peers too so subsequent iterations propose fresh symbols.
-            excluded.extend(apc_out.content.confirmed_peers)
-            all_confirmed.extend(apc_out.content.confirmed_peers)
-
-            # Update base agent node memory with this iteration's corr results.
-            # Subsequent propose_peer_stocks calls receive it via TaskInput.memory.
-            mem_entries = [
-                {
-                    "symbol": sym,
-                    "corr": round(corr_val, 4),
-                    "status": "confirmed" if sym in apc_out.content.confirmed_peers else "rejected",
-                }
-                for sym, corr_val in iter_peer_corrs.items()
-            ]
-            self.update_agent_memory(ctx, mem_entries)
-            # Persist to DB so the UI Memory tab reflects this iteration's results.
-            seq_num = await get_max_seq_num(ctx.node_id) + 1
-            await append_memory_entry(
-                ctx.thread_id,
-                ctx.node_id,
-                "task_result",
-                {
-                    "tool_name": "analyze_peer_corr",
-                    "result": {
-                        "iteration": iteration,
-                        "confirmed_peers": apc_out.content.confirmed_peers,
-                        "rejected_peers": apc_out.content.rejected_peers,
-                        "corr_scores": {sym: round(v, 4) for sym, v in iter_peer_corrs.items()},
+            for sym, corr_val in s.apc_output.peer_corr_scores.items()
+        ]
+        self.update_agent_memory(ctx, mem_entries)
+        seq_num = await get_max_seq_num(ctx.node_id) + 1
+        await append_memory_entry(
+            ctx.thread_id,
+            ctx.node_id,
+            "task_result",
+            {
+                "tool_name": "analyze_peer_corr",
+                "result": {
+                    "iteration": s.iteration,
+                    "confirmed_peers": s.apc_output.confirmed_peers,
+                    "rejected_peers": s.apc_output.rejected_peers,
+                    "corr_scores": {
+                        sym: round(v, 4)
+                        for sym, v in s.apc_output.peer_corr_scores.items()
                     },
                 },
-                seq_num,
-            )
+            },
+            seq_num,
+        )
 
-            # Exit early once enough peers are confirmed across all iterations.
-            _seen: set[str] = set()
-            unique_confirmed_so_far = [
-                s for s in all_confirmed if not (_seen.__contains__(s) or _seen.add(s))
-            ]
-            if len(unique_confirmed_so_far) >= _MIN_CONFIRMED_TO_EXIT:
-                break  # Enough validated peers found — exit early
+    async def _build_final_output(
+        self,
+        global_state: AgentGlobalState,
+        results: dict[str, TaskOutput],
+        node_input: AnalyzePeersInput,
+        ctx: NodeContext,
+    ) -> dict[str, TaskOutput]:
+        """Select top peers and build the summary ``TaskOutput`` under ``_SUMMARY_KEY``.
 
-        # ── Final selection: top peers by abs corr with target ────────────────
+        Picks up to ``_MAX_CONFIRMED_PEERS`` confirmed peers sorted by abs(r).
+        Falls back to ``_MIN_FALLBACK_PEERS`` best-available peers when none
+        reached the corr threshold.
+
+        Args:
+            global_state: Cross-iteration global state at loop end.
+            results:      All accumulated ``TaskOutput`` values.
+            node_input:   Typed node input (used to access the raw stock name).
+
+        Returns:
+            *results* dict with ``_SUMMARY_KEY`` entry appended.
+        """
+        g = global_state
+        target = g.target
+
         seen: set[str] = set()
-        unique_confirmed = [s for s in all_confirmed if not (s in seen or seen.add(s))]
+        unique_confirmed = [
+            sym
+            for sym in g.all_confirmed
+            if not (sym in seen or seen.add(sym))  # type: ignore[func-returns-value]
+        ]
         confirmed = sorted(
-            unique_confirmed, key=lambda s: all_peer_corr.get(s, 0.0), reverse=True
+            unique_confirmed, key=lambda sym: g.all_peer_corr.get(sym, 0.0), reverse=True
         )
         confirmed = confirmed[:_MAX_CONFIRMED_PEERS]
 
         if not confirmed:
-            # AP-005: no peer reached threshold — return best available
             logger.error(
-                "[prepare_peers] no peer reached corr threshold %.2f after %d iterations; "
+                "[prepare_peers] no peer reached corr threshold after %d iterations; "
                 "using best available. all_peer_corr=%s",
-                _CORR_THRESHOLD, iterations_run, all_peer_corr,
+                g.iterations_run,
+                g.all_peer_corr,
             )
-            sorted_all = sorted(all_peer_corr.items(), key=lambda x: x[1], reverse=True)
+            sorted_all = sorted(g.all_peer_corr.items(), key=lambda x: x[1], reverse=True)
             confirmed = [sym for sym, _ in sorted_all[:_MIN_FALLBACK_PEERS]]
 
-        # Build df_splits for StackCandleStick: target first, then confirmed peers.
         all_syms_ordered = [target] + [p for p in confirmed if p != target]
         peer_df_splits = [
-            {"symbol": sym, "label": sym, "df_split": df_split_map[sym]}
+            {"symbol": sym, "label": sym, "df_split": g.df_split_map[sym]}
             for sym in all_syms_ordered
-            if sym in df_split_map and df_split_map[sym]
+            if sym in g.df_split_map and g.df_split_map[sym]
         ]
 
-        # Build correlation DataFrame (pandas split-orient) for the DataFrame stats view.
         _CORR_COLS = ["close_corr", "sma_20_corr", "sma_50_corr", "ema_12_corr", "ema_26_corr"]
         corr_rows: list[list] = []
         corr_index: list[str] = []
         for sym in confirmed:
-            detail = all_corr_detail.get(sym, {})
+            detail = g.all_corr_detail.get(sym, {})
             corr_rows.append([detail.get(col) for col in _CORR_COLS])
             corr_index.append(sym)
-        # Only include columns that have at least one non-None value.
         avail_cols = [
-            col for col in _CORR_COLS
-            if corr_rows and any(row[_CORR_COLS.index(col)] is not None for row in corr_rows)
+            col
+            for col in _CORR_COLS
+            if corr_rows
+            and any(row[_CORR_COLS.index(col)] is not None for row in corr_rows)
         ]
         col_indices = [_CORR_COLS.index(c) for c in avail_cols]
         corr_df_split: dict = (
@@ -445,10 +422,10 @@ class AnalyzePeersNode(BaseNode[AnalyzePeersInput, AnalyzePeersOutput]):
                 "columns": avail_cols,
                 "data": [[row[i] for i in col_indices] for row in corr_rows],
             }
-            if corr_index else {}
+            if corr_index
+            else {}
         )
 
-        # Store summary for build_output via a synthetic TaskOutput.
         summary_task_ctx = TaskContext(
             **ctx.model_dump(),
             task_id=str(uuid4()),
@@ -457,10 +434,10 @@ class AnalyzePeersNode(BaseNode[AnalyzePeersInput, AnalyzePeersOutput]):
         results[_SUMMARY_KEY] = TaskOutput(
             ctx=summary_task_ctx,
             content={
-                "industry": industry,
+                "industry": g.industry,
                 "confirmed_peers": confirmed,
-                "peer_correlations": all_peer_corr,
-                "iterations_run": iterations_run,
+                "peer_correlations": g.all_peer_corr,
+                "iterations_run": g.iterations_run,
                 "df_splits": peer_df_splits,
                 "corr_df_split": corr_df_split,
             },

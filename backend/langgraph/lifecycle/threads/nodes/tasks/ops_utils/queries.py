@@ -10,6 +10,7 @@ from backend.langgraph.lifecycle.threads.nodes.tasks.sql import (
     _GET_LATEST_LLM_RESPONSE,
     _GET_PAUSED_TASK_FOR_NODE,
     _GET_TASK_FULL,
+    _INVALIDATE_NODE_TASK_CACHES,
 )
 
 
@@ -61,23 +62,29 @@ async def get_existing_task_for_node(
     thread_id: str,
     node_id: str,
     task_name: str,
+    input_json: str,
 ) -> dict[str, Any] | None:
     """Return any existing task row for (thread_id, node_id, task_name), or None.
 
-    Used by :meth:`~backend.langgraph.models.node.BaseNode.run_task` to detect
-    a prior execution of the same task so the task_id can be reused on LangGraph
-    ``@task`` retries, preventing duplicate rows in ``fin_agents.tasks``.
+    For non-completed tasks the match is unconditional so paused/failed tasks
+    are reused (task_id reuse for retry).  For completed tasks the
+    ``input_hash`` of the current invocation must match so a different input
+    does not serve a stale cache result.
 
     Args:
-        thread_id: LangGraph thread UUID.
-        node_id:   Owning node UUID.
-        task_name: Task name key.
+        thread_id:  LangGraph thread UUID.
+        node_id:    Owning node UUID.
+        task_name:  Task name key.
+        input_json: JSON-serialized task input; passed to Postgres so the
+                    hash comparison is done server-side against the stored
+                    ``md5(input::text)`` generated column.
 
     Returns:
-        Dict with ``task_id`` and ``status``, or ``None`` if no task exists yet.
+        Dict with ``task_id``, ``status``, ``updated_at``, and
+        ``cache_ttl_seconds``, or ``None`` if no matching task exists.
     """
     async with raw_conn(readonly=True) as conn:
-        cur = await conn.execute(_GET_EXISTING_TASK_FOR_NODE, (thread_id, node_id, task_name))
+        cur = await conn.execute(_GET_EXISTING_TASK_FOR_NODE, (thread_id, node_id, task_name, input_json))
         row = await cur.fetchone()
     return dict(row) if row else None
 
@@ -99,9 +106,28 @@ async def get_latest_llm_response(task_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def invalidate_node_task_caches(thread_id: str, node_id: str) -> int:
+    """Zero-out cache_ttl_seconds for all completed tasks under *node_id*.
+
+    After this call the tasks will not be matched as valid cache entries in
+    ``get_existing_task_for_node`` and will be re-executed on the next run.
+
+    Args:
+        thread_id: LangGraph thread UUID.
+        node_id:   Owning node UUID.
+
+    Returns:
+        Number of task rows invalidated.
+    """
+    async with raw_conn() as conn:
+        cur = await conn.execute(_INVALIDATE_NODE_TASK_CACHES, (node_id, thread_id))
+        return cur.rowcount
+
+
 __all__ = [
     "get_existing_task_for_node",
     "get_latest_llm_response",
     "get_paused_task_for_node",
     "get_task_full",
+    "invalidate_node_task_caches",
 ]

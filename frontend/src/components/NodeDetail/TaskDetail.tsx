@@ -221,7 +221,7 @@ const TaskDetail: React.FC<Props> = ({ task, nodeStatus, threadId, onViewData, o
           </Button>
         )}
         {/* Non-streaming tasks: "View Output" sends raw output to the panel with proper mode. */}
-        {!task.is_streaming && !!displayTask.output && (
+        {!task.is_streaming && !isWorkActive(task.status) && !!displayTask.output && (
           <Button
             size="small"
             onClick={() => onViewData?.(`${task.task_name} · Output`, displayTask.output, {

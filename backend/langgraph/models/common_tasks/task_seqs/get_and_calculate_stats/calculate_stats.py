@@ -50,7 +50,13 @@ from backend.db.postgres.queries.fin_markets_indexes import (
     get_primary_index_for_exchange,
     is_index_ticker,
 )
-from backend.db.postgres.queries.fin_markets_quant import IndexStatsSQL, OhlcvStatsSQL
+from backend.db.postgres.queries.fin_markets_quant import (
+    CommodityStatsSQL,
+    CryptoStatsSQL,
+    IndexStatsSQL,
+    OhlcvStatsSQL,
+    PreciousMetalStatsSQL,
+)
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import (
     STATS_TASK_CALC_ERROR,
@@ -58,6 +64,7 @@ from backend.langgraph.models.common_tasks.errors.codes import (
 )
 from backend.langgraph.models.models import TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
+from backend.quant.instrument_types import resolve_instrument_type
 from backend.quant.stats import build_indicator_df, build_ohlcv_dataframe, safe_float
 from backend.resources.stats.models import StatsRecord
 
@@ -287,10 +294,17 @@ async def _handler(payload: dict) -> dict:
 
     matrix = record.content
 
-    # Determine instrument type: market-index tickers (e.g. '^GSPC', '000300.SS') are
-    # stored as 'index'; all other symbols are stored as 'equity'.
-    _is_index = is_index_ticker(symbol)
-    _stats_sql = IndexStatsSQL if _is_index else OhlcvStatsSQL
+    # Determine instrument type from symbol: crypto (BTC-USD / ETH-USD),
+    # commodity futures (GC=F / CL=F / etc.), market-index tickers, or equity.
+    _instrument_type = resolve_instrument_type(symbol, is_index=is_index_ticker(symbol))
+    _stats_sql_map: dict[str, type] = {
+        "index":          IndexStatsSQL,
+        "crypto":         CryptoStatsSQL,
+        "precious_metal": PreciousMetalStatsSQL,
+        "commodity":      CommodityStatsSQL,
+        "equity":         OhlcvStatsSQL,
+    }
+    _stats_sql = _stats_sql_map.get(_instrument_type, OhlcvStatsSQL)
 
     # --- bypass path: return existing row count without recomputing indicators ---
     if inp.bypass:

@@ -41,6 +41,10 @@ async def emit_task_sse(
             event=notif.event,
             payload=notif.to_notify_payload(),
             dedup_key=f"task:{task_id}:{status}",
+            # All task lifecycle events are informational — do not block the graph
+            # waiting for ack.  Blocking here caused 30s delays between tasks when
+            # the frontend failed to ack (CENTRIFUGO_003 exhausted).
+            require_ack=False,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(

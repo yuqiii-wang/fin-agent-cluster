@@ -319,7 +319,7 @@ def _start_celery_cluster(
     completion_workers_per_instance: int = 2,
     completion_worker_concurrency: int = 4,
     stream_workers_per_instance: int = 2,
-    stream_worker_concurrency: int = 8,
+    stream_worker_concurrency: int = 4,
 ) -> list[subprocess.Popen]:
     """Start completion and stream Celery workers with separate queues.
 

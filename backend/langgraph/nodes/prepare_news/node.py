@@ -122,22 +122,17 @@ class PrepareNewsNode(BaseNode[PrepareNewsInput, PrepareNewsOutput]):
             dict with ``__news_output__``.
         """
         async def _run(node_input: PrepareNewsInput) -> dict:
-            try:
-                seq_out: GetAndDigestNewsOutput = await get_and_digest_news.run(
-                    self.run_task,
-                    ctx,
-                    GetAndDigestNewsInput(
-                        symbol=node_input.symbol,
-                        topics=node_input.topics,
-                        from_dt=node_input.from_dt,
-                        to_dt=node_input.to_dt,
-                        news_limit=node_input.news_limit,
-                    ),
-                )
-            except Exception as exc:
-                logger.error("[PN-002] get_and_digest_news failed symbol=%r: %s", node_input.symbol, exc)
-                return {"__news_output__": None, "__symbol__": node_input.symbol}
-
+            seq_out: GetAndDigestNewsOutput = await get_and_digest_news.run(
+                self.run_task,
+                ctx,
+                GetAndDigestNewsInput(
+                    symbol=node_input.symbol,
+                    topics=node_input.topics,
+                    from_dt=node_input.from_dt,
+                    to_dt=node_input.to_dt,
+                    news_limit=node_input.news_limit,
+                ),
+            )
             return {"__news_output__": seq_out, "__symbol__": node_input.symbol}
 
         return RunnableLambda(_run)

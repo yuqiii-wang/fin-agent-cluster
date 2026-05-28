@@ -30,7 +30,7 @@ import { useThreadData } from '../../hooks/useThreadData';
 import { getLlmToken, getSseToken, cancelThread, cancelNode, cancelTask, reExploreNode, ApiError } from '../../api/threads';
 import { evictThreadData, getCachedThreadData } from '../../cache';
 import { isThreadTerminal, isThreadActive } from '../../constants/lifecycleStatus';
-import type { NodeInfo, SseEvent, SseInfo, GraphTopology } from '../../types';
+import type { NodeInfo, SseEvent, SseInfo, GraphTopology, TaskRunEntry } from '../../types';
 import type { DetailData } from './types';
 
 const { Text } = Typography;
@@ -56,6 +56,7 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
   const { thread, nodes, tasks, topology, refresh } = useThreadData(threadId, initialTopology ?? null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [tokenStreams, setTokenStreams] = useState<Record<string, string>>({});
+  const [taskRunLog, setTaskRunLog] = useState<TaskRunEntry[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [detailData, setDetailData] = useState<DetailData | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -134,28 +135,30 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
   const handleViewData = useCallback((
     label: string,
     data: unknown,
-    opts?: { mode?: import('../DataViewer/index').DataViewerMode; viewSchema?: Record<string, string>; fieldList?: boolean; nodeContext?: 'input' | 'output'; taskId?: string; activeStatsView?: string },
+    opts?: { mode?: import('../DataViewer/index').DataViewerMode; viewSchema?: Record<string, string>; fieldList?: boolean; nodeContext?: 'input' | 'output'; nodeId?: string; taskId?: string; activeStatsView?: string },
   ) => {
-    setDetailData({ label, data, mode: opts?.mode, viewSchema: opts?.viewSchema, fieldList: opts?.fieldList, nodeContext: opts?.nodeContext, taskId: opts?.taskId, activeStatsView: opts?.activeStatsView });
+    setDetailData({ label, data, mode: opts?.mode, viewSchema: opts?.viewSchema, fieldList: opts?.fieldList, nodeContext: opts?.nodeContext, nodeId: opts?.nodeId, taskId: opts?.taskId, activeStatsView: opts?.activeStatsView });
   }, []);
 
   // When the user selects a different node while a node's Input/Output panel is open,
   // auto-switch the panel to the new node's corresponding data.
   useEffect(() => {
     if (!selectedNode || !detailData?.nodeContext) return;
+    const selectedNodeTaskRunLog = taskRunLog.filter((entry) => entry.node_id === selectedNode.node_id);
     if (detailData.nodeContext === 'input' && selectedNode.input) {
-      setDetailData({ label: `${selectedNode.node_name} · Input`, data: selectedNode.input, nodeContext: 'input' });
-    } else if (detailData.nodeContext === 'output' && selectedNode.output) {
+      setDetailData({ label: `${selectedNode.node_name} · Input`, data: selectedNode.input, nodeContext: 'input', nodeId: selectedNode.node_id });
+    } else if (detailData.nodeContext === 'output' && (selectedNode.output || selectedNodeTaskRunLog.length > 0)) {
       setDetailData({
         label: `${selectedNode.node_name} · Output`,
         data: selectedNode.output,
-        mode: viewTypeToMode(selectedNode.view_type),
+        mode: selectedNode.output ? viewTypeToMode(selectedNode.view_type) : undefined,
         viewSchema: selectedNode.view_schema as Record<string, string> | undefined,
-        fieldList: true,
+        fieldList: !!selectedNode.output,
         nodeContext: 'output',
+        nodeId: selectedNode.node_id,
       });
     }
-  }, [selectedNodeId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedNodeId, taskRunLog]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenReExplore = useCallback((node: NodeInfo) => {
     setReExploreTarget(node);
@@ -236,6 +239,7 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
 
   useEffect(() => {
     setTokenStreams({});
+    setTaskRunLog([]);
     setSseInfo(initialSseInfo);
     setLlmInfo(initialLlmInfo);
     setLlmEnabled(initialLlmInfo === null);
@@ -289,6 +293,44 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
   const handleSseEvent = useCallback(
     (ev: SseEvent) => {
       if (ev.event === 'stream_start') setLlmEnabled(true);
+
+      // Accumulate task run log for agent node running output.
+      // New task_ids are appended; existing ones update status/output only.
+      // Old completed entries are never removed so retried tasks accumulate.
+      if (ev.event === 'task_status' && ev.task_id && ev.node_id) {
+        const taskId = ev.task_id as string;
+        const nodeId = ev.node_id as string;
+        const status = (ev.status as string | undefined) ?? '';
+        setTaskRunLog((prev) => {
+          const idx = prev.findIndex((e) => e.task_id === taskId);
+          if (idx === -1) {
+            return [
+              ...prev,
+              {
+                task_id: taskId,
+                task_name: (ev.task_name as string | undefined) ?? '',
+                node_id: nodeId,
+                node_name: (ev.node_name as string | undefined) ?? '',
+                view_type: (ev.view_type as string | undefined) ?? 'ToolCall',
+                status,
+                input: ev.input as Record<string, unknown> | undefined,
+                output: ev.output as Record<string, unknown> | undefined,
+                seq: prev.length,
+              },
+            ];
+          }
+          const updated = [...prev];
+          updated[idx] = {
+            ...updated[idx],
+            status,
+            output:
+              (ev.output as Record<string, unknown> | undefined) ??
+              updated[idx].output,
+          };
+          return updated;
+        });
+      }
+
       if (
         ev.event === 'node_status' || ev.event === 'task_status' ||
         ev.event === 'done' || ev.event === 'thread_failed' || ev.event === 'thread_status' ||
@@ -353,6 +395,7 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
         tasks={tasks}
         threadId={threadId}
         tokenStreams={tokenStreams}
+        taskRunLog={taskRunLog}
         threadActive={threadActive}
         cancelling={cancelling}
         onViewData={handleViewData}
@@ -376,6 +419,8 @@ const ThreadView: React.FC<Props> = ({ threadId, sseInfo: initialSseInfo, llmInf
           tasks={tasks}
           nodes={nodes}
           threadId={threadId}
+          taskRunLog={taskRunLog}
+          tokenStreams={tokenStreams}
           onRetry={handleRetryReconnect}
         />
       ) : (

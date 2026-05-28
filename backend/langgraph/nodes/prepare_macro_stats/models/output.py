@@ -1,4 +1,4 @@
-"""Output model for analyze_economics node."""
+"""Output model for prepare_macro_stats node."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ __all__ = ["AnalyzeEconomicsOutput", "EconomicsInstrumentResult"]
 
 
 class EconomicsInstrumentResult(BaseModel):
-    """Stats result for a single economics instrument.
+    """Stats result for a single macro instrument.
 
     Attributes:
         code:          Short identifier, e.g. ``'gold'``.
@@ -32,13 +32,13 @@ class EconomicsInstrumentResult(BaseModel):
 
 
 class AnalyzeEconomicsOutput(BaseModel):
-    """Typed output for ``analyze_economics``.
+    """Typed output for ``prepare_macro_stats``.
 
     Persisted to ``fin_agents.node_executions`` for downstream nodes.
 
     Attributes:
-        instruments: Stats results for each economics instrument (gold, silver,
-                     natural gas, crude oil).
+        instruments: Stats results for each macro instrument (gold, silver,
+                 natural gas, crude oil, bitcoin, ethereum).
         period:      Stats aggregation period used for all instruments.
         df_splits:   Per-instrument OHLCV df_split payloads for StackCandleStick rendering.
                      Shape: [{"symbol": str, "label": str, "df_split": DfSplitDict}, ...].

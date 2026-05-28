@@ -25,6 +25,7 @@ async def recover_running_threads() -> None:
     so that the remaining threads can be processed.
     """
     from backend.db.postgres import raw_conn
+    from backend.db.redis.session import set_thread_user, set_viewer
     from backend.main_thread.errors import MAIN_THREAD_RECOVERY_FAILED
     from backend.main_thread.executor import ThreadRoutingError, dispatch_graph_run
     from backend.main_thread.lock import check_owner_alive, get_lock_owner, this_owner
@@ -34,7 +35,7 @@ async def recover_running_threads() -> None:
     async with raw_conn(readonly=True) as conn:
         cur = await conn.execute(
             """
-            SELECT uq.thread_id, uq.query
+            SELECT uq.thread_id, uq.query, uq.user_id::text AS user_id
             FROM fin_agents.user_queries uq
             WHERE uq.status = 'running'
               AND EXISTS (
@@ -51,7 +52,7 @@ async def recover_running_threads() -> None:
     if not rows:
         return
 
-    logger.error(
+    logger.warning(
         "[main_thread.startup] found %d running thread(s) to evaluate for recovery",
         len(rows),
     )
@@ -59,6 +60,7 @@ async def recover_running_threads() -> None:
     for row in rows:
         thread_id: str = row["thread_id"]
         query: str = row["query"]
+        user_id: str = row["user_id"]
 
         owner = await get_lock_owner(thread_id)
 
@@ -75,6 +77,13 @@ async def recover_running_threads() -> None:
                 # Owner is dead — fall through to dispatch recovery.
 
         try:
+            # Refresh the viewer flags so stream_core sees a live viewer during
+            # recovery.  The flags may have expired (30 min TTL) or been cleared
+            # by the frontend before the restart.  Setting them here mirrors what
+            # submit_query does for new queries and prevents tokens from being
+            # silently discarded when viewers_present evaluates to False.
+            await set_thread_user(thread_id, user_id)
+            await set_viewer(user_id, thread_id)
             await dispatch_graph_run(thread_id, query, resume=True)
             logger.error(
                 "[main_thread.startup] dispatched recovery thread_id=%s", thread_id
@@ -102,7 +111,13 @@ async def cleanup_stale_celery_tasks() -> None:
        each one with ``terminate=True``.  This sends SIGTERM to the worker
        process handling the task.
     2. Purge the Celery queues (remove *pending* tasks that were queued by the
-       old process but not yet picked up by a worker).
+       old process but not yet picked up by a worker).  Step 2 is protected by
+       a Redis distributed lock (``fin:startup:celery:purge``, 60 s TTL) so
+       that only **one** FastAPI instance calls ``control.purge()`` per restart
+       cycle.  Without this guard, a second instance starting slightly later
+       would purge tasks that the first instance already re-dispatched during
+       :func:`recover_running_threads`, leaving the Celery task permanently
+       PENDING and causing the 30-second task_delegation warning.
 
     The inspect call is synchronous and blocking so it runs in a thread-pool
     executor.  A 5-second timeout prevents startup from hanging if workers are
@@ -110,9 +125,10 @@ async def cleanup_stale_celery_tasks() -> None:
     """
     import asyncio
     from backend.celery_task.celery_engine import celery_engine
+    from backend.db.redis.client import get_client
 
-    def _do_cleanup() -> tuple[int, int]:
-        """Blocking work: inspect, revoke, and purge.  Returns (revoked, purged)."""
+    def _do_revoke() -> int:
+        """Revoke all currently active Celery tasks.  Returns revoked count."""
         try:
             active_by_worker = celery_engine.control.inspect(timeout=5).active() or {}
         except Exception:  # noqa: BLE001
@@ -128,17 +144,35 @@ async def cleanup_stale_celery_tasks() -> None:
                         revoked += 1
                     except Exception:  # noqa: BLE001
                         pass
+        return revoked
 
+    def _do_purge() -> int:
+        """Purge pending tasks from all Celery queues.  Returns purged count."""
         try:
-            purged = celery_engine.control.purge() or 0
+            return celery_engine.control.purge() or 0
         except Exception:  # noqa: BLE001
-            purged = 0
+            return 0
 
-        return revoked, purged
+    revoked = await asyncio.to_thread(_do_revoke)
 
-    revoked, purged = await asyncio.to_thread(_do_cleanup)
+    # Only one FastAPI instance should purge per restart cycle.  A second
+    # instance racing through startup could purge tasks just dispatched by the
+    # first instance's recover_running_threads(), pinning those tasks as PENDING
+    # indefinitely.  Use a Redis SET NX lock (60 s TTL) so the winner runs
+    # control.purge() and losers skip it safely.
+    _PURGE_LOCK_KEY = "fin:startup:celery:purge"
+    _PURGE_LOCK_TTL = 60
+    purged = 0
+    try:
+        redis = await get_client(shard=0)
+        acquired = await redis.set(_PURGE_LOCK_KEY, "1", nx=True, ex=_PURGE_LOCK_TTL)
+        if acquired:
+            purged = await asyncio.to_thread(_do_purge)
+    except Exception:  # noqa: BLE001
+        pass
+
     if revoked or purged:
-        logger.error(
+        logger.warning(
             "[main_thread.startup] cleanup: revoked %d active Celery task(s),"
             " purged %d pending task(s) from previous process",
             revoked,

@@ -57,6 +57,8 @@ async def _pipeline(
             period=seq_input.period,
             news_limit=seq_input.news_limit,
             bypass_threshold_minutes=seq_input.bypass_threshold_minutes,
+            text_content=seq_input.text_content,
+            json_input=seq_input.json_input,
         ),
     )
     cs_result = await run_task_fn(

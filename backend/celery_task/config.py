@@ -43,6 +43,9 @@ CELERY_WORKER_CONFIG: dict = {
     "accept_content": ["json"],
     "result_serializer": "json",
     "task_track_started": True,
+    # Keep retrying broker connection attempts during worker startup so
+    # Celery 6 does not change current reconnect behavior.
+    "broker_connection_retry_on_startup": True,
     # Process one task at a time — avoids overloading a single worker with
     # concurrent LLM calls that are already async internally.
     "worker_prefetch_multiplier": 1,

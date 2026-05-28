@@ -39,7 +39,7 @@ const CandleStickChart: React.FC<Props> = ({ dfSplit, maxHeight = 320, symbol })
   const containerRef = useRef<HTMLDivElement>(null);
 
   const availableOverlays = (['sma_20', 'rsi_14'] as Overlay[]).filter((o) =>
-    dfSplit.columns.includes(o),
+    dfSplit.columns?.includes(o),
   );
 
   const [activeOverlays, setActiveOverlays] = useState<Set<Overlay>>(new Set());
@@ -183,7 +183,7 @@ const CandleStickChart: React.FC<Props> = ({ dfSplit, maxHeight = 320, symbol })
     });
   };
 
-  if (!dfSplit.index.length) {
+  if (!dfSplit.index?.length) {
     return <span style={{ fontSize: 12, opacity: 0.5 }}>No data</span>;
   }
 

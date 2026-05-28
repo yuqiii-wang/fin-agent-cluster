@@ -47,11 +47,19 @@ O = TypeVar("O")
 # look up the human-readable description by task_name without threading it
 # through every call site.
 _TASK_DESCRIPTIONS: dict[str, str] = {}
+# Populated in NodeTask.__post_init__ so complete_task can look up the
+# configured cache TTL by task_name without threading it through every call site.
+_TASK_CACHE_TTLS: dict[str, int] = {}
 
 
 def get_task_description(task_name: str) -> str:
     """Return the registered description for *task_name*, or empty string."""
     return _TASK_DESCRIPTIONS.get(task_name, "")
+
+
+def get_task_cache_ttl(task_name: str) -> int:
+    """Return the configured cache TTL (seconds) for *task_name*, or 0 if unknown."""
+    return _TASK_CACHE_TTLS.get(task_name, 0)
 
 
 @dataclass
@@ -81,6 +89,8 @@ class NodeTask(Generic[I, O]):
     task_fn: Callable  # @task-decorated; awaited by BaseNode.run_task()
     handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
     pg_cache_fn: Callable[..., Awaitable[Any]] | None = field(default=None, repr=False)
+    cache_ttl_seconds: int = field(default=14400)
+    is_required_llm_orchestration: bool = field(default=False)
 
     def __post_init__(self) -> None:
         """Validate types and register the description in the global registry."""
@@ -95,6 +105,7 @@ class NodeTask(Generic[I, O]):
                 f"got {self.output_type!r}"
             )
         _TASK_DESCRIPTIONS[self.name] = self.description
+        _TASK_CACHE_TTLS[self.name] = self.cache_ttl_seconds
 
     def get_input(self, payload: dict[str, Any]) -> I:
         """Parse and validate payload dict into the task's input Pydantic model.

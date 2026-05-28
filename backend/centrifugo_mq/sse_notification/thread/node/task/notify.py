@@ -30,6 +30,7 @@ async def notify(
     dedup_key: str | None = None,
     retry_interval: float = 5.0,
     max_retries: int = 6,
+    require_ack: bool = True,
 ) -> bool:
     """Publish a task-scope SSE event and await frontend ACK with automatic retry.
 
@@ -47,9 +48,15 @@ async def notify(
                         ``"task:{task_id}:{event}"``.
         retry_interval: Seconds to wait for a frontend ACK before re-publishing (default 3 s).
         max_retries:    Maximum number of publish attempts before giving up.
+        require_ack:    When ``False`` the event is published once and the
+                        function returns immediately without waiting for a
+                        frontend ACK.  Use for informational status updates
+                        (e.g. ``task_status: running``) where blocking the
+                        graph on an ack would cause unnecessary delays.
 
     Returns:
-        ``True`` if the frontend ACKed; ``False`` on explicit NACK or exhaustion.
+        ``True`` if the frontend ACKed (or *require_ack* is ``False``);
+        ``False`` on explicit NACK or exhaustion.
     """
     if not await has_app_viewers(thread_id):
         return True
@@ -61,7 +68,8 @@ async def notify(
 
     SSE_PUBLISHED.labels(scope="task", event=event).inc()
 
-    if not viewers_present:
+    # Fire-and-forget: publish once and return without waiting for ack.
+    if not require_ack or not viewers_present:
         await publish_task_event(thread_id, published_payload)
         return True
 

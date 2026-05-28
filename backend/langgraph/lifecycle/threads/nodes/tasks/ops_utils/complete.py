@@ -14,6 +14,7 @@ from backend.langgraph.lifecycle.threads.nodes.tasks.sql import (
     _UPDATE_TASK_EXECUTION_OUTPUT,
 )
 from backend.langgraph.lifecycle.threads.nodes.tasks.sse import emit_task_sse
+from backend.langgraph.models.task import get_task_cache_ttl
 
 logger = logging.getLogger(__name__)
 
@@ -48,15 +49,18 @@ async def complete_task(
         node_name:   Human-readable node name.
         task_id:     Task UUID to update.
         task_name:   Handler key for SSE payload.
-        output_data: Result payload (ignored when *failed* is ``True``).
+        output_data: Extra fields merged into the error dict when *failed* is ``True``;
+                     used as the result payload otherwise.
         view_type:   ``fin_agents.task_view_types`` value.
         failed:      ``True`` to mark as failed instead of completed.
         error:       Error message stored in output when *failed* is ``True``.
     """
     status = "failed" if failed else "completed"
+    # Set cache TTL only on healthy completion so failed tasks are never cached.
+    ttl = get_task_cache_ttl(task_name) if not failed else 0
     out: dict[str, Any] = {}
     if failed:
-        out = {"error": error or "unknown error"}
+        out = {**(output_data or {}), "error": error or "unknown error"}
     elif output_data:
         out = output_data
 
@@ -64,7 +68,7 @@ async def complete_task(
     async with raw_conn() as conn:
         cur = await conn.execute(
             _UPDATE_TASK_COMPLETED,
-            (status, task_id, thread_id),
+            (status, ttl, task_id, thread_id),
         )
         updated = cur.rowcount
         if updated > 0:
@@ -125,7 +129,8 @@ async def persist_task_result(
         node_name:   Human-readable node name.
         task_id:     Task UUID to update.
         task_name:   Handler key (for logging only).
-        output_data: Result payload (ignored when *failed* is ``True``).
+        output_data: Extra fields merged into the error dict when *failed* is ``True``;
+                     used as the result payload otherwise.
         failed:      ``True`` to mark as failed instead of completed.
         error:       Error message stored in output when *failed* is ``True``.
 
@@ -134,9 +139,10 @@ async def persist_task_result(
         ``False`` if already terminal (idempotent no-op).
     """
     status = "failed" if failed else "completed"
+    ttl = get_task_cache_ttl(task_name) if not failed else 0
     out: dict[str, Any] = {}
     if failed:
-        out = {"error": error or "unknown error"}
+        out = {**(output_data or {}), "error": error or "unknown error"}
     elif output_data:
         out = output_data
 
@@ -144,7 +150,7 @@ async def persist_task_result(
     async with raw_conn() as conn:
         cur = await conn.execute(
             _UPDATE_TASK_COMPLETED,
-            (status, task_id, thread_id),
+            (status, ttl, task_id, thread_id),
         )
         updated = cur.rowcount
         if updated > 0:

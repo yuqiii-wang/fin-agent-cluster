@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from backend.db.postgres.types import NodeType
 from backend.langgraph.lifecycle import (
     complete_node,
     get_latest_sibling_node_version,
@@ -134,6 +135,25 @@ class EntrypointMixin:
                         reason="predecessor_cancelled",
                     )
 
+        # For workflow nodes: if any required predecessor failed, fail this node
+        # immediately rather than proceeding with incomplete/missing inputs.
+        # Parallel-group siblings absorb this via the returned state delta so
+        # other branches are not interrupted.
+        if self.node_type == NodeType.WORKFLOW:  # type: ignore[attr-defined]
+            for name in self._prev_node_names:  # type: ignore[attr-defined]
+                for record in (state.get("nodes") or {}).values():
+                    meta = record.get("metadata") or {}
+                    if meta.get("node_name") == name and meta.get("status") == "failed":
+                        logger.error(
+                            "[base_node] predecessor '%s' failed; auto-failing workflow '%s' "
+                            "thread_id=%s node_id=%s",
+                            name, self.node_name, thread_id, node_id,  # type: ignore[attr-defined]
+                        )
+                        return await self._fail_self_and_cascade(  # type: ignore[attr-defined]
+                            thread_id, node_id, version, prev_node_ids,
+                            error=f"predecessor '{name}' failed",
+                        )
+
         try:
             results = await self.orchestrate(ctx, node_input)  # type: ignore[attr-defined]
         except NodeCancelledError:
@@ -185,6 +205,33 @@ class EntrypointMixin:
                 failed=True,
                 error=str(exc),
             )
+            # Parallel-group node: only cascade to thread failure when this was
+            # the last active node.  If sibling branches are still running, absorb
+            # the error and return a failed state delta so they can complete cleanly.
+            if self.parallel_group:  # type: ignore[attr-defined]
+                active_count = 1  # conservative default — assume siblings are running
+                try:
+                    from backend.db.postgres import raw_conn
+                    async with raw_conn(readonly=True) as conn:
+                        cur = await conn.execute(
+                            "SELECT COUNT(*) AS cnt FROM fin_agents.nodes "
+                            "WHERE thread_id = %s AND parent_node_id IS NULL "
+                            "AND status NOT IN ('completed','failed','cancelled','wrong')",
+                            (thread_id,),
+                        )
+                        row = await cur.fetchone()
+                    active_count = row["cnt"] if row else 0
+                except Exception as db_exc:
+                    logger.error(
+                        "[base_node] parallel-fail active-count check failed node_id=%s: %s",
+                        node_id, db_exc,
+                    )
+                if active_count > 0:
+                    # Sibling branches still running — absorb failure, let them finish.
+                    failed_record = self._build_node_record(node_id, version, prev_node_ids, "failed")  # type: ignore[attr-defined]
+                    failed_record["task_ids"] = list(ctx.task_ids)
+                    return {"nodes": {node_id: failed_record}}
+                # No active siblings remain — fall through to raise so the thread fails.
             raise
         node_output = self.build_output(results)  # type: ignore[attr-defined]
         stored_output = (

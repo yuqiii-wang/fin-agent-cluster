@@ -10,8 +10,8 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Button, Descriptions, Space, Tag, Tooltip, Typography } from 'antd';
-import { ArrowLeftOutlined, BranchesOutlined, StopOutlined } from '@ant-design/icons';
+import { Button, Descriptions, Space, Tag, Tooltip, Typography, message } from 'antd';
+import { ArrowLeftOutlined, BranchesOutlined, ClearOutlined, StopOutlined } from '@ant-design/icons';
 import { viewTypeToMode } from '../DataViewer/index';
 import TaskDetail from './TaskDetail';
 import AgentNodeDetail from './Agent';
@@ -19,8 +19,9 @@ import SubgraphNode from './SubgraphNode';
 import { COLOR_SURFACE_RAISED, COLOR_TEXT_SECONDARY } from '../../constants/styleColors';
 import { STATUS_HEX, STATUS_TAG_COLOR } from '../../constants/statusColors';
 import { isWorkActive, TERMINAL_WORK_STATUSES } from '../../constants/lifecycleStatus';
+import { invalidateNodeCache } from '../../api/threads';
 
-import type { NodeInfo, TaskInfo } from '../../types';
+import type { NodeInfo, TaskInfo, TaskRunEntry } from '../../types';
 import type { DataViewerMode } from '../DataViewer/index';
 
 const { Title, Text } = Typography;
@@ -31,6 +32,8 @@ interface Props {
   tasks: TaskInfo[];
   threadId: string;
   tokenStreams?: Record<string, string>;
+  /** Accumulated SSE-driven task run log for running output display. */
+  taskRunLog?: TaskRunEntry[];
   /** True when the thread is still running (re-explore btn will be disabled). */
   threadActive?: boolean;
   /** Active version being viewed; used to mark shared nodes from older versions. */
@@ -51,10 +54,11 @@ interface Props {
 
 type View = { type: 'node' } | { type: 'task'; taskId: string };
 
-const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenStreams = {}, threadActive = false, activeVersion, onViewData, onSelectNode, onCancelNode, onCancelTask, cancellingId, onReExplore }) => {
+const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenStreams = {}, taskRunLog = [], threadActive = false, activeVersion, onViewData, onSelectNode, onCancelNode, onCancelTask, cancellingId, onReExplore }) => {
   const [view, setView] = useState<View>({ type: 'node' });
   const [isHeaderHovered, setIsHeaderHovered] = useState(false);
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
+  const [invalidatingCache, setInvalidatingCache] = useState(false);
 
   const nodeTasks = tasks.filter(
     (t) => t.node_id === node.node_id,
@@ -102,13 +106,16 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
   }
 
   // ── Agent node view ───────────────────────────────────────────────────────
-  if (node.type === 'Agent') {
+  // topology-only placeholders have a synthetic node_id (e.g. "topology-prepare_peers")
+  // and no real DB record yet — skip AgentNodeDetail to avoid 404 on capabilities fetch.
+  if (node.type === 'Agent' && !node.is_topology_only) {
     return (
       <AgentNodeDetail
         node={node}
         tasks={nodeTasks}
         threadId={threadId}
         tokenStreams={tokenStreams}
+        taskRunLog={taskRunLog.filter((e) => e.node_id === node.node_id)}
         threadActive={threadActive}
         activeVersion={activeVersion}
         onViewData={onViewData}
@@ -177,6 +184,28 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
               style={{ marginLeft: 'auto' }}
             >
               Re-explore
+            </Button>
+          </Tooltip>
+        )}
+        {node.status === 'completed' && nodeTasks.length > 0 && (
+          <Tooltip title="Zero out task cache TTLs so tasks re-run on the next execution">
+            <Button
+              size="small"
+              icon={<ClearOutlined />}
+              loading={invalidatingCache}
+              onClick={async () => {
+                setInvalidatingCache(true);
+                try {
+                  const { invalidated } = await invalidateNodeCache(threadId, node.node_id);
+                  message.success(`Cache invalidated for ${invalidated} task(s)`);
+                } catch {
+                  message.error('Failed to invalidate cache');
+                } finally {
+                  setInvalidatingCache(false);
+                }
+              }}
+            >
+              Invalidate Cache
             </Button>
           </Tooltip>
         )}

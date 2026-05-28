@@ -52,7 +52,7 @@ from backend.langgraph.models.task import NodeTask
 from backend.resources.news.client import NewsClient
 from backend.resources.news.models import NewsArticle
 from backend.resources.stats.client import StatsClient
-from backend.resources.stats.models import StatsRecord
+from backend.resources.stats.models import StatsMatrix, StatsRecord
 from backend.resources.stats.routing import provider_for_symbol
 
 logger = logging.getLogger(__name__)
@@ -126,6 +126,22 @@ class GetStatsInput(BaseModel):
     bypass_threshold_minutes: int = Field(
         default=60, ge=1, description="Minutes within which downstream stats recomputation is skipped."
     )
+    text_content: str | None = Field(
+        default=None,
+        description=(
+            "Optional pre-fetched text content (e.g. from navigate_web). "
+            "When provided, bypasses the external API call and stores the text "
+            "directly in quant_raw with source='web_content', method='text_input'."
+        ),
+    )
+    json_input: dict | None = Field(
+        default=None,
+        description=(
+            "Optional structured JSON data (e.g. from run_sandbox stdout). "
+            "When provided, bypasses the external API call and stores the dict "
+            "directly in quant_raw with source='sandbox', method='json_input'."
+        ),
+    )
 
 
 class GetStatsOutput(BaseModel):
@@ -198,6 +214,66 @@ async def _handler(payload: dict) -> dict:
     symbol = inp.symbol.upper()
     method = "list_stats"
     bypass_cutoff = datetime.now(timezone.utc) - timedelta(minutes=inp.bypass_threshold_minutes)
+
+    # --- json input path: store structured JSON in quant_raw, bypass API ---
+    if inp.json_input is not None:
+        cache_key = _make_cache_key("sandbox", "json_input", symbol, inp.period)
+        async with raw_conn() as conn:
+            await conn.execute(
+                QuantRawSQL.INSERT,
+                (
+                    None,
+                    "common_tasks/get_stats",
+                    "sandbox",
+                    "json_input",
+                    symbol,
+                    cache_key,
+                    json.dumps({"symbol": symbol, "period": inp.period}),
+                    json.dumps(inp.json_input),
+                ),
+            )
+        stub_record = StatsRecord(
+            id=f"json-{symbol}-{inp.period}",
+            symbol=symbol,
+            period=inp.period,
+            content=StatsMatrix(timestamps=[], series={}),
+        )
+        return GetStatsOutput(
+            stats_record=stub_record,
+            news_articles=[],
+            from_cache=False,
+            bypass_calculate=True,
+        ).model_dump(mode="json")
+
+    # --- text input path: store pre-fetched content in quant_raw, bypass API ---
+    if inp.text_content:
+        cache_key = _make_cache_key("web_content", "text_input", symbol, inp.period)
+        async with raw_conn() as conn:
+            await conn.execute(
+                QuantRawSQL.INSERT,
+                (
+                    None,
+                    "common_tasks/get_stats",
+                    "web_content",
+                    "text_input",
+                    symbol,
+                    cache_key,
+                    json.dumps({"symbol": symbol, "period": inp.period}),
+                    json.dumps({"text_content": inp.text_content}),
+                ),
+            )
+        stub_record = StatsRecord(
+            id=f"text-{symbol}-{inp.period}",
+            symbol=symbol,
+            period=inp.period,
+            content=StatsMatrix(timestamps=[], series={}),
+        )
+        return GetStatsOutput(
+            stats_record=stub_record,
+            news_articles=[],
+            from_cache=False,
+            bypass_calculate=True,
+        ).model_dump(mode="json")
 
     providers = _build_provider_chain(symbol)
     news_client = NewsClient()
@@ -305,6 +381,14 @@ async def _get_stats_pg_cache(
     Returns:
         ``GetStatsOutput`` with ``from_cache=True`` on a cache hit, or ``None``.
     """
+    # Text input is always fresh — skip cache lookup.
+    if inp.text_content:
+        return None
+
+    # JSON input is always fresh — skip cache lookup.
+    if inp.json_input is not None:
+        return None
+
     symbol = inp.symbol.upper()
     method = "list_stats"
     ttl_cutoff = datetime.now(timezone.utc) - timedelta(hours=_CACHE_TTL_HOURS)

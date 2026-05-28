@@ -26,6 +26,7 @@ Public exports
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -39,6 +40,7 @@ from backend.db.postgres import raw_conn
 from backend.db.postgres.queries.fin_markets_news import NewsRawSQL
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import (
+    NEWS_TASK_ALL_PROVIDERS_EMPTY,
     NEWS_TASK_FETCH_ERROR,
 )
 from backend.langgraph.models.models import NodeContext, TaskInput, TaskOutput
@@ -52,6 +54,7 @@ _TASK_NAME = "get_news"
 _CACHE_TTL_HOURS = 4
 _NODE_NAME = "common_tasks/get_news"
 _METHOD = "list_news"
+_RETRY_WAIT_SECONDS = 60
 
 
 def _floor_to_4h_block(dt: datetime) -> datetime:
@@ -160,33 +163,82 @@ async def _handler(payload: dict) -> dict:
     The pg cache check is handled upstream by ``run_task`` via ``pg_cache_fn``.
     This function is only reached on a cache miss.
 
+    Retry strategy
+    --------------
+    Attempt 1: ``NewsClient.list_news()`` — tries FMP first, falls back to DDGS
+    internally when FMP returns empty.
+
+    If the combined result is still empty after both providers, waits
+    ``_RETRY_WAIT_SECONDS`` (60 s) then performs Attempt 2 with a fresh client.
+
+    If Attempt 2 is also empty, raises :class:`RuntimeError` tagged with
+    ``NEWS_TASK_ALL_PROVIDERS_EMPTY`` so the LangGraph task is marked as
+    failed and downstream tasks in the same news node fail accordingly.
+
     Args:
         payload: Serialised :class:`GetNewsInput` fields.
 
     Returns:
         Serialised :class:`GetNewsOutput` dict.
+
+    Raises:
+        RuntimeError: When all providers return empty results after the retry wait.
     """
     inp = GetNewsInput.model_validate(payload)
 
     symbol = inp.symbol.upper() if inp.symbol else None
+
+    # Skip fetch entirely when no symbol is provided — industry and macro news
+    # nodes may pass symbol=None when the stock cannot be resolved.  Rather than
+    # hammering providers and raising NEWS_TASK_ALL_PROVIDERS_EMPTY, return an
+    # empty result so the node completes gracefully.
+    if not symbol:
+        return GetNewsOutput(
+            news_raw_id=None,
+            source="none",
+            news_articles=[],
+            from_cache=False,
+        ).model_dump(mode="json")
+
     topics = inp.topics or None
     cache_key = _make_cache_key(symbol, inp.topics or None, inp.from_dt, inp.to_dt)
 
-    # --- fetch from providers ---
-    news_client = NewsClient()
+    async def _try_fetch() -> tuple[list[NewsArticle], str]:
+        """One attempt: FMP → DDGS fallback via NewsClient. Returns (articles, provider)."""
+        news_client = NewsClient()
+        try:
+            news_resp = await news_client.list_news(
+                symbol=symbol,
+                topics=topics,
+                from_dt=inp.from_dt,
+                to_dt=inp.to_dt,
+                limit=inp.news_limit,
+            )
+            return news_resp.items, news_client.provider
+        except Exception as exc:
+            logger.error(
+                "[%s] get_news fetch failed symbol=%s error=%s",
+                NEWS_TASK_FETCH_ERROR, symbol, exc,
+            )
+            return [], news_client.provider
 
-    try:
-        news_resp = await news_client.list_news(
-            symbol=symbol,
-            topics=topics,
-            from_dt=inp.from_dt,
-            to_dt=inp.to_dt,
-            limit=inp.news_limit,
+    # Attempt 1: FMP → DDGS
+    news_articles, provider = await _try_fetch()
+
+    if not news_articles:
+        logger.error(
+            "[%s] get_news all providers returned empty symbol=%s; retrying after %ds",
+            NEWS_TASK_ALL_PROVIDERS_EMPTY, symbol, _RETRY_WAIT_SECONDS,
         )
-        news_articles = news_resp.items
-    except Exception as exc:
-        logger.error("[%s] get_news news fetch failed symbol=%s error=%s", NEWS_TASK_FETCH_ERROR, symbol, exc)
-        news_articles = []
+        await asyncio.sleep(_RETRY_WAIT_SECONDS)
+        # Attempt 2: fresh client, same FMP → DDGS order
+        news_articles, provider = await _try_fetch()
+
+    if not news_articles:
+        raise RuntimeError(
+            f"[{NEWS_TASK_ALL_PROVIDERS_EMPTY}] get_news all providers returned empty "
+            f"after retry — symbol={symbol!r}"
+        )
 
     # --- persist to news_raw ---
     output_payload = {
@@ -204,7 +256,7 @@ async def _handler(payload: dict) -> dict:
             (
                 inp.thread_id,
                 _NODE_NAME,
-                news_client.provider,
+                provider,
                 _METHOD,
                 cache_key,
                 json.dumps(input_payload),
@@ -216,7 +268,7 @@ async def _handler(payload: dict) -> dict:
 
     return GetNewsOutput(
         news_raw_id=news_raw_id,
-        source=news_client.provider,
+        source=provider,
         news_articles=news_articles,
         from_cache=False,
     ).model_dump(mode="json")
@@ -242,6 +294,8 @@ async def _get_news_pg_cache(
         ``GetNewsOutput`` with ``from_cache=True`` on a cache hit, or ``None``.
     """
     symbol = inp.symbol.upper() if inp.symbol else None
+    if not symbol:
+        return None  # no symbol → handler will return empty immediately, no cache to check
     cache_key = _make_cache_key(symbol, inp.topics or None, inp.from_dt, inp.to_dt)
     ttl_cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=_CACHE_TTL_HOURS)
     async with raw_conn(readonly=True) as conn:

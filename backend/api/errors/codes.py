@@ -66,6 +66,11 @@ API_THREAD_EMIT_INVALID_EVENT = "API_THREAD_EMIT_INVALID_EVENT"
 #: Requested status value is not in the allowed set.
 API_THREAD_STATUS_INVALID = "API_THREAD_STATUS_INVALID"
 
+# ── Node cache ─────────────────────────────────────────────────────────────────────
+
+#: Database error while invalidating task caches for a node.
+API_NODE_CACHE_INVALIDATE_DB_ERROR = "API_NODE_CACHE_INVALIDATE_DB_ERROR"
+
 # ---------------------------------------------------------------------------
 # Description registry
 # ---------------------------------------------------------------------------
@@ -123,5 +128,8 @@ API_ERRORS: dict[str, str] = {
     API_THREAD_STATUS_INVALID: (
         "The requested status value is not in the allowed set. "
         "Valid values: pending, running, completed, failed, cancelled."
+    ),
+    API_NODE_CACHE_INVALIDATE_DB_ERROR: (
+        "Failed to invalidate task caches for the node due to a database error."
     ),
 }

@@ -5,17 +5,28 @@ from backend.langgraph.nodes.prepare_peers.tasks.analyze_peer_corr import (
     AnalyzePeerCorrInput,
     AnalyzePeerCorrOutput,
 )
-from backend.langgraph.nodes.prepare_peers.tasks.propose_peer_stocks import (
-    propose_peer_stocks,
-    STREAM_PROMPT_BUILDERS as _PPS_BUILDERS,
+from backend.langgraph.nodes.prepare_peers.tasks.peer_orchestration import (
+    peer_orchestration,
+    PeerOrchestrationInput,
+    PeerOrchestrationOutput,
+    TopCorrPeer,
+    STREAM_PROMPT_BUILDERS as _PORCH_BUILDERS,
+)
+from backend.langgraph.nodes.prepare_peers.tasks.propose_peer_urls import (
+    propose_peer_urls,
+    STREAM_PROMPT_BUILDERS as _PPU_BUILDERS,
 )
 
-STREAM_PROMPT_BUILDERS: dict = {**_PPS_BUILDERS}
+STREAM_PROMPT_BUILDERS: dict = {**_PPU_BUILDERS, **_PORCH_BUILDERS}
 
 __all__ = [
-    "propose_peer_stocks",
+    "propose_peer_urls",
     "analyze_peer_corr",
     "AnalyzePeerCorrInput",
     "AnalyzePeerCorrOutput",
+    "peer_orchestration",
+    "PeerOrchestrationInput",
+    "PeerOrchestrationOutput",
+    "TopCorrPeer",
     "STREAM_PROMPT_BUILDERS",
 ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from langchain_core.runnables import RunnableLambda
@@ -48,15 +49,15 @@ class TaskRunnerMixin:
         )
         from backend.langgraph.lifecycle.pause_flag import clear_task_pause_flag
 
-        existing = await get_existing_task_for_node(ctx.thread_id, ctx.node_id, node_task.name)
+        input_json = json.dumps(content.model_dump(mode="json"))
+        existing = await get_existing_task_for_node(ctx.thread_id, ctx.node_id, node_task.name, input_json)
         # Guard against returning a cached result from a *different* parallel invocation of the
         # same task within this node (e.g. prepare_index running get_and_calculate_stats for N
         # symbols concurrently).  ctx.task_ids is appended to before the @task fn is awaited, so
         # if task_id is already present another coroutine has claimed it; create a fresh one.
         existing_claimed = existing is not None and existing["task_id"] in ctx.task_ids
         if existing and not existing_claimed and existing["status"] == "completed":
-            # Task was already completed by _run_retry_background; reuse the stored
-            # output without re-running so the resumed graph can reach complete_node.
+            # SQL already verified input_hash matches and TTL is live — serve from cache.
             task_id = existing["task_id"]
             task_row = await get_task_full(ctx.thread_id, task_id)
             output_data = task_row.get("output") if task_row else None

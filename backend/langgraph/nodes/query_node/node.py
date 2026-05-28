@@ -53,7 +53,7 @@ from backend.langgraph.nodes.query_node.tasks.analyze_stock_from_web_if_not_seen
 )
 from backend.langgraph.state import GraphState
 
-_STATS_PERIOD = "1y"
+_STATS_PERIOD = "2y"
 
 
 class QueryNode(BaseNode[QueryNodeInput, QueryNodeOutput]):

@@ -1,4 +1,4 @@
-"""Input model for analyze_economics node."""
+"""Input model for prepare_macro_stats node."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ __all__ = ["AnalyzeEconomicsInput"]
 
 
 class AnalyzeEconomicsInput(BaseModel):
-    """Typed input for ``analyze_economics``.
+    """Typed input for ``prepare_macro_stats``.
 
     Attributes:
         period: Stats aggregation period passed to ``get_and_calculate_stats``

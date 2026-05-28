@@ -78,46 +78,50 @@ _SENTIMENT_LEVELS = frozenset({
 # News topics — loaded from fin_markets.news_topics on first use
 # ---------------------------------------------------------------------------
 
-_topics_cache: frozenset[str] | None = None
+_topics_cache: dict[str, str | None] | None = None
 
 
-async def _load_news_topics() -> frozenset[str]:
-    """Load topic codes from ``fin_markets.news_topics`` (cached after first load).
+async def _load_news_topics() -> dict[str, str | None]:
+    """Load topic codes and descriptions from ``fin_markets.news_topics`` (cached after first load).
 
     Returns:
-        Frozenset of topic code strings from the DB.
+        Dict mapping topic code to its description (or ``None`` if absent).
     """
     global _topics_cache
     if _topics_cache is not None:
         return _topics_cache
     async with raw_conn(readonly=True) as conn:
-        cur = await conn.execute(NewsTopicsSQL.GET_ALL_CODES)
+        cur = await conn.execute(NewsTopicsSQL.GET_ALL)
         rows = await cur.fetchall()
-    _topics_cache = frozenset(row["code"] for row in rows)
+    _topics_cache = {row["code"]: row["description"] for row in rows}
     return _topics_cache
 
 
-def _get_topics_sync() -> frozenset[str]:
+def _get_topics_sync() -> dict[str, str | None]:
     """Sync wrapper for :func:`_load_news_topics`; safe to call from Celery workers.
 
     Returns:
-        Frozenset of topic codes.
+        Dict mapping topic code to its description.
     """
     if _topics_cache is not None:
         return _topics_cache
     return asyncio.run(_load_news_topics())
 
 
-def _build_batch_system_prompt(topics: frozenset[str]) -> str:
+def _build_batch_system_prompt(topics: dict[str, str | None]) -> str:
     """Build the batch system prompt with the topic list loaded from DB.
 
     Args:
-        topics: Frozenset of topic code strings from ``fin_markets.news_topics``.
+        topics: Dict mapping topic code to description from ``fin_markets.news_topics``.
 
     Returns:
         System prompt string for the batched LLM classification call.
     """
-    topics_str = " | ".join(sorted(topics)) + " | null"
+    topics_lines = "\n".join(
+        f"  - {code}" + (f": {desc}" if desc else "")
+        for code, desc in sorted(topics.items())
+    ) + "\n  - null"
+    codes_str = " | ".join(sorted(topics.keys())) + " | null"
     return (
         "You are a financial news analyst. Given a list of articles, classify each one and respond\n"
         "ONLY with valid JSON matching the schema below. Do not think out loud — output only the JSON object.\n"
@@ -125,8 +129,10 @@ def _build_batch_system_prompt(topics: frozenset[str]) -> str:
         "Rules:\n"
         "- summary: if the article body is 500 characters or fewer, copy it verbatim; otherwise write\n"
         "  a 2-3 sentence compressed neutral summary.\n"
-        "- topic: pick the single most relevant topic from the allowed list.\n"
+        "- topic: pick the single most relevant topic from the allowed list below.\n"
         "- tags: a few concise free-form descriptors (e.g. ticker names, event types, key themes).\n"
+        "\n"
+        f"Allowed topics:\n{topics_lines}\n"
         "\n"
         "Schema:\n"
         "{\n"
@@ -134,7 +140,7 @@ def _build_batch_system_prompt(topics: frozenset[str]) -> str:
         '    "<url_hash>": {\n'
         '      "summary":         "<verbatim body if ≤500 chars, else 2–3 sentence compressed summary>",\n'
         '      "sentiment_level": "<one of: strongly_bullish | bullish | mildly_bullish | slightly_bullish | neutral | slightly_bearish | mildly_bearish | bearish | strongly_bearish>",\n'
-        f'      "topic":           "<one of: {topics_str}>",\n'
+        f'      "topic":           "<one of: {codes_str}>",\n'
         '      "tags":            ["<tag1>", "<tag2>"]\n'
         "    }\n"
         "  }\n"
@@ -197,7 +203,7 @@ def _build_do_summary_prompt(payload: dict) -> list[BaseMessage]:
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_do_summary_prompt}
 
 
-def _parse_summary_answer(answer_dict: dict, topics: frozenset[str]) -> "DoSummaryOutput":
+def _parse_summary_answer(answer_dict: dict, topics: dict[str, str | None]) -> "DoSummaryOutput":
     """Parse and validate the streaming LLM answer into a :class:`DoSummaryOutput`.
 
     Clamps each per-article field to known reference values; unknown codes fall

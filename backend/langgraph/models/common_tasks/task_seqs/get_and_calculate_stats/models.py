@@ -24,6 +24,20 @@ class GetAndCalculateStatsInput(BaseModel):
     bypass_threshold_minutes: int = Field(
         default=60, ge=1, description="Minutes within which downstream stats recomputation is skipped."
     )
+    text_content: str | None = Field(
+        default=None,
+        description=(
+            "Optional pre-fetched text content forwarded to get_stats. "
+            "When provided, bypasses the external stats API and stores the text in quant_raw."
+        ),
+    )
+    json_input: dict | None = Field(
+        default=None,
+        description=(
+            "Optional structured JSON data forwarded to get_stats (e.g. from run_sandbox). "
+            "When provided, bypasses the external stats API and stores the dict in quant_raw."
+        ),
+    )
 
 
 class GetAndCalculateStatsOutput(BaseModel):

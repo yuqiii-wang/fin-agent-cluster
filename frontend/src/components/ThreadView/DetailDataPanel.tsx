@@ -3,8 +3,9 @@ import { Button, Card, Typography } from 'antd';
 import { CaretRightOutlined, PauseOutlined, RetweetOutlined } from '@ant-design/icons';
 import DataViewer, { viewTypeToMode } from '../DataViewer/index';
 import { StatsViewSelect } from '../DataViewer/StatsViewer';
+import AgentNodeRunningOutput from '../NodeDetail/Agent/AgentNodeRunningOutput';
 import { retryFreshTask, continueTask, pauseTask } from '../../api/threads';
-import type { TaskInfo, NodeInfo } from '../../types';
+import type { TaskInfo, NodeInfo, TaskRunEntry } from '../../types';
 import type { DetailData } from './types';
 
 const { Text } = Typography;
@@ -17,11 +18,22 @@ interface Props {
   tasks: TaskInfo[];
   nodes: NodeInfo[];
   threadId: string;
+  taskRunLog?: TaskRunEntry[];
+  tokenStreams?: Record<string, string>;
   /** Called immediately when a retry is initiated so the parent can re-establish SSE. */
   onRetry?: (taskId: string) => void;
 }
 
-const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, nodes, threadId, onRetry }) => {
+const DetailDataPanel: React.FC<Props> = ({
+  detailData,
+  onClose,
+  tasks,
+  nodes,
+  threadId,
+  taskRunLog = [],
+  tokenStreams = {},
+  onRetry,
+}) => {
   const [retrying, setRetrying] = useState(false);
   const [continuing, setContinuing] = useState(false);
   const [pausing, setPausing] = useState(false);
@@ -112,6 +124,16 @@ const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, nodes, t
     ? (streamTask!.view_schema as Record<string, string> | undefined)
     : detailData.viewSchema;
   const effectiveFieldList = isCompletedStream ? true : detailData.fieldList;
+  const nodeTaskRunLog = detailData.nodeId
+    ? taskRunLog.filter((entry) => entry.node_id === detailData.nodeId)
+    : [];
+  const showAgentRunningOutput =
+    detailData.nodeContext === 'output' && nodeTaskRunLog.length > 0;
+  // Always render DataViewer for stream mode (data=undefined is normal; task sub-handles tokens).
+  const showDataViewer =
+    effectiveMode === 'stream' ||
+    effectiveData !== undefined ||
+    effectiveText !== undefined;
 
   return (
     <Card
@@ -179,18 +201,27 @@ const DetailDataPanel: React.FC<Props> = ({ detailData, onClose, tasks, nodes, t
       }
       style={{ borderRadius: 8 }}
     >
-      <DataViewer
-        mode={effectiveMode}
-        data={effectiveData}
-        text={effectiveText}
-        viewSchema={effectiveViewSchema}
-        activeStatsView={activeStatsView || undefined}
-        fieldList={effectiveFieldList}
-        tasks={tasks}
-        task={detailData.taskId ? tasks.find(t => t.task_id === detailData.taskId) : undefined}
-        threadId={threadId}
-        maxHeight={480}
-      />
+      {showAgentRunningOutput && (
+        <AgentNodeRunningOutput
+          entries={nodeTaskRunLog}
+          tokenStreams={tokenStreams}
+          showTitle={false}
+        />
+      )}
+      {showDataViewer && (
+        <DataViewer
+          mode={effectiveMode}
+          data={effectiveData}
+          text={effectiveText}
+          viewSchema={effectiveViewSchema}
+          activeStatsView={activeStatsView || undefined}
+          fieldList={effectiveFieldList}
+          tasks={tasks}
+          task={detailData.taskId ? tasks.find(t => t.task_id === detailData.taskId) : undefined}
+          threadId={threadId}
+          maxHeight={480}
+        />
+      )}
     </Card>
   );
 };

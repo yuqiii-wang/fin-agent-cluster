@@ -25,8 +25,7 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
-import httpx
-
+from backend.httpx_client import AsyncClient, HTTPError
 from backend.resources.stats.errors import (
     STATS_FMP_AUTH_ERROR,
     STATS_FMP_EMPTY,
@@ -52,7 +51,7 @@ _PERIOD_CONFIG: dict[str, tuple[int, str | None]] = {
 async def fetch(
     symbol: str,
     period: str,
-    http: httpx.AsyncClient,
+    http: AsyncClient,
 ) -> StatsRecord:
     """Download OHLCV data from FMP and return a :class:`StatsRecord`.
 
@@ -94,7 +93,7 @@ async def fetch(
 
     try:
         response = await http.get(url, params={"from": from_str, "to": to_str})
-    except httpx.HTTPError as exc:
+    except HTTPError as exc:
         logger.error(
             "fmp.fetch network error symbol=%s error=%s [%s]",
             symbol, exc, STATS_PROVIDER_ERROR,

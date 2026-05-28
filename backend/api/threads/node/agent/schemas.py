@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from backend.langgraph.agent.memory.models import MemoryEntry
 from backend.langgraph.agent.skills.models import Skill
+from backend.langgraph.agent.step_state.models import StepStateEntry
 
 
 class AddSkillRequest(BaseModel):
@@ -59,9 +60,17 @@ class AgentCapabilitiesResponse(BaseModel):
     """Chronological active memory entries from this node execution."""
 
 
+class AgentStepStatesResponse(BaseModel):
+    """Response for GET .../agent/step-states."""
+
+    iterations: list[StepStateEntry]
+    """All persisted iteration snapshots ordered by iteration number."""
+
+
 __all__ = [
     "AddSkillRequest",
     "AgentCapabilitiesResponse",
+    "AgentStepStatesResponse",
     "CompactMemoryRequest",
     "MemoryOperationResponse",
     "SkillResponse",

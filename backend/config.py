@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     CELERY_STREAM_WORKERS_PER_INSTANCE: int = 2
     # Concurrent slots per stream worker.  Increase to raise peak streaming concurrency.
     # Total stream slots = RUNNER_INSTANCE_COUNT * CELERY_STREAM_WORKERS_PER_INSTANCE * CELERY_STREAM_WORKER_CONCURRENCY.
-    CELERY_STREAM_WORKER_CONCURRENCY: int = 8
+    CELERY_STREAM_WORKER_CONCURRENCY: int = 4
     # Port this specific main thread instance is bound to.
 
     # ── Thread ownership lock (Redis) ─────────────────────────────────────────
@@ -167,6 +167,32 @@ class Settings(BaseSettings):
     DONE_VERIFIER_INTERVAL_SECS: int = 2
     DONE_VERIFIER_MAX_RETRIES: int = 30
 
+    # ── Sandbox (agent code execution) ────────────────────────────────────────
+    # Root directory for sandbox temp dirs; created at runtime if missing.
+    # Each execution gets a fresh sub-directory deleted on completion.
+    SANDBOX_DIR: str = "/tmp/fin_sandbox"
+    # Wall-clock timeout (seconds) for each sandboxed execution.
+    SANDBOX_TIMEOUT_SECONDS: int = 60
+    # Max virtual memory per sandbox process (megabytes, RLIMIT_AS).
+    SANDBOX_MAX_MEMORY_MB: int = 256
+    # Max CPU time per sandbox process (seconds, RLIMIT_CPU).
+    SANDBOX_MAX_CPU_SECONDS: int = 30
+    # Max spawnable child processes from the sandbox process (RLIMIT_NPROC).
+    SANDBOX_MAX_PROCS: int = 64
+    # Max open file descriptors for the sandbox process (RLIMIT_NOFILE).
+    SANDBOX_MAX_OPEN_FILES: int = 64
+    # Max combined stdout+stderr characters returned; excess is truncated.
+    SANDBOX_MAX_OUTPUT_BYTES: int = 1_048_576  # 1 MB
+    # Ordered list of sandbox runner HTTP base URLs; sharded by thread_id.
+    # Requests are proxied through nginx-internal so the Windows host backend can
+    # reach runners that stay isolated on the internal sandbox Docker network.
+    SANDBOX_RUNNER_NODES: list[str] = [
+        "http://127.0.0.1:8888/_sandbox/0",
+        "http://127.0.0.1:8888/_sandbox/1",
+    ]
+    # HTTP read timeout for /execute calls; should exceed SANDBOX_TIMEOUT_SECONDS.
+    SANDBOX_RUNNER_TIMEOUT_SECONDS: int = 90
+
     from pydantic import field_validator as _fv
 
     @_fv("DATABASE_REDIS_NODES", mode="before")
@@ -194,6 +220,17 @@ class Settings(BaseSettings):
     @_fv("CENTRIFUGO_SSE_NODES", mode="before")
     @classmethod
     def _coerce_centrifugo_sse_nodes(cls, v: object) -> object:
+        """Coerce a comma-separated string into a list before validation."""
+        if isinstance(v, str):
+            stripped = v.strip()
+            if not stripped:
+                return []
+            return [node.strip() for node in stripped.split(",") if node.strip()]
+        return v
+
+    @_fv("SANDBOX_RUNNER_NODES", mode="before")
+    @classmethod
+    def _coerce_sandbox_runner_nodes(cls, v: object) -> object:
         """Coerce a comma-separated string into a list before validation."""
         if isinstance(v, str):
             stripped = v.strip()

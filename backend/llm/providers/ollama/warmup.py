@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import logging
-import urllib.parse
 
-import httpx
+from backend.httpx_client import ConnectError, TimeoutException, make_ollama_sync_client
 
 logger = logging.getLogger(__name__)
-
-# Hostnames that should never be routed through a proxy.
-_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def warmup_ollama() -> None:
@@ -35,11 +31,7 @@ def warmup_ollama() -> None:
     url = f"{base_url}/api/chat"
 
     # Resolve proxy: skip for loopback destinations (Ollama running locally).
-    proxy: str | None = None
-    if settings.HTTP_PROXY:
-        host = urllib.parse.urlparse(base_url).hostname or ""
-        if host not in _LOOPBACK_HOSTS:
-            proxy = settings.HTTP_PROXY
+    proxy: str | None = settings.HTTP_PROXY if settings.HTTP_PROXY else None
 
     body = {
         "model": model,
@@ -50,7 +42,7 @@ def warmup_ollama() -> None:
 
     print(f"[ollama_warmup] warming up model={model} at {base_url} …")
     try:
-        with httpx.Client(proxy=proxy, timeout=httpx.Timeout(120.0)) as client:
+        with make_ollama_sync_client(base_url, proxy=proxy, timeout_seconds=120.0) as client:
             resp = client.post(url, json=body)
             if resp.status_code >= 400:
                 logger.error(
@@ -59,9 +51,9 @@ def warmup_ollama() -> None:
                 )
                 return
         print(f"[ollama_warmup] model={model} loaded and ready")
-    except httpx.ConnectError as exc:
+    except ConnectError as exc:
         logger.error("[ollama_warmup] cannot connect to Ollama at %s (non-fatal): %s", url, exc)
-    except httpx.TimeoutException as exc:
+    except TimeoutException as exc:
         logger.error("[ollama_warmup] warmup request timed out at %s (non-fatal): %s", url, exc)
     except Exception as exc:  # noqa: BLE001
         logger.error("[ollama_warmup] warmup failed (non-fatal): %s", exc)

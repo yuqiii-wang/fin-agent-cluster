@@ -32,9 +32,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-import httpx
-
 from backend.config import get_settings
+from backend.httpx_client import AsyncClient, make_fmp_async_client, make_mock_transport_async_client
 from backend.resources.stats.errors import STATS_FMP_EMPTY, STATS_YFINANCE_EMPTY
 from backend.resources.stats.mock.transport import MockStatsTransport
 from backend.resources.stats.models import StatsListResponse, StatsRecord
@@ -105,23 +104,11 @@ class StatsClient:
         # Each provider needs its own httpx client (or None for yfinance which
         # does not use httpx at all).
         if self.provider == "mock":
-            self._http: Optional[httpx.AsyncClient] = httpx.AsyncClient(
-                base_url=_MOCK_BASE_URL,
-                transport=MockStatsTransport(),
+            self._http: Optional[AsyncClient] = make_mock_transport_async_client(
+                _MOCK_BASE_URL, MockStatsTransport()
             )
         elif self.provider == "fmp":
-            proxy_url = settings.HTTP_PROXY
-            mounts: dict[str, httpx.AsyncBaseTransport] | None = None
-            if proxy_url:
-                proxy_transport = httpx.AsyncHTTPTransport(proxy=proxy_url)
-                mounts = {"https://": proxy_transport, "http://": proxy_transport}
-            params = {"apikey": settings.FMP_API_KEY}
-            self._http = httpx.AsyncClient(
-                base_url=settings.FMP_BASE_URL,
-                params=params,
-                mounts=mounts,
-                timeout=15.0,
-            )
+            self._http = make_fmp_async_client()
         else:
             # yfinance — no httpx client needed; the library manages its own
             # HTTP session internally.

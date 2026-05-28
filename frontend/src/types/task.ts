@@ -1,5 +1,22 @@
 /** Task execution info aligned to backend TaskInfo schema. */
 
+/** Accumulated SSE-driven run record for a single task invocation.
+ *  Entries are appended on task_status:running and updated in-place on
+ *  task_status:completed|failed.  Old finished entries are never removed
+ *  so re-runs appear as additional rows below completed ones. */
+export interface TaskRunEntry {
+  task_id: string;
+  task_name: string;
+  node_id: string;
+  node_name: string;
+  view_type: string;
+  status: string;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  /** Insertion index — preserves display order across multiple runs. */
+  seq: number;
+}
+
 /** Execution record for an individual task within a node. */
 export interface TaskInfo {
   task_id: string;

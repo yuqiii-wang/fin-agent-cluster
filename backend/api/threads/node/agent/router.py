@@ -26,10 +26,12 @@ from backend.api.threads.node.agent.errors import (
     AGENT_API_MEMORY_NOT_FOUND,
     AGENT_API_NODE_NOT_FOUND,
     AGENT_API_SKILL_NOT_FOUND,
+    AGENT_API_STEP_STATE_NOT_FOUND,
 )
 from backend.api.threads.node.agent.schemas import (
     AddSkillRequest,
     AgentCapabilitiesResponse,
+    AgentStepStatesResponse,
     CompactMemoryRequest,
     MemoryOperationResponse,
     SkillResponse,
@@ -42,6 +44,7 @@ from backend.langgraph.agent.memory.ops import (
 )
 from backend.langgraph.agent.pause import set_agent_pause_flag
 from backend.langgraph.agent.skills.ops import add_skill, forget_skill
+from backend.langgraph.agent.step_state.ops import get_step_states
 
 router = APIRouter()
 
@@ -215,3 +218,29 @@ async def forget_skill_route(
         await set_agent_pause_flag(node_id, auto_resume=True)
 
     return SkillResponse(skill_id=skill_id, status="forgotten")
+
+
+@router.get(
+    "/{thread_id}/nodes/{node_id}/agent/step-states",
+    response_model=AgentStepStatesResponse,
+    tags=["agent"],
+)
+async def get_step_states_route(
+    thread_id: TThreadId,
+    node_id: TNodeId,
+) -> AgentStepStatesResponse:
+    """Return per-iteration global_state and step_state snapshots for an agent node.
+
+    Args:
+        thread_id: LangGraph thread UUID (used to verify node ownership).
+        node_id:   Agent node UUID.
+
+    Returns:
+        :class:`AgentStepStatesResponse` with all iterations ordered ascending.
+
+    Raises:
+        HTTPException 404: Node not found in the given thread.
+    """
+    await _is_node_running(thread_id, node_id)  # validates ownership; raises 404 if missing
+    entries = await get_step_states(node_id)
+    return AgentStepStatesResponse(iterations=entries)

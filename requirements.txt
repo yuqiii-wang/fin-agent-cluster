@@ -43,6 +43,7 @@ langchain-google-genai==4.2.2
 
 # PDF parsing (financial reports)
 pypdf==6.10.2
+markitdown[pdf]==0.1.5
 
 # Prometheus metrics
 prometheus_client==0.25.0
@@ -51,4 +52,4 @@ prometheus_client==0.25.0
 PyYAML==6.0.2
 
 # Ollama CLI client (for running Ollama LLM in a local container)
-ollama=0.6.2
+ollama==0.6.2

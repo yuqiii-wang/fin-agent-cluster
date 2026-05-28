@@ -1,15 +1,13 @@
-"""Ollama chat model provider — pure HTTP streaming via httpx."""
+"""Ollama chat model provider — pure HTTP streaming via httpx_client."""
 
 from __future__ import annotations
 
 import json
 import logging
 import uuid
-import urllib.parse
 from collections.abc import AsyncIterator
 from typing import Any, Optional, Sequence, Union
 
-import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -25,11 +23,9 @@ from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from backend.config import get_settings
+from backend.httpx_client import ConnectError, TimeoutException, make_ollama_async_client, make_ollama_sync_client
 
 logger = logging.getLogger(__name__)
-
-# Hostnames that should never be routed through a proxy.
-_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def _to_ollama_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]:
@@ -124,15 +120,6 @@ class OllamaLLM(BaseChatModel):
     def _llm_type(self) -> str:
         return "ollama"
 
-    def _resolved_proxy(self) -> str | None:
-        """Return the proxy URL, or ``None`` when ``base_url`` is a loopback address."""
-        if not self.http_proxy:
-            return None
-        host = urllib.parse.urlparse(self.base_url).hostname or ""
-        if host in _LOOPBACK_HOSTS:
-            return None
-        return self.http_proxy
-
     def bind_tools(
         self,
         tools: Sequence[Union[dict[str, Any], type, Any, BaseTool]],
@@ -196,9 +183,9 @@ class OllamaLLM(BaseChatModel):
             request_body["format"] = kwargs["format"]
 
         url = f"{self.base_url}/api/chat"
-        proxy = self._resolved_proxy()
+        proxy = self.http_proxy
         try:
-            with httpx.Client(proxy=proxy, timeout=httpx.Timeout(300.0)) as client:
+            with make_ollama_sync_client(self.base_url, proxy=proxy, timeout_seconds=300.0) as client:
                 resp = client.post(url, json=request_body)
                 if resp.status_code >= 400:
                     logger.error(
@@ -210,10 +197,10 @@ class OllamaLLM(BaseChatModel):
                 msg_data = data.get("message", {})
                 content = msg_data.get("content", "")
                 raw_tool_calls = msg_data.get("tool_calls", [])
-        except httpx.ConnectError as exc:
+        except ConnectError as exc:
             logger.error("[OllamaLLM] cannot connect to Ollama at %s — is it running? %s", url, exc)
             raise
-        except httpx.TimeoutException as exc:
+        except TimeoutException as exc:
             logger.error("[OllamaLLM] request to %s timed out: %s", url, exc)
             raise
 
@@ -295,10 +282,10 @@ class OllamaLLM(BaseChatModel):
         }
 
         url = f"{self.base_url}/api/chat"
-        proxy = self._resolved_proxy()
+        proxy = self.http_proxy
         in_thinking = False
         try:
-            async with httpx.AsyncClient(proxy=proxy, timeout=httpx.Timeout(300.0)) as client:
+            async with make_ollama_async_client(self.base_url, proxy=proxy, timeout_seconds=300.0) as client:
                 async with client.stream("POST", url, json=request_body) as resp:
                     if resp.status_code >= 400:
                         body = await resp.aread()
@@ -342,10 +329,10 @@ class OllamaLLM(BaseChatModel):
                                 yield ChatGenerationChunk(message=AIMessageChunk(content=content))
                             except GeneratorExit:
                                 return
-        except httpx.ConnectError as exc:
+        except ConnectError as exc:
             logger.error("[OllamaLLM] cannot connect to Ollama at %s — is it running? %s", url, exc)
             raise
-        except httpx.TimeoutException as exc:
+        except TimeoutException as exc:
             logger.error("[OllamaLLM] request to %s timed out: %s", url, exc)
             raise
 

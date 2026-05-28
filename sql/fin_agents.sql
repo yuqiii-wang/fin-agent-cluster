@@ -187,6 +187,8 @@ CREATE TABLE IF NOT EXISTS fin_agents.tasks (
     status        fin_agents.work_status NOT NULL DEFAULT 'pending',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Cache Time To Live (default 4 hours)
+    cache_ttl_seconds INTEGER NOT NULL DEFAULT 14400,
     -- Fencing token matching the graph run that created this task.
     -- Used by cleanup_zombie_tasks to mark orphaned tasks as 'wrong'.
     -- 0 = pre-fencing rows.
@@ -203,6 +205,9 @@ CREATE TABLE IF NOT EXISTS fin_agents.task_executions (
     task_id     TEXT NOT NULL REFERENCES fin_agents.tasks (task_id) ON DELETE CASCADE,
     retry_num   INTEGER NOT NULL DEFAULT 0,
     input       JSONB NOT NULL DEFAULT '{}',
+    -- Deterministic MD5 fingerprint of the input JSONB; used for O(1) cache-hit
+    -- lookups without full-payload comparison. Matches md5(input::text) in queries.
+    input_hash  TEXT GENERATED ALWAYS AS (md5(input::text)) STORED,
     output      JSONB NOT NULL DEFAULT '{}',
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (task_id, retry_num)
@@ -278,3 +283,16 @@ CREATE INDEX IF NOT EXISTS fin_agents_agent_memory_node_id_status_idx
     ON fin_agents.agent_memory (node_id, status);
 CREATE INDEX IF NOT EXISTS fin_agents_agent_memory_node_id_seq_idx
     ON fin_agents.agent_memory (node_id, seq_num);
+
+-- Per-iteration snapshot of global_state and step_state written by the agent step loop.
+-- One row per (node_id, iteration); upserted after each iteration completes.
+CREATE TABLE IF NOT EXISTS fin_agents.agent_step_state (
+    node_id        TEXT         NOT NULL REFERENCES fin_agents.nodes (node_id) ON DELETE CASCADE,
+    iteration      INTEGER      NOT NULL,
+    global_state   JSONB        NOT NULL DEFAULT '{}',
+    step_state     JSONB        NOT NULL DEFAULT '{}',
+    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (node_id, iteration)
+);
+CREATE INDEX IF NOT EXISTS fin_agents_agent_step_state_node_id_idx
+    ON fin_agents.agent_step_state (node_id);

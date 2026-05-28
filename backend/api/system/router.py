@@ -10,11 +10,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from backend.config import get_settings
+from backend.httpx_client import AsyncClient, make_internal_async_client
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class SystemHealthResponse(BaseModel):
     instances: list[InstanceHealth]
 
 
-async def _check_instance(client: httpx.AsyncClient, url: str, kind: str) -> InstanceHealth:
+async def _check_instance(client: AsyncClient, url: str, kind: str) -> InstanceHealth:
     """Probe a single instance's /health endpoint.
 
     Args:
@@ -72,7 +72,7 @@ async def system_health() -> SystemHealthResponse:
         for i in range(settings.RUNNER_INSTANCE_COUNT)
     ]
 
-    async with httpx.AsyncClient() as client:
+    async with make_internal_async_client() as client:
         tasks = [
             *[_check_instance(client, url, "runner") for url in runner_urls],
         ]

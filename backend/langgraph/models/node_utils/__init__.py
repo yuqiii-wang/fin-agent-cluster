@@ -7,8 +7,10 @@ Each mixin covers a distinct concern:
 - CancelHandlerMixin   : Node/thread cancellation and cascade logic.
 - ChildRunnerMixin     : Running a node as a subgraph child.
 - EntrypointMixin      : LangGraph ``__call__`` entrypoint implementation.
+- AgentStepMixin       : Generic named-step loop for NodeType.AGENT nodes.
 """
 
+from backend.langgraph.models.node_utils.agent_step_mixin import AgentGlobalStateBase, AgentStepMixin
 from backend.langgraph.models.node_utils.cancel_handler import CancelHandlerMixin
 from backend.langgraph.models.node_utils.child_runner import ChildRunnerMixin
 from backend.langgraph.models.node_utils.entrypoint import EntrypointMixin
@@ -17,6 +19,8 @@ from backend.langgraph.models.node_utils.task_runner import TaskRunnerMixin
 from backend.langgraph.models.node_utils.type_utils import TypeValidationMixin
 
 __all__ = [
+    "AgentGlobalStateBase",
+    "AgentStepMixin",
     "CancelHandlerMixin",
     "ChildRunnerMixin",
     "EntrypointMixin",

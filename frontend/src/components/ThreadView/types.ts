@@ -9,6 +9,8 @@ export interface DetailData {
   fieldList?: boolean;
   /** When set, the panel auto-follows node selection (input or output context). */
   nodeContext?: 'input' | 'output';
+  /** Node ID for node-scoped output adjuncts such as agent running output. */
+  nodeId?: string;
   /** Task ID for stream mode — DetailDataPanel resolves the live task from the tasks list. */
   taskId?: string;
   /** Pre-selected stats view type (e.g. 'DataFrame', 'StackCandleStick'). */

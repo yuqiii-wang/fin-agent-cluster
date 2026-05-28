@@ -44,3 +44,25 @@ export interface AgentCapabilities {
   skills: Skill[];
   memory: MemoryEntry[];
 }
+
+export interface StepStateEntry {
+  node_id: string;
+  iteration: number;
+  global_state: Record<string, unknown>;
+  step_state: Record<string, unknown>;
+  updated_at: string;
+}
+
+export interface AgentStepStatesResponse {
+  iterations: StepStateEntry[];
+}
+
+export interface NodeSkillFile {
+  filename: string;
+  content: string;
+}
+
+export interface NodeSkillsResponse {
+  node_name: string;
+  skills: NodeSkillFile[];
+}

@@ -20,13 +20,13 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 
-import httpx
 from ddgs import DDGS
 
 from backend.config import get_settings
 from backend.resources.news.errors import NEWS_NO_RESULTS, NEWS_SEARCH_FAILED
 from backend.resources.news.fmp.fetcher import fetch as fmp_fetch
 from backend.resources.news.models import InfoResult, NewsArticle, NewsListResponse
+from backend.httpx_client import make_fmp_async_client
 
 logger = logging.getLogger(__name__)
 
@@ -134,11 +134,7 @@ class NewsClient:
             :class:`NewsListResponse` with up to *limit* articles.
         """
         if self._fmp_api_key:
-            async with httpx.AsyncClient(
-                base_url=self._fmp_base_url,
-                params={"apikey": self._fmp_api_key},
-                timeout=15.0,
-            ) as http:
+            async with make_fmp_async_client() as http:
                 try:
                     articles = await fmp_fetch(
                         symbol=symbol,
@@ -165,7 +161,17 @@ class NewsClient:
         from_dt: datetime | None,
         limit: int,
     ) -> NewsListResponse:
-        """Fetch news articles from DDGS.
+        """Fetch news articles from DDGS with query-simplification fallback.
+
+        Tries progressively simpler queries so that verbose LLM-generated topic
+        phrases (which can produce 20+ word queries that DuckDuckGo finds nothing
+        for) always have a fallback to a plain symbol search.
+
+        Query cascade:
+            1. ``symbol + all topics joined``   (full specificity)
+            2. ``symbol + first 2 topics``      (reduced noise from long topic lists)
+            3. ``symbol`` only                  (guaranteed results for known tickers)
+            4. ``"market news"``                (last resort when symbol is None)
 
         Args:
             symbol:  Equity ticker used as base query.
@@ -176,32 +182,41 @@ class NewsClient:
         Returns:
             :class:`NewsListResponse`.
         """
-        parts: list[str] = []
-        if symbol:
-            parts.append(symbol)
-        if topics:
-            parts.extend(topics)
-        query = " ".join(parts) if parts else "market news"
-
         timelimit = _timelimit_from_dt(from_dt)
-
         loop = asyncio.get_event_loop()
-        try:
-            raw: list[dict] = await loop.run_in_executor(
-                None,
-                lambda: list(DDGS().news(query, max_results=limit, timelimit=timelimit)),
-            )
-        except Exception as exc:
-            logger.error("[%s] DDGS news search failed query=%r: %s", NEWS_SEARCH_FAILED, query, exc)
-            self.provider = _PROVIDER_DDGS
-            return NewsListResponse(items=[], total=0)
 
-        if not raw:
+        # Build query variants from most-specific to least-specific.
+        candidates: list[str] = []
+        if symbol:
+            if topics:
+                full_parts = [symbol] + list(topics)
+                candidates.append(" ".join(full_parts))
+                if len(topics) > 2:
+                    candidates.append(" ".join([symbol] + list(topics[:2])))
+            candidates.append(symbol)
+        else:
+            if topics:
+                candidates.append(" ".join(topics))
+            candidates.append("market news")
+
+        raw: list[dict] = []
+        for query in candidates:
+            try:
+                raw = await loop.run_in_executor(
+                    None,
+                    lambda q=query: list(DDGS().news(q, max_results=limit, timelimit=timelimit)),
+                )
+            except Exception as exc:
+                logger.error("[%s] DDGS news search failed query=%r: %s", NEWS_SEARCH_FAILED, query, exc)
+                raw = []
+            if raw:
+                break
             logger.error("[%s] DDGS news returned no results for query=%r", NEWS_NO_RESULTS, query)
-            self.provider = _PROVIDER_DDGS
-            return NewsListResponse(items=[], total=0)
 
         self.provider = _PROVIDER_DDGS
+        if not raw:
+            return NewsListResponse(items=[], total=0)
+
         articles = [
             NewsArticle(
                 id=_article_id(r.get("url"), r.get("title", "")),

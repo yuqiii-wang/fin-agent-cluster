@@ -125,3 +125,9 @@ class NewsTopicsSQL:
         FROM fin_markets.news_topics
         ORDER BY code
     """
+
+    GET_ALL = """
+        SELECT code, description
+        FROM fin_markets.news_topics
+        ORDER BY code
+    """

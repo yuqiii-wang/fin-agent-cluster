@@ -20,13 +20,14 @@ import StatsViewer, { StatsViewSelect } from './StatsViewer';
 import StackCandleStickChart from './StatsViewer/StackCandleStickChart';
 import type { StackCandleItem } from './StatsViewer/StackCandleStickChart';
 import WebRequestViewer from './WebRequestViewer';
+import PdfViewer from './PdfViewer';
 import type { StreamViewerProps } from './StreamViewer';
 import type { DfSplit } from './StatsDataFrame';
 import type { TaskInfo } from '../../types';
 
 const { Text } = Typography;
 
-export type DataViewerMode = 'json' | 'stream' | 'markdown' | 'dataframe' | 'mirror' | 'hybrid' | 'webrequest';
+export type DataViewerMode = 'json' | 'stream' | 'markdown' | 'dataframe' | 'mirror' | 'hybrid' | 'webrequest' | 'pdf';
 
 /** Map a backend view_type string to a DataViewerMode. */
 export function viewTypeToMode(viewType: string | undefined): DataViewerMode {
@@ -37,6 +38,7 @@ export function viewTypeToMode(viewType: string | undefined): DataViewerMode {
     case 'Mirror': return 'mirror';
     case 'Hybrid': return 'hybrid';
     case 'WebRequest': return 'webrequest';
+    case 'Pdf': return 'pdf';
     default: return 'json';
   }
 }
@@ -161,6 +163,10 @@ function FieldViewer({
 
   if (mode === 'webrequest') {
     return <WebRequestViewer data={fieldData} maxHeight={maxHeight} style={style} />;
+  }
+
+  if (mode === 'pdf') {
+    return <PdfViewer data={fieldData} maxHeight={maxHeight} style={style} />;
   }
 
   return <JsonViewer data={fieldData} maxHeight={maxHeight} style={style} />;
@@ -307,7 +313,7 @@ const DataViewer: React.FC<DataViewerProps> = ({
       }));
     } else {
       // stream / markdown / dataframe / scalar — single collapsed panel
-      const label = mode === 'stream' ? 'stream' : mode === 'markdown' ? 'content' : mode === 'dataframe' ? 'table' : 'value';
+      const label = mode === 'stream' ? 'stream' : mode === 'markdown' ? 'content' : mode === 'dataframe' ? 'table' : mode === 'pdf' ? 'pdf' : 'value';
       // Stats dataframe: self-contained Collapse with Select in the panel label
       if (mode === 'dataframe') {
         const dataObj = data as Record<string, unknown> | undefined;
@@ -334,6 +340,7 @@ const DataViewer: React.FC<DataViewerProps> = ({
       const content = (() => {
         if (mode === 'stream') return <StreamViewer text={text} isLive={isLive} task={task} threadId={threadId} onViewData={_onViewData} onStreamEnd={onStreamEnd} maxHeight={maxHeight} style={style} />;
         if (mode === 'markdown') return <MarkdownViewer text={text} maxHeight={maxHeight} style={style} />;
+        if (mode === 'pdf') return <PdfViewer data={data} maxHeight={maxHeight} style={style} />;
         if (mode === 'dataframe') {
           const dataObj = data as Record<string, unknown> | undefined;
           const dfSplit = dataObj?.df_split as DfSplit | undefined;
@@ -355,6 +362,10 @@ const DataViewer: React.FC<DataViewerProps> = ({
 
   if (mode === 'webrequest') {
     return <WebRequestViewer data={data} maxHeight={maxHeight} style={style} />;
+  }
+
+  if (mode === 'pdf') {
+    return <PdfViewer data={data} maxHeight={maxHeight} style={style} />;
   }
 
   if (mode === 'markdown') {

@@ -33,8 +33,9 @@ async def emit_node_sse(
             event=notif.event,
             payload=notif.to_notify_payload(),
             dedup_key=f"node:{node_id}:{status}",
-            # Running is informational — do not block the graph waiting for ack.
-            require_ack=(status != "running"),
+            # All node lifecycle events are informational — do not block the graph
+            # waiting for ack.  Blocking caused delays when frontend failed to ack.
+            require_ack=False,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -69,6 +70,7 @@ async def emit_task_cancelled_sse(
             event=notif.event,
             payload=notif.to_notify_payload(),
             dedup_key=f"task:{task_id}:cancelled",
+            require_ack=False,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(

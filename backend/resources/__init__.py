@@ -2,8 +2,9 @@
 
 Sub-packages
 ------------
-news   — DDGS-backed news and web-search client + models
-stats  — market statistics client + models + mock transport
+news          — DDGS-backed news and web-search client + models
+stats         — market statistics client + models + mock transport
+web_knowledge — raw HTML fetcher for financial web pages (competitors, press releases, options)
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ from backend.resources.news.client import NewsClient
 from backend.resources.news.models import InfoResult, NewsArticle, NewsListResponse
 from backend.resources.stats.client import StatsClient
 from backend.resources.stats.models import StatsListResponse, StatsMatrix, StatsRecord
+from backend.resources.web_knowledge.client import WebKnowledgeClient
+from backend.resources.web_knowledge.models import WebPageResponse, WebPageType
 
 __all__ = [
     "NewsClient",
@@ -22,4 +25,7 @@ __all__ = [
     "StatsListResponse",
     "StatsMatrix",
     "StatsRecord",
+    "WebKnowledgeClient",
+    "WebPageResponse",
+    "WebPageType",
 ]

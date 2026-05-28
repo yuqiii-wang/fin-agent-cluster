@@ -21,8 +21,8 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Space, Spin, Tabs, Tag, Tooltip, Typography, message } from 'antd';
-import { BranchesOutlined, RobotOutlined, StopOutlined } from '@ant-design/icons';
+import { Button, Descriptions, Space, Spin, Tabs, Tag, Tooltip, Typography, message } from 'antd';
+import { BranchesOutlined, ClearOutlined, RobotOutlined, StopOutlined } from '@ant-design/icons';
 import { STATUS_HEX, STATUS_TAG_COLOR } from '../../../constants/statusColors';
 import { isWorkActive, TERMINAL_WORK_STATUSES } from '../../../constants/lifecycleStatus';
 import { COLOR_SURFACE_RAISED, COLOR_TEXT_SECONDARY } from '../../../constants/styleColors';
@@ -32,14 +32,18 @@ import {
   forgetAgentMemory,
   forgetAgentSkill,
   getAgentCapabilities,
+  getAgentStepStates,
+  invalidateNodeCache,
+  fetchNodeSkills,
 } from '../../../api/threads';
 import AgentCapabilitiesPanel from './AgentCapabilitiesPanel';
 import AgentMemoryPanel from './AgentMemoryPanel';
 import AgentSkillsPanel from './AgentSkillsPanel';
+import AgentStepStatePanel from './AgentStepStatePanel';
 import TaskDetail from '../TaskDetail';
 import { viewTypeToMode } from '../../DataViewer/index';
 
-import type { AgentCapabilities, NodeInfo, TaskInfo } from '../../../types';
+import type { AgentCapabilities, NodeInfo, NodeSkillFile, StepStateEntry, TaskInfo, TaskRunEntry } from '../../../types';
 import type { DataViewerMode } from '../../DataViewer/index';
 
 const { Title, Text } = Typography;
@@ -58,6 +62,8 @@ interface Props {
   onCancelTask?: (taskId: string, nodeId?: string) => void;
   cancellingId?: string | null;
   onReExplore?: (node: NodeInfo) => void;
+  /** Accumulated SSE task run log filtered to this node. */
+  taskRunLog?: TaskRunEntry[];
 }
 
 type View = { type: 'node' } | { type: 'task'; taskId: string };
@@ -74,13 +80,17 @@ const AgentNodeDetail: React.FC<Props> = ({
   onCancelTask,
   cancellingId,
   onReExplore,
+  taskRunLog = [],
 }) => {
   const [caps, setCaps] = useState<AgentCapabilities | null>(null);
+  const [stepStates, setStepStates] = useState<StepStateEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [nodeSkillFiles, setNodeSkillFiles] = useState<NodeSkillFile[]>([]);
   const [activeTab, setActiveTab] = useState('tasks');
   const [isHeaderHovered, setIsHeaderHovered] = useState(false);
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   const [view, setView] = useState<View>({ type: 'node' });
+  const [invalidatingCache, setInvalidatingCache] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchCaps = useCallback(async () => {
@@ -94,16 +104,37 @@ const AgentNodeDetail: React.FC<Props> = ({
     }
   }, [threadId, node.node_id]);
 
+  const fetchStepStates = useCallback(async () => {
+    try {
+      const data = await getAgentStepStates(threadId, node.node_id);
+      setStepStates(data.iterations);
+    } catch {
+      // non-fatal; no step state yet for this node
+    }
+  }, [threadId, node.node_id]);
+
   // Poll while node is active; single fetch otherwise.
   useEffect(() => {
     fetchCaps();
+    fetchStepStates();
     if (isWorkActive(node.status)) {
-      pollRef.current = setInterval(fetchCaps, POLL_INTERVAL_MS);
+      pollRef.current = setInterval(() => {
+        fetchCaps();
+        fetchStepStates();
+      }, POLL_INTERVAL_MS);
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [fetchCaps, node.status]);
+  }, [fetchCaps, fetchStepStates, node.status]);
+
+  // Fetch static built-in skills files for this node (keyed on node_name).
+  useEffect(() => {
+    fetchNodeSkills().then((all) => {
+      const entry = all.find((r) => r.node_name === node.node_name);
+      setNodeSkillFiles(entry?.skills ?? []);
+    }).catch(() => {/* non-fatal */});
+  }, [node.node_name]);
 
   // Reset to node view when the displayed node changes.
   useEffect(() => {
@@ -241,10 +272,38 @@ const AgentNodeDetail: React.FC<Props> = ({
             </Button>
           </Tooltip>
         )}
+        {node.status === 'completed' && tasks.length > 0 && (
+          <Tooltip title="Zero out task cache TTLs so tasks re-run on the next execution">
+            <Button
+              size="small"
+              icon={<ClearOutlined />}
+              loading={invalidatingCache}
+              onClick={async () => {
+                setInvalidatingCache(true);
+                try {
+                  const { invalidated } = await invalidateNodeCache(threadId, node.node_id);
+                  message.success(`Cache invalidated for ${invalidated} task(s)`);
+                } catch {
+                  message.error('Failed to invalidate cache');
+                } finally {
+                  setInvalidatingCache(false);
+                }
+              }}
+            >
+              Invalidate Cache
+            </Button>
+          </Tooltip>
+        )}
       </div>
 
+      <Descriptions size="small" column={1} bordered style={{ marginBottom: 12 }}>
+        <Descriptions.Item label="Node ID">
+          <Text copyable code style={{ fontSize: 11 }}>{node.node_id}</Text>
+        </Descriptions.Item>
+      </Descriptions>
+
       {/* ── Input / Output ─────────────────────────────────────────── */}
-      {(node.input || node.output) && (
+      {(node.input || node.output || taskRunLog.length > 0) && (
         <Space size="small" style={{ marginBottom: 12 }}>
           {node.input && (
             <Button
@@ -254,14 +313,15 @@ const AgentNodeDetail: React.FC<Props> = ({
               Input
             </Button>
           )}
-          {node.output && (
+          {(node.output || taskRunLog.length > 0) && (
             <Button
               size="small"
               onClick={() => onViewData?.(`${node.node_name} · Output`, node.output, {
-                mode: viewTypeToMode(node.view_type),
+                mode: node.output ? viewTypeToMode(node.view_type) : undefined,
                 viewSchema: node.view_schema as Record<string, string> | undefined,
-                fieldList: true,
+                fieldList: !!node.output,
                 nodeContext: 'output',
+                nodeId: node.node_id,
               })}
             >
               Output
@@ -270,7 +330,7 @@ const AgentNodeDetail: React.FC<Props> = ({
         </Space>
       )}
 
-      {/* ── Tabs ───────────────────────────────────────────────────────── */}
+      {/* ── Tabs (completed output) ────────────────────────────────────── */}
       <Spin spinning={loading} size="small">
         <Tabs
           size="small"
@@ -347,11 +407,13 @@ const AgentNodeDetail: React.FC<Props> = ({
             },
             {
               key: 'skills',
-              label: `Skills${caps ? ` (${caps.skills.filter((s) => s.status === 'active').length})` : ''}`,
+              label: `Skills${caps ? ` (${nodeSkillFiles.length + caps.skills.filter((s) => s.status === 'active').length})` : ''}`,
               children: caps ? (
                 <AgentSkillsPanel
                   skills={caps.skills}
+                  nodeSkillFiles={nodeSkillFiles}
                   nodeRunning={nodeRunning}
+                  tools={caps.tools}
                   onAdd={handleAddSkill}
                   onForget={handleForgetSkill}
                 />

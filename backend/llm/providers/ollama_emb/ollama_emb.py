@@ -18,9 +18,8 @@ from __future__ import annotations
 
 import logging
 
-import httpx
-
 from backend.config import get_settings
+from backend.httpx_client import HTTPError, make_ollama_sync_client
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +68,13 @@ class OllamaEmbeddingClient:
         for i in range(0, len(texts), _BATCH_SIZE):
             batch = texts[i : i + _BATCH_SIZE]
             try:
-                resp = httpx.post(
-                    f"{self.base_url}/api/embed",
-                    json={"model": self.model, "input": batch},
-                    timeout=60.0,
-                )
-                resp.raise_for_status()
-            except httpx.HTTPError as exc:
+                with make_ollama_sync_client(self.base_url, timeout_seconds=60.0) as client:
+                    resp = client.post(
+                        f"{self.base_url}/api/embed",
+                        json={"model": self.model, "input": batch},
+                    )
+                    resp.raise_for_status()
+            except HTTPError as exc:
                 logger.error("ollama_emb.embed_documents HTTP error batch_start=%d error=%s", i, exc)
                 raise RuntimeError(f"ollama_emb.embed_documents HTTP error: {exc}") from exc
 

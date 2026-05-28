@@ -37,21 +37,25 @@ import logging
 import time as _time
 from typing import Any
 
-import httpx
-
 from backend.centrifugo_mq.errors import CENTRIFUGO_NO_NODES, CENTRIFUGO_PUBLISH_FAILED
 from backend.config import get_settings
+from backend.httpx_client import (
+    AsyncClient,
+    ConnectError,
+    ReadError,
+    RemoteProtocolError,
+    make_centrifugo_sse_async_client,
+)
 
 logger = logging.getLogger(__name__)
 
 # Per-shard HTTP client pool for the SSE lifecycle tier.
 # Key: shard index (0 or 1).  Lazily created on first publish to each shard.
-_sse_http_clients: dict[int, httpx.AsyncClient] = {}
+_sse_http_clients: dict[int, AsyncClient] = {}
 _sse_http_client_loops: dict[int, Any] = {}  # asyncio.AbstractEventLoop | None
-_HTTP_LIMITS = httpx.Limits(keepalive_expiry=20.0)
 
 
-def _get_sse_http_client(shard: int) -> httpx.AsyncClient:
+def _get_sse_http_client(shard: int) -> AsyncClient:
     """Return (lazily creating) the shared async HTTP client for centrifugo-sse-{shard}.
 
     Creates a fresh client whenever the running asyncio event loop changes (e.g.
@@ -63,8 +67,8 @@ def _get_sse_http_client(shard: int) -> httpx.AsyncClient:
         shard: SSE shard index (0 or 1).
 
     Returns:
-        Shared :class:`httpx.AsyncClient` with connection pooling and a
-        20-second keep-alive expiry to avoid stale connections after a
+        Shared :class:`~backend.httpx_client.AsyncClient` with connection pooling
+        and a 20-second keep-alive expiry to avoid stale connections after a
         Centrifugo node restart.
     """
     import asyncio
@@ -82,7 +86,7 @@ def _get_sse_http_client(shard: int) -> httpx.AsyncClient:
 
     # Loop changed (Celery asyncio.run recycled the loop) or first access —
     # create a fresh client bound to the current loop.
-    _sse_http_clients[shard] = httpx.AsyncClient(timeout=5.0, limits=_HTTP_LIMITS)
+    _sse_http_clients[shard] = make_centrifugo_sse_async_client()
     _sse_http_client_loops[shard] = current_loop
     return _sse_http_clients[shard]
 
@@ -141,7 +145,7 @@ async def _publish_to_sse_channel(thread_id: str, payload: dict[str, Any]) -> No
     if not settings.CENTRIFUGO_SSE_NODES:
         raise RuntimeError(f"[{CENTRIFUGO_NO_NODES}] CENTRIFUGO_SSE_NODES is empty")
     shard = get_sse_shard_index(thread_id)
-    _RETRYABLE = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError)
+    _RETRYABLE = (RemoteProtocolError, ConnectError, ReadError)
     for attempt in range(2):
         try:
             base = settings.CENTRIFUGO_SSE_NODES[shard]

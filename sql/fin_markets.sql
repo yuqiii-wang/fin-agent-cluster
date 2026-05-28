@@ -48,12 +48,15 @@ CREATE INDEX IF NOT EXISTS fin_markets_quant_raw_thread_id_idx
 CREATE INDEX IF NOT EXISTS fin_markets_quant_raw_symbol_method_idx
     ON fin_markets.quant_raw (symbol, method, created_at DESC);
 
--- quant_stats: unified market data for all instrument types — equity, index, futures, and options
+-- quant_stats: unified market data for all instrument types — equity, crypto, commodity, precious_metal, index, futures, and options
 -- one row per (instrument_type, symbol, source, granularity, bar_time, contract_ticker, expiry, option_type)
--- instrument_type = 'equity'  → symbol is the ticker (e.g. 'AAPL'); full OHLCV + all technicals
--- instrument_type = 'index'   → symbol is the index ticker (e.g. '^SPX', '000001.SS'); OHLCV + technicals
--- instrument_type = 'futures' → symbol is the underlying ticker; contract_ticker is the dated contract; daily OHLCV
--- instrument_type = 'options' → symbol is the underlying ticker; options flow columns populated; daily snapshot
+-- instrument_type = 'equity'    → symbol is the ticker (e.g. 'AAPL'); full OHLCV + all technicals
+-- instrument_type = 'crypto'    → symbol is the spot pair (e.g. 'BTC-USD'); full OHLCV + all technicals
+-- instrument_type = 'commodity'       → symbol is the futures ticker (e.g. 'NG=F', 'CL=F'); full OHLCV + all technicals
+-- instrument_type = 'precious_metal'  → symbol is the precious-metal futures ticker (e.g. 'GC=F', 'SI=F'); full OHLCV + all technicals
+-- instrument_type = 'index'           → symbol is the index ticker (e.g. '^SPX', '000001.SS'); OHLCV + technicals
+-- instrument_type = 'futures'   → symbol is the underlying ticker; contract_ticker is the dated contract; daily OHLCV
+-- instrument_type = 'options'   → symbol is the underlying ticker; options flow columns populated; daily snapshot
 -- all OHLCV and indicator columns are nullable: absent for options flow rows and until enough history is available
 -- granularity for futures / options is typically '1day'
 CREATE TABLE IF NOT EXISTS fin_markets.quant_stats (
@@ -61,7 +64,7 @@ CREATE TABLE IF NOT EXISTS fin_markets.quant_stats (
     symbol          TEXT          NOT NULL,                    -- equity/index: the ticker itself; futures/options: underlying ticker,
                                                                -- or index name 'S&P 500', 'Nikkei 225'
     instrument_type TEXT          NOT NULL DEFAULT 'equity'
-                        CHECK (instrument_type IN ('equity', 'index', 'futures', 'options')),
+                        REFERENCES fin_markets.instrument_types(code),
     currency_code    TEXT          NOT NULL REFERENCES fin_markets.currencies (code),                    -- ISO 4217 currency code, e.g. 'USD', 'JPY'
     -- Derivative metadata (instrument_type = 'futures' or 'options')
     contract_ticker TEXT,                                      -- futures: dated contract ticker, e.g. 'ESM25', 'CLK25'

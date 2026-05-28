@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Button, Card, Select, Splitter, Typography } from 'antd';
 import { BranchesOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import NodeGraph from '../NodeGraph';
 import NodeDetail from '../NodeDetail/index';
 import { COLOR_BORDER_PANEL } from '../../constants/styleColors';
-import type { NodeInfo, GraphTopology, TaskInfo } from '../../types';
+import type { NodeInfo, GraphTopology, TaskInfo, TaskRunEntry } from '../../types';
 import type { DataViewerMode } from '../DataViewer/index';
 
 const { Text } = Typography;
@@ -24,6 +24,7 @@ interface Props {
   tasks: TaskInfo[];
   threadId: string;
   tokenStreams: Record<string, string>;
+  taskRunLog: TaskRunEntry[];
   threadActive: boolean;
   cancelling: string | null;
   onViewData: (
@@ -40,10 +41,32 @@ const NodeGraphPanel: React.FC<Props> = ({
   versionNodes, topology, selectedNodeId, onSelectNode,
   sidebarOpen, onToggleSidebar,
   activeVersion, maxVersion, versionOptions, onVersionChange,
-  selectedNode, tasks, threadId, tokenStreams, threadActive, cancelling,
+  selectedNode, tasks, threadId, tokenStreams, taskRunLog, threadActive, cancelling,
   onViewData, onCancelNode, onCancelTask, onReExplore,
 }) => {
   const handleSelect = (id: string) => onSelectNode(id === selectedNodeId ? null : id);
+
+  const [graphHeight, setGraphHeight] = useState(380);
+  const dragStartY = useRef<number | null>(null);
+  const dragStartH = useRef(380);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragStartY.current = e.clientY;
+    dragStartH.current = graphHeight;
+    const onMove = (me: MouseEvent) => {
+      if (dragStartY.current === null) return;
+      const delta = me.clientY - dragStartY.current;
+      setGraphHeight(Math.max(150, Math.min(900, dragStartH.current + delta)));
+    };
+    const onUp = () => {
+      dragStartY.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [graphHeight]);
 
   return (
     <Card
@@ -75,7 +98,7 @@ const NodeGraphPanel: React.FC<Props> = ({
       styles={{ body: { padding: 0 } }}
     >
       {sidebarOpen && selectedNode ? (
-        <Splitter style={{ height: 380 }}>
+        <Splitter style={{ height: graphHeight }}>
           <Splitter.Panel defaultSize="60%" min="40%">
             <div style={{ padding: '8px 0', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
               <NodeGraph
@@ -94,6 +117,7 @@ const NodeGraphPanel: React.FC<Props> = ({
                 tasks={tasks}
                 threadId={threadId}
                 tokenStreams={tokenStreams}
+                taskRunLog={taskRunLog}
                 threadActive={threadActive}
                 activeVersion={activeVersion}
                 onViewData={onViewData}
@@ -107,7 +131,7 @@ const NodeGraphPanel: React.FC<Props> = ({
           </Splitter.Panel>
         </Splitter>
       ) : (
-        <div style={{ height: 380, overflowY: 'auto' }}>
+        <div style={{ height: graphHeight, overflowY: 'auto' }}>
           <NodeGraph
             nodes={versionNodes}
             topology={topology}
@@ -116,6 +140,18 @@ const NodeGraphPanel: React.FC<Props> = ({
           />
         </div>
       )}
+      {/* Drag handle — drag to resize the graph panel vertically */}
+      <div
+        onMouseDown={handleDragStart}
+        style={{
+          height: 6,
+          cursor: 'ns-resize',
+          background: 'transparent',
+          borderTop: '2px solid rgba(255,255,255,0.08)',
+          userSelect: 'none',
+        }}
+        title="Drag to resize"
+      />
     </Card>
   );
 };

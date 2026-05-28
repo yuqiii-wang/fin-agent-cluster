@@ -22,8 +22,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-import httpx
-
+from backend.httpx_client import AsyncClient
 from backend.resources.news.errors import (
     NEWS_FMP_AUTH_ERROR,
     NEWS_FMP_EMPTY,
@@ -41,7 +40,7 @@ async def fetch(
     from_dt: datetime | None,
     to_dt: datetime | None,
     limit: int,
-    http: httpx.AsyncClient,
+    http: AsyncClient,
 ) -> list[NewsArticle]:
     """Download news articles from FMP and return a list of :class:`NewsArticle`.
 

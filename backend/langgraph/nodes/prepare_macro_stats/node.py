@@ -1,16 +1,17 @@
 """AnalyzeMacroNode — Workflow node that fetches and calculates stats for
-macro-economic commodity instruments (gold, silver, natural gas, crude oil).
+macro instruments (gold, silver, natural gas, crude oil, bitcoin, ethereum).
 
 Hierarchy
 ---------
 Thread
   └── analyze_economics  (Workflow)
-        └── get_and_calculate_stats  (TaskSeq → get_stats + calculate_stats)  [×N instruments, parallel]
+        └── get_and_calculate_stats  (TaskSeq → get_stats + calculate_stats)  [xN instruments, parallel]
 
 Node design
 -----------
-The node loads the ``'economics'`` category from ``fin_markets.macro_instruments``
-(gold ``GC=F``, silver ``SI=F``, natural gas ``NG=F``, crude oil ``CL=F``) at
+The node loads the ``'macro'`` category from ``fin_markets.macro_instruments``
+(gold ``GC=F``, silver ``SI=F``, natural gas ``NG=F``, crude oil ``CL=F``,
+bitcoin ``BTC-USD``, ethereum ``ETH-USD``) at
 runtime and runs ``get_and_calculate_stats`` for each instrument in parallel.
 No correlation analysis is performed.
 
