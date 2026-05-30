@@ -24,7 +24,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Descriptions, Space, Spin, Tabs, Tag, Tooltip, Typography, message } from 'antd';
 import { BranchesOutlined, ClearOutlined, RobotOutlined, StopOutlined } from '@ant-design/icons';
 import { STATUS_HEX, STATUS_TAG_COLOR } from '../../../constants/statusColors';
-import { isWorkActive, TERMINAL_WORK_STATUSES } from '../../../constants/lifecycleStatus';
+import { isWorkActive, isWorkTerminal, TERMINAL_WORK_STATUSES } from '../../../constants/lifecycleStatus';
 import { COLOR_SURFACE_RAISED, COLOR_TEXT_SECONDARY } from '../../../constants/styleColors';
 import {
   addAgentSkill,
@@ -39,7 +39,6 @@ import {
 import AgentCapabilitiesPanel from './AgentCapabilitiesPanel';
 import AgentMemoryPanel from './AgentMemoryPanel';
 import AgentSkillsPanel from './AgentSkillsPanel';
-import AgentStepStatePanel from './AgentStepStatePanel';
 import TaskDetail from '../TaskDetail';
 import { viewTypeToMode } from '../../DataViewer/index';
 
@@ -193,6 +192,7 @@ const AgentNodeDetail: React.FC<Props> = ({
     TERMINAL_WORK_STATUSES.has(node.status as never) || isWorkActive(node.status)
   );
   const nodeRunning = node.status === 'running';
+  const nodeTerminal = isWorkTerminal(node.status);
 
   // ── Task overlay ──────────────────────────────────────────────────────────
   if (view.type === 'task') {
@@ -394,14 +394,16 @@ const AgentNodeDetail: React.FC<Props> = ({
             },
             {
               key: 'memory',
-              label: `Memory${caps ? ` (${caps.memory.filter((m) => m.status === 'active').length})` : ''}`,
+              label: `Memory${caps ? ` (${caps.memory.filter((m) => m.status === 'active').length}${stepStates.length > 0 ? ` · ${stepStates.length}s` : ''})` : ''}`,
               children: caps ? (
                 <AgentMemoryPanel
                   memory={caps.memory}
                   nodeRunning={nodeRunning}
+                  readonly={nodeTerminal}
                   onForget={handleForgetMemory}
                   onCompact={handleCompactMemory}
                   onViewData={onViewData ? (label, data) => onViewData(label, data) : undefined}
+                  stepStates={stepStates}
                 />
               ) : null,
             },
@@ -413,6 +415,7 @@ const AgentNodeDetail: React.FC<Props> = ({
                   skills={caps.skills}
                   nodeSkillFiles={nodeSkillFiles}
                   nodeRunning={nodeRunning}
+                  readonly={nodeTerminal}
                   tools={caps.tools}
                   onAdd={handleAddSkill}
                   onForget={handleForgetSkill}

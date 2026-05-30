@@ -1,4 +1,4 @@
-"""propose_web_knowledge_urls — NodeTask: map an equity symbol to a financial knowledge URL.
+"""propose_web_knowledge_urls — NodeTask: map an equity symbol to financial knowledge URLs.
 
 Given a ticker symbol, constructs the canonical URL for finding derivatives,
 options chain, and related financial market data on Yahoo Finance.

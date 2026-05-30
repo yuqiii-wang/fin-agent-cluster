@@ -17,6 +17,9 @@ Outputs
 ``reasoning``
     LLM's brief rationale for what data was found and how the script extracts it.
 
+``from_cache``
+    ``True`` when the output was served from the ``llm_responses`` prompt-hash cache.
+
 Failure behaviour
 -----------------
 Stream failure propagates so that ``seq.py`` can mark the overall task failed.
@@ -24,9 +27,10 @@ Stream failure propagates so that ``seq.py`` can mark the overall task failed.
 Execution layers
 ----------------
 LangGraph layer (``_study_web_content_task`` decorated with ``@task``):
-    Creates a Streaming task, delegates to the Celery stream worker, parses
-    the JSON answer from the LLM, injects ``source_markdown`` from the input,
-    and completes the task.
+    The pg cache check is handled upstream by ``run_task`` via ``pg_cache_fn``.
+    This function is only reached on a cache miss.  Creates a Streaming task,
+    delegates to the Celery stream worker, parses the JSON answer from the LLM,
+    injects ``source_markdown`` from the input, and completes the task.
 
 Celery layer (``stream_task.run_stream``):
     Dispatched via ``STREAM_PROMPT_BUILDERS`` to ``_build_study_prompt``.
@@ -44,6 +48,8 @@ Public exports
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 
 from langchain_core.messages import BaseMessage
@@ -52,14 +58,16 @@ from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
+from backend.db.postgres.connection import raw_conn
 from backend.langgraph.lifecycle import complete_task, create_task
-from backend.langgraph.models.models import TaskInput, TaskOutput
+from backend.langgraph.models.models import NodeContext, TaskInput, TaskOutput
 from backend.langgraph.models.streaming_output import StreamingTaskOutput
 from backend.langgraph.models.task import NodeTask
 
 logger = logging.getLogger(__name__)
 
 _TASK_NAME = "study_web_content"
+_CACHE_TTL_HOURS = 4
 
 _SYSTEM_PROMPT = """\
 You are a financial data extraction engineer. You will be given the Markdown content of a \
@@ -147,6 +155,7 @@ class StudyWebContentOutput(BaseModel):
                           stdin and prints a single JSON object to stdout.
         reasoning:        LLM's brief rationale for what data was found and how
                           the script extracts it.
+        from_cache:       ``True`` when served from the ``llm_responses`` prompt-hash cache.
     """
 
     source_markdown: str = Field(
@@ -157,6 +166,7 @@ class StudyWebContentOutput(BaseModel):
         description="Python script (stdlib only) that reads Markdown from stdin and prints JSON.",
     )
     reasoning: str = Field(default="", description="LLM reasoning for the extraction approach.")
+    from_cache: bool = Field(default=False, description="True when served from llm_responses prompt-hash cache.")
 
 
 # ---------------------------------------------------------------------------
@@ -181,9 +191,9 @@ def _build_study_prompt(payload: dict) -> list[BaseMessage]:
 
     schema_text = _json.dumps(inp.output_json_schema, indent=2)
 
-    # Truncate very long pages to keep within LLM context limits (~16k chars).
-    markdown_excerpt = inp.markdown[:16_000]
-    if len(inp.markdown) > 16_000:
+    # Truncate very long pages to keep within LLM context limits (~48k chars).
+    markdown_excerpt = inp.markdown[:48_000]
+    if len(inp.markdown) > 48_000:
         markdown_excerpt += "\n\n[... content truncated for length ...]"
 
     # Append caller-supplied additional_context snippets to the system prompt.
@@ -202,6 +212,74 @@ def _build_study_prompt(payload: dict) -> list[BaseMessage]:
 
 
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_study_prompt}
+
+# ---------------------------------------------------------------------------
+# PG cache lookup SQL (by prompt_hash + task_name within TTL)
+# ---------------------------------------------------------------------------
+
+_GET_CACHED_LLM_RESPONSE = """
+    SELECT lr.answer
+    FROM fin_agents.llm_responses lr
+    WHERE lr.task_name  = %s
+      AND lr.prompt_hash = %s
+      AND lr.answer      IS NOT NULL
+      AND lr.ts          > NOW() - INTERVAL '%s hours'
+    ORDER BY lr.ts DESC
+    LIMIT 1
+"""
+
+
+# ---------------------------------------------------------------------------
+# PG cache function
+# ---------------------------------------------------------------------------
+
+
+async def _study_web_content_pg_cache(
+    inp: StudyWebContentInput, ctx: NodeContext
+) -> StudyWebContentOutput | None:
+    """Check pg for a recent study_web_content result with the same prompt hash.
+
+    Computes the MD5 of the rendered prompt messages and looks up
+    ``fin_agents.llm_responses`` for a row with the same ``task_name`` +
+    ``prompt_hash`` within the last ``_CACHE_TTL_HOURS`` hours.
+
+    Args:
+        inp: Typed task input.
+        ctx: Current node context (unused; present for signature compatibility).
+
+    Returns:
+        :class:`StudyWebContentOutput` on a cache hit, ``None`` otherwise.
+    """
+    payload = inp.model_dump(mode="json")
+    messages = _build_study_prompt(payload)
+    prompt_text = "\n\n".join(
+        f"{getattr(m, 'type', 'unknown').upper()}:\n{m.content}"
+        for m in messages
+        if getattr(m, "content", None)
+    )
+    prompt_hash = hashlib.md5(prompt_text.encode()).hexdigest()
+
+    async with raw_conn(readonly=True) as conn:
+        cur = await conn.execute(
+            _GET_CACHED_LLM_RESPONSE,
+            (_TASK_NAME, prompt_hash, _CACHE_TTL_HOURS),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    try:
+        answer_dict: dict = json.loads(row["answer"]) if row.get("answer") else {}
+    except (json.JSONDecodeError, TypeError):
+        return None
+    transform_script = str(answer_dict.get("transform_script", "")).strip()
+    if not transform_script:
+        return None
+    return StudyWebContentOutput(
+        source_markdown=inp.markdown,
+        transform_script=transform_script,
+        reasoning=str(answer_dict.get("reasoning", "")),
+        from_cache=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +378,7 @@ study_web_content: NodeTask[StudyWebContentInput, StudyWebContentOutput] = NodeT
     handler=lambda payload: (_ for _ in ()).throw(
         NotImplementedError("study_web_content runs via the Celery stream worker.")
     ),
+    pg_cache_fn=_study_web_content_pg_cache,
 )
 
 HANDLERS: dict = {}

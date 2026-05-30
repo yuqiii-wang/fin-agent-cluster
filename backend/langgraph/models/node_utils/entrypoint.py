@@ -239,15 +239,36 @@ class EntrypointMixin:
             if self.view_type == "Mirror" and ctx.task_ids  # type: ignore[attr-defined]
             else node_output.model_dump()
         )
+
+        # Derive node terminal status from the last finished task so that a
+        # task failure absorbed inside an agent step loop (which catches step
+        # exceptions internally) is reflected in the node status.
+        _node_failed = False
+        _node_error: str | None = None
+        if ctx.task_ids:
+            from backend.db.postgres import raw_conn as _raw_conn  # noqa: PLC0415
+            async with _raw_conn(readonly=True) as _conn:
+                _cur = await _conn.execute(
+                    "SELECT status FROM fin_agents.tasks WHERE task_id = %s",
+                    (ctx.task_ids[-1],),
+                )
+                _row = await _cur.fetchone()
+            if _row and _row["status"] == "failed":
+                _node_failed = True
+                _node_error = f"last task {ctx.task_ids[-1]} failed"
+
         await complete_node(
             thread_id=thread_id,
             node_id=node_id,
             node_name=self.node_name,  # type: ignore[attr-defined]
             output_data=stored_output,
+            failed=_node_failed,
+            error=_node_error,
         )
 
-        # Update NodeRecord with completed status and accumulated task_ids.
-        completed_record = self._build_node_record(node_id, version, prev_node_ids, "completed")  # type: ignore[attr-defined]
+        # Update NodeRecord with terminal status and accumulated task_ids.
+        _terminal_status = "failed" if _node_failed else "completed"
+        completed_record = self._build_node_record(node_id, version, prev_node_ids, _terminal_status)  # type: ignore[attr-defined]
         completed_record["task_ids"] = list(ctx.task_ids)
 
         # Return only the delta — never spread the full state back.
@@ -256,6 +277,10 @@ class EntrypointMixin:
         # keys (thread_id, query, …) would receive two conflicting values.
         # The `nodes` key uses operator.or_ so it merges each node's single
         # NodeRecord dict correctly across parallel branches.
+        # Skip state updates when the node failed — partial outputs must not
+        # propagate into downstream state as if the node succeeded.
+        if _node_failed:
+            return {"nodes": {node_id: completed_record}}
         state_updates = self.get_state_updates(node_output)  # type: ignore[attr-defined]
         return {"nodes": {node_id: completed_record}, **state_updates}
 

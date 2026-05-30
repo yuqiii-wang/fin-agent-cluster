@@ -58,6 +58,24 @@ export const COLOR_STATUS_DARK_FALLBACK = '#2d2d2d'; // Fallback dark bg for unk
 export const COLOR_OVERLAP_FILL   = 'rgba(255, 220, 80, 0.18)';
 export const COLOR_OVERLAP_BORDER = 'rgba(255, 220, 80, 0.45)';
 
+// ── Accent colours ────────────────────────────────────────────────────────
+export const COLOR_ACCENT_PURPLE = '#722ed1'; // Skill indicator / hardcoded skill lock icon
+export const COLOR_STATUS_SUCCESS = '#52c41a'; // Bound-tool check / success indicator
+
+// ── Subtle / transparent variants ─────────────────────────────────────────
+export const COLOR_BRAND_BLUE_SUBTLE = '#1677ff33'; // Brand blue at low opacity (active entry border)
+export const COLOR_BORDER_INACTIVE   = '#333333';   // Inactive / forgotten entry border
+
+// ── Chart: volatility smile ───────────────────────────────────────────────
+export const COLOR_CHART_CALL_IV    = '#60a5fa'; // blue-400 – call IV line
+export const COLOR_CHART_PUT_IV     = '#fb923c'; // orange-400 – put IV line
+export const COLOR_CHART_GRID       = '#2B2F38'; // chart grid lines
+export const COLOR_CHART_AXIS       = '#9B9EA4'; // axis labels / lines / text
+export const COLOR_CHART_BG         = '#1a1d23'; // chart background
+export const COLOR_CHART_ATM        = '#a3e635'; // lime – ATM vertical line
+export const COLOR_CHART_TOOLTIP_BG = '#1e2330'; // tooltip / legend box fill
+export const COLOR_HOVER_CROSSHAIR  = '#ffffff40'; // chart hover crosshair line
+
 // ── Parallel-expand toggle ────────────────────────────────────────────────
 export const COLOR_PARALLEL_ACTIVE   = '#faad14';
 export const COLOR_PARALLEL_INACTIVE = '#595959';

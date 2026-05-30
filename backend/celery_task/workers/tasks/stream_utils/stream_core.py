@@ -221,20 +221,25 @@ async def run_stream_core(
         from backend.db.redis.streams.reader import recover_task_tokens, delete_stream_entries
         _text_by_column, entry_ids = await recover_task_tokens(thread_id, task_id)
 
+    import hashlib
+    prompt_hash: str | None = (
+        hashlib.md5(prompts_text.encode()).hexdigest() if prompts_text else None
+    )
+
     event_id = str(uuid.uuid4())
     async with raw_conn() as conn:
         await conn.execute(
             """
             INSERT INTO fin_agents.llm_responses
                 (event_id, thread_id, task_id, provider, model,
-                 task_name, node_name, prompts, thinking, answer,
+                 task_name, node_name, prompts, prompt_hash, thinking, answer,
                  output_tokens, total_tokens, latency_ms)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (event_id) DO NOTHING
             """,
             (
                 event_id, thread_id, task_id, provider, model_name,
-                task_name, node_name, prompts_text, thinking_text, answer_text,
+                task_name, node_name, prompts_text, prompt_hash, thinking_text, answer_text,
                 total_tokens, total_tokens, latency_ms,
             ),
         )

@@ -51,6 +51,7 @@ Check in fin quant trading domain for best practices and existing solutions befo
 * Do not hardcode any API response, do not hardcode any dicts/maps, but to traverse project to see/import class definitions and usages to generate response.
 * streaming related flow be with redis streams with celery; others are with SSE or request/response.
 * Backend runs on WSL2 so it is `--pool=prefork` to celery, but test can just run `--pool=solo` on windows git bash.
+* SQL write happens on PG DB primary, but read happens on replicas; ensure sql table schemas are consistent across all primary and replicas if updated sql tables.
 
 About agent nodes:
 

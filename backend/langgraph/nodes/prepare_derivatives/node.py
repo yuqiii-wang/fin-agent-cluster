@@ -5,23 +5,25 @@ Hierarchy
 ---------
 Thread
   └── prepare_derivatives  (Agent)
-        ├── propose_web_knowledge_urls  — maps symbol to Yahoo Finance options URL
-        ├── navigate_web  (TaskSeq → crawl_url + html_to_markdown + study_web_content + run_sandbox)
+        ├── navigate_web  (TaskSeq → propose_web_knowledge_urls + parallel per-URL:
+        │                   crawl_url + html_to_markdown + study_web_content + run_sandbox)
         └── get_and_calculate_stats  (TaskSeq → get_stats + calculate_stats)
 
 Node design
 -----------
-The node reads the stock symbol from ``query_node`` output and runs three sequential
+The node reads the stock symbol from ``query_node`` output and runs two sequential
 steps for that symbol:
 
-1. ``propose_web_knowledge_urls`` — constructs the Yahoo Finance options URL for the
-   equity symbol.  No external network call; output feeds directly into step 2.
-2. ``navigate_web`` — crawls the proposed URL, converts the HTML to Markdown,
-   generates a Python transform script via LLM, and executes it in a sandbox
-   to produce structured financial JSON.
-3. ``get_and_calculate_stats`` — ingests the sandbox JSON output and computes
+1. ``navigate_web`` — proposes one or more financial data URLs for the equity symbol
+   via ``web_search`` (DDGS), then crawls each URL in parallel, generates a Python
+   transform script via LLM, and executes it in a sandbox to produce structured
+   options JSON.  Calls/puts from all parallel runs are merged and deduplicated.
+2. ``get_and_calculate_stats`` — ingests the merged options JSON and computes
    technical indicators for the underlying equity symbol; persists rows to
    ``fin_markets.quant_stats``.
+3. ``calculate_options`` — upserts each call/put contract into
+   ``fin_markets.quant_options_stats`` and aggregates per expiry into
+   ``fin_markets.quant_derivative_stats``.
 
 Predecessor
 -----------
@@ -41,9 +43,11 @@ from backend.langgraph.lifecycle import read_node_output
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats import (
     get_and_calculate_stats,
 )
-from backend.langgraph.models.common_tasks.task_seqs.navigate_web import navigate_web
-from backend.langgraph.models.common_tasks.propose_web_knowledge_urls import (
-    propose_web_knowledge_urls,
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_option_stats import (
+    calculate_option_stats,
+)
+from backend.langgraph.models.common_tasks.task_seqs.navigate_web.seq import (
+    navigate_web,
 )
 from backend.langgraph.models.models import NodeContext, TaskContext, TaskOutput
 from backend.langgraph.models.node import BaseNode
@@ -94,9 +98,9 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
     view_type = "Stats"
     stats_views = ["DerivativesFlow"]
     tasks: ClassVar[list[NodeTask]] = [
-        propose_web_knowledge_urls,
         *navigate_web.tasks,
         *get_and_calculate_stats.tasks,
+        calculate_option_stats,
     ]
     _prev_node_names: ClassVar[list[str]] = ["query_node"]
 
@@ -209,7 +213,7 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
         )
         results[_SUMMARY_KEY] = TaskOutput(
             ctx=summary_ctx,
-            content={"symbol": g.symbol, "web_knowledge_url": g.web_knowledge_url},
+            content={"symbol": g.symbol},
         )
         return results
 
@@ -231,7 +235,6 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
         data: dict = summary.content
         return PrepareDerivativesOutput(
             symbol=data.get("symbol", ""),
-            web_knowledge_url=data.get("web_knowledge_url", ""),
         )
 
     def get_state_updates(self, output: PrepareDerivativesOutput) -> dict[str, Any]:

@@ -1,7 +1,8 @@
 """Quant market-data SQL templates for the ``fin_markets`` schema.
 
-Covers ``fin_markets.quant_raw`` (API cache) and ``fin_markets.quant_stats``
-for equities, futures, options, and indices.
+Covers ``fin_markets.quant_raw`` (API cache), ``fin_markets.quant_stats``
+(OHLCV + technicals for equity/crypto/commodity/precious_metal/index), and
+``fin_markets.quant_derivative_stats`` (options and futures contracts).
 
 All constants are raw SQL strings ready for use with psycopg3 ``%s`` /
 ``%(name)s`` parameterisation.
@@ -22,9 +23,9 @@ __all__ = [
     "CryptoStatsSQL",
     "CommodityStatsSQL",
     "PreciousMetalStatsSQL",
-    "FuturesStatsSQL",
     "IndexStatsSQL",
     "OptionsStatsSQL",
+    "DerivativeStatsSQL",
     "get_yf_exchange_for_symbol",
 ]
 
@@ -124,10 +125,8 @@ class OhlcvStatsSQL:
             %(vwap)s, %(obv)s, %(ad)s,
             %(index_code)s
         )
-        ON CONFLICT (
-            instrument_type, symbol, source, granularity, bar_time,
-            COALESCE(contract_ticker, ''), COALESCE(expiry, ''), COALESCE(option_type, '')
-        ) DO UPDATE SET
+        ON CONFLICT (instrument_type, symbol, source, granularity, bar_time)
+        DO UPDATE SET
             open          = EXCLUDED.open,
             high          = EXCLUDED.high,
             low           = EXCLUDED.low,
@@ -249,86 +248,6 @@ class OhlcvStatsSQL:
         """
 
 
-class FuturesStatsSQL:
-    """Queries against ``fin_markets.quant_stats`` for futures (instrument_type='futures')."""
-
-    GET_COVERAGE = """
-        SELECT MAX(bar_time) AS latest
-        FROM fin_markets.quant_stats
-        WHERE symbol = %s
-          AND instrument_type = 'futures'
-          AND contract_ticker = %s
-          AND bar_time >= %s
-    """
-
-    UPSERT = """
-        INSERT INTO fin_markets.quant_stats (
-            symbol, instrument_type, currency_code, contract_ticker, expiry, source, granularity, bar_time,
-            open, high, low, close, volume, open_interest, index_code
-        ) VALUES (
-            %(symbol)s, 'futures', %(currency_code)s, %(contract_ticker)s, %(expiry)s, %(source)s, '1day', %(bar_time)s,
-            %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s, %(open_interest)s, %(index_code)s
-        )
-        ON CONFLICT (
-            instrument_type, symbol, source, granularity, bar_time,
-            COALESCE(contract_ticker, ''), COALESCE(expiry, ''), COALESCE(option_type, '')
-        ) DO UPDATE SET
-            open          = EXCLUDED.open,
-            high          = EXCLUDED.high,
-            low           = EXCLUDED.low,
-            close         = EXCLUDED.close,
-            volume        = COALESCE(EXCLUDED.volume,        fin_markets.quant_stats.volume),
-            open_interest = COALESCE(EXCLUDED.open_interest, fin_markets.quant_stats.open_interest),
-            currency_code = COALESCE(EXCLUDED.currency_code, fin_markets.quant_stats.currency_code),
-            index_code    = COALESCE(EXCLUDED.index_code,    fin_markets.quant_stats.index_code)
-    """
-
-    GET_RECENT = """
-        SELECT bar_time, open, high, low, close, volume, open_interest
-        FROM fin_markets.quant_stats
-        WHERE instrument_type = 'futures'
-          AND contract_ticker = %(contract_ticker)s
-        ORDER BY bar_time DESC
-        LIMIT %(limit)s
-    """
-
-
-class OptionsStatsSQL:
-    """Queries against ``fin_markets.quant_stats`` for options flow (instrument_type='options')."""
-
-    GET_LATEST = """
-        SELECT id, calls_oi, puts_oi, calls_puts_ratio, net_flow, query_used, bar_time
-        FROM fin_markets.quant_stats
-        WHERE symbol = %s
-          AND instrument_type = 'options'
-          AND expiry = %s
-          AND bar_time > %s
-        ORDER BY bar_time DESC
-        LIMIT 1
-    """
-
-    UPSERT = """
-        INSERT INTO fin_markets.quant_stats (
-            symbol, instrument_type, currency_code, expiry, source, granularity, bar_time,
-            calls_oi, puts_oi, calls_puts_ratio, net_flow, query_used, index_code
-        ) VALUES (
-            %(symbol)s, 'options', %(currency_code)s, %(expiry)s, %(source)s, '1day', %(bar_time)s,
-            %(calls_oi)s, %(puts_oi)s, %(calls_puts_ratio)s, %(net_flow)s, %(query_used)s, %(index_code)s
-        )
-        ON CONFLICT (
-            instrument_type, symbol, source, granularity, bar_time,
-            COALESCE(contract_ticker, ''), COALESCE(expiry, ''), COALESCE(option_type, '')
-        ) DO UPDATE SET
-            calls_oi         = COALESCE(EXCLUDED.calls_oi,         fin_markets.quant_stats.calls_oi),
-            puts_oi          = COALESCE(EXCLUDED.puts_oi,          fin_markets.quant_stats.puts_oi),
-            calls_puts_ratio = COALESCE(EXCLUDED.calls_puts_ratio, fin_markets.quant_stats.calls_puts_ratio),
-            net_flow         = COALESCE(EXCLUDED.net_flow,         fin_markets.quant_stats.net_flow),
-            query_used       = COALESCE(EXCLUDED.query_used,       fin_markets.quant_stats.query_used),
-            currency_code    = COALESCE(EXCLUDED.currency_code,    fin_markets.quant_stats.currency_code),
-            index_code       = COALESCE(EXCLUDED.index_code,       fin_markets.quant_stats.index_code)
-    """
-
-
 class IndexStatsSQL:
     """Queries against ``fin_markets.quant_stats`` for indices (instrument_type='index')."""
 
@@ -352,10 +271,8 @@ class IndexStatsSQL:
             %(adx_14)s, %(plus_di_14)s, %(minus_di_14)s, %(aroon_up_14)s, %(aroon_down_14)s, %(sar)s,
             %(obv)s, %(index_code)s
         )
-        ON CONFLICT (
-            instrument_type, symbol, source, granularity, bar_time,
-            COALESCE(contract_ticker, ''), COALESCE(expiry, ''), COALESCE(option_type, '')
-        ) DO UPDATE SET
+        ON CONFLICT (instrument_type, symbol, source, granularity, bar_time)
+        DO UPDATE SET
             open        = EXCLUDED.open,
             high        = EXCLUDED.high,
             low         = EXCLUDED.low,
@@ -452,10 +369,8 @@ class CryptoStatsSQL:
             %(vwap)s, %(obv)s, %(ad)s,
             %(index_code)s
         )
-        ON CONFLICT (
-            instrument_type, symbol, source, granularity, bar_time,
-            COALESCE(contract_ticker, ''), COALESCE(expiry, ''), COALESCE(option_type, '')
-        ) DO UPDATE SET
+        ON CONFLICT (instrument_type, symbol, source, granularity, bar_time)
+        DO UPDATE SET
             open          = EXCLUDED.open,
             high          = EXCLUDED.high,
             low           = EXCLUDED.low,
@@ -536,10 +451,8 @@ class CommodityStatsSQL:
             %(vwap)s, %(obv)s, %(ad)s,
             %(index_code)s
         )
-        ON CONFLICT (
-            instrument_type, symbol, source, granularity, bar_time,
-            COALESCE(contract_ticker, ''), COALESCE(expiry, ''), COALESCE(option_type, '')
-        ) DO UPDATE SET
+        ON CONFLICT (instrument_type, symbol, source, granularity, bar_time)
+        DO UPDATE SET
             open          = EXCLUDED.open,
             high          = EXCLUDED.high,
             low           = EXCLUDED.low,
@@ -620,10 +533,8 @@ class PreciousMetalStatsSQL:
             %(vwap)s, %(obv)s, %(ad)s,
             %(index_code)s
         )
-        ON CONFLICT (
-            instrument_type, symbol, source, granularity, bar_time,
-            COALESCE(contract_ticker, ''), COALESCE(expiry, ''), COALESCE(option_type, '')
-        ) DO UPDATE SET
+        ON CONFLICT (instrument_type, symbol, source, granularity, bar_time)
+        DO UPDATE SET
             open          = EXCLUDED.open,
             high          = EXCLUDED.high,
             low           = EXCLUDED.low,
@@ -668,4 +579,71 @@ class PreciousMetalStatsSQL:
         WHERE symbol = %s
           AND instrument_type = 'precious_metal'
           AND granularity = %s
+    """
+
+
+class OptionsStatsSQL:
+    """Queries against ``fin_markets.quant_options_stats`` (per-contract options rows).
+
+    ``UPSERT`` writes one row per individual call/put contract.  The unique key is
+    ``(symbol, source, contract_name)``; re-ingesting the same contract refreshes its
+    latest snapshot.  ``options_type``, ``expiry_date`` and ``strike`` are parsed from
+    the OSI ``contract_name`` and always overwritten; quote fields are preserved with
+    ``COALESCE`` when a newer snapshot omits them.
+    """
+
+    UPSERT = """
+        INSERT INTO fin_markets.quant_options_stats (
+            symbol, source, contract_name, options_type, expiry_date, strike,
+            last_trade_date, last_price, bid, ask,
+            price_change, pct_change, volume, open_interest, implied_volatility
+        ) VALUES (
+            %(symbol)s, %(source)s, %(contract_name)s, %(options_type)s, %(expiry_date)s, %(strike)s,
+            %(last_trade_date)s, %(last_price)s, %(bid)s, %(ask)s,
+            %(price_change)s, %(pct_change)s, %(volume)s, %(open_interest)s, %(implied_volatility)s
+        )
+        ON CONFLICT (symbol, source, contract_name) DO UPDATE SET
+            options_type       = EXCLUDED.options_type,
+            expiry_date        = EXCLUDED.expiry_date,
+            strike             = EXCLUDED.strike,
+            last_trade_date    = COALESCE(EXCLUDED.last_trade_date,    fin_markets.quant_options_stats.last_trade_date),
+            last_price         = COALESCE(EXCLUDED.last_price,         fin_markets.quant_options_stats.last_price),
+            bid                = COALESCE(EXCLUDED.bid,                fin_markets.quant_options_stats.bid),
+            ask                = COALESCE(EXCLUDED.ask,                fin_markets.quant_options_stats.ask),
+            price_change       = COALESCE(EXCLUDED.price_change,       fin_markets.quant_options_stats.price_change),
+            pct_change         = COALESCE(EXCLUDED.pct_change,         fin_markets.quant_options_stats.pct_change),
+            volume             = COALESCE(EXCLUDED.volume,             fin_markets.quant_options_stats.volume),
+            open_interest      = COALESCE(EXCLUDED.open_interest,      fin_markets.quant_options_stats.open_interest),
+            implied_volatility = COALESCE(EXCLUDED.implied_volatility, fin_markets.quant_options_stats.implied_volatility),
+            created_at         = NOW()
+        RETURNING id
+    """
+
+
+class DerivativeStatsSQL:
+    """Queries against ``fin_markets.quant_derivative_stats`` (aggregate per-expiry rows).
+
+    ``UPSERT_OPTIONS_AGGREGATE`` writes one row per (symbol, source, expiry_date) for
+    options, with ``contract_name = NULL``, carrying the ``estimated_price`` where the
+    call breakeven (strike + call cost) and put breakeven (strike - put cost) meet at the
+    ATM ``cross_strike``.  The unique key is
+    ``(derivative_type, symbol, source, expiry_date, COALESCE(contract_name, ''))``.
+    """
+
+    UPSERT_OPTIONS_AGGREGATE = """
+        INSERT INTO fin_markets.quant_derivative_stats (
+            symbol, derivative_type, source, contract_name, expiry_date,
+            estimated_price, cross_strike
+        ) VALUES (
+            %(symbol)s, 'options', %(source)s, NULL, %(expiry_date)s,
+            %(estimated_price)s, %(cross_strike)s
+        )
+        ON CONFLICT (
+            derivative_type, symbol, source, expiry_date,
+            COALESCE(contract_name, '')
+        ) DO UPDATE SET
+            estimated_price = EXCLUDED.estimated_price,
+            cross_strike    = EXCLUDED.cross_strike,
+            created_at      = NOW()
+        RETURNING id
     """

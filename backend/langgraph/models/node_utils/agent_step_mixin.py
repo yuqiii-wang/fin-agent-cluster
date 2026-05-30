@@ -182,6 +182,13 @@ class AgentStepMixin:
             orch_input = self._build_orchestration_input(
                 global_state, step_state, failed_step, results, iteration
             )
+
+            if self._should_skip_orchestration(orch_input):
+                break
+
+            if self._should_continue_without_orchestration(orch_input):
+                continue
+
             try:
                 orch_out = await self.run_task(  # type: ignore[attr-defined]
                     self.agent_orchestration_task, ctx, orch_input
@@ -343,6 +350,44 @@ class AgentStepMixin:
             f"{getattr(self, 'node_name', type(self).__name__)!r} must implement "
             "_build_final_output()."
         )
+
+    def _should_skip_orchestration(self, orch_input: Any) -> bool:
+        """Return True to skip the orchestration LLM call and finish immediately.
+
+        Called after building ``orch_input`` but before invoking
+        ``agent_orchestration_task``.  When ``True`` the loop breaks with an
+        implicit ``"finish"`` action — no streaming LLM round-trip occurs.
+
+        Default is always ``False``.  Override in concrete nodes to short-circuit
+        the orchestration call when the iteration outcome is deterministic (e.g.
+        all steps succeeded and the exit condition is already met).
+
+        Args:
+            orch_input: The orchestration input built by ``_build_orchestration_input``.
+
+        Returns:
+            ``True`` to skip the LLM call and break the loop; ``False`` to proceed.
+        """
+        return False
+
+    def _should_continue_without_orchestration(self, orch_input: Any) -> bool:
+        """Return True to skip the orchestration LLM call and continue to the next iteration.
+
+        Checked immediately after ``_should_skip_orchestration`` returns ``False``.
+        When ``True`` the orchestration task is not invoked and the outer loop
+        advances to the next iteration automatically.
+
+        Default is always ``False`` (run orchestration).  Override in concrete
+        nodes to suppress the orchestration round-trip when no step failed and
+        the loop should simply proceed without LLM guidance.
+
+        Args:
+            orch_input: The orchestration input built by ``_build_orchestration_input``.
+
+        Returns:
+            ``True`` to skip the LLM call and continue; ``False`` to proceed.
+        """
+        return False
 
     # ------------------------------------------------------------------
     # Optional hook — no-op default, override for side effects

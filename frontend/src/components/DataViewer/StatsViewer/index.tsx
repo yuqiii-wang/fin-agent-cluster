@@ -18,6 +18,8 @@ import { Select } from 'antd';
 import StatsDataFrame from '../StatsDataFrame';
 import CandleStickChart from './CandleStickChart';
 import LineChart from './LineChart';
+import OptionsVolatilitySmileChart from './OptionsVolatilitySmileChart';
+import type { VolSmileExpiry } from './OptionsVolatilitySmileChart';
 import { createChart, HistogramSeries } from 'lightweight-charts';
 import type { DfSplit } from '../StatsDataFrame';
 
@@ -27,6 +29,8 @@ interface Props {
   activeView: string;
   maxHeight?: number;
   symbol?: string;
+  /** Vol smile data for VolatilitySmile view (from CalculateOptionStatsOutput.vol_smile). */
+  volSmile?: VolSmileExpiry[];
 }
 
 // ─── BarChart (volume histogram) ──────────────────────────────────────────────
@@ -85,6 +89,7 @@ export const LABEL_MAP: Record<string, string> = {
   LineChart: 'Line',
   BarChart: 'Volume',
   PieChart: 'Pie',
+  VolatilitySmile: 'Vol Smile',
 };
 
 /** Dropdown for selecting the active stats view type. Placed in a panel header. */
@@ -109,7 +114,7 @@ export const StatsViewSelect: React.FC<{
 );
 
 /** Renders the stats content for the given activeView — no dropdown included. */
-const StatsViewer: React.FC<Props> = ({ dfSplit, activeView, maxHeight = 320, symbol }) => {
+const StatsViewer: React.FC<Props> = ({ dfSplit, activeView, maxHeight = 320, symbol, volSmile }) => {
   switch (activeView) {
     case 'DataFrame':
       return <StatsDataFrame dfSplit={dfSplit} maxHeight={maxHeight} />;
@@ -119,6 +124,8 @@ const StatsViewer: React.FC<Props> = ({ dfSplit, activeView, maxHeight = 320, sy
       return <LineChart dfSplit={dfSplit} maxHeight={maxHeight} />;
     case 'BarChart':
       return <BarChartView dfSplit={dfSplit} maxHeight={maxHeight} />;
+    case 'VolatilitySmile':
+      return <OptionsVolatilitySmileChart data={volSmile ?? []} maxHeight={maxHeight} />;
     default:
       return <StatsDataFrame dfSplit={dfSplit} maxHeight={maxHeight} />;
   }

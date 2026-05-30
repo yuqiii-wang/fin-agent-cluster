@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from backend.resources.stats.errors.codes import (
+    STATS_AKSHARE_EMPTY,
     STATS_ERRORS,
     STATS_FMP_AUTH_ERROR,
     STATS_FMP_EMPTY,
@@ -14,6 +15,7 @@ from backend.resources.stats.errors.codes import (
 )
 
 __all__ = [
+    "STATS_AKSHARE_EMPTY",
     "STATS_ERRORS",
     "STATS_FMP_AUTH_ERROR",
     "STATS_FMP_EMPTY",

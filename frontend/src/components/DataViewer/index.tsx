@@ -19,6 +19,8 @@ import StatsDataFrame from './StatsDataFrame';
 import StatsViewer, { StatsViewSelect } from './StatsViewer';
 import StackCandleStickChart from './StatsViewer/StackCandleStickChart';
 import type { StackCandleItem } from './StatsViewer/StackCandleStickChart';
+import OptionsVolatilitySmileChart from './StatsViewer/OptionsVolatilitySmileChart';
+import type { VolSmileExpiry } from './StatsViewer/OptionsVolatilitySmileChart';
 import WebRequestViewer from './WebRequestViewer';
 import PdfViewer from './PdfViewer';
 import type { StreamViewerProps } from './StreamViewer';
@@ -129,8 +131,12 @@ function FieldViewer({
     const dfSplits = dataObj?.df_splits as StackCandleItem[] | undefined;
     const dfSplit = dataObj?.df_split as DfSplit | undefined;
     const statsViews = dataObj?.stats_views as string[] | undefined;
+    const volSmile = dataObj?.vol_smile as VolSmileExpiry[] | undefined;
     if (dfSplits?.length && statsViews?.includes('StackCandleStick')) {
       return <StackCandleStickChart items={dfSplits} />;
+    }
+    if (volSmile?.length && statsViews?.includes('VolatilitySmile')) {
+      return <OptionsVolatilitySmileChart data={volSmile} maxHeight={maxHeight} />;
     }
     if (dfSplit && statsViews?.length) {
       return <StatsViewer dfSplit={dfSplit} activeView={activeStatsView ?? statsViews[0]} maxHeight={maxHeight} symbol={dataObj?.symbol as string | undefined} />;
@@ -321,6 +327,7 @@ const DataViewer: React.FC<DataViewerProps> = ({
         const corrDfSplit = dataObj?.corr_df_split as DfSplit | undefined;
         const dfSplit = dataObj?.df_split as DfSplit | undefined;
         const statsViews = dataObj?.stats_views as string[] | undefined;
+        const volSmile = dataObj?.vol_smile as VolSmileExpiry[] | undefined;
         // Unified view: df_splits (StackCandleStick) + corr_df_split (DataFrame) rendered together.
         if ((dfSplits?.length || corrDfSplit) && !statsViews?.length) {
           return (
@@ -332,6 +339,9 @@ const DataViewer: React.FC<DataViewerProps> = ({
         }
         if (dfSplits?.length && statsViews?.includes('StackCandleStick')) {
           return <StackCandleStickChart items={dfSplits} />;
+        }
+        if (volSmile?.length && statsViews?.includes('VolatilitySmile')) {
+          return <OptionsVolatilitySmileChart data={volSmile} maxHeight={maxHeight ?? 340} />;
         }
         if (dfSplit && statsViews?.length) {
           return <StatsFieldListCollapse dfSplit={dfSplit} statsViews={statsViews} maxHeight={maxHeight ?? 320} style={style} symbol={dataObj?.symbol as string | undefined} />;
@@ -377,8 +387,12 @@ const DataViewer: React.FC<DataViewerProps> = ({
     const dfSplits = dataObj?.df_splits as StackCandleItem[] | undefined;
     const dfSplit = dataObj?.df_split as DfSplit | undefined;
     const statsViews = dataObj?.stats_views as string[] | undefined;
+    const volSmile = dataObj?.vol_smile as VolSmileExpiry[] | undefined;
     if (dfSplits?.length && statsViews?.includes('StackCandleStick')) {
       return <StackCandleStickChart items={dfSplits} />;
+    }
+    if (volSmile?.length && statsViews?.includes('VolatilitySmile')) {
+      return <OptionsVolatilitySmileChart data={volSmile} maxHeight={maxHeight} />;
     }
     if (dfSplit && statsViews?.length) {
       return <StatsViewer dfSplit={dfSplit} activeView={activeStatsView ?? statsViews[0]} maxHeight={maxHeight} symbol={dataObj?.symbol as string | undefined} />;

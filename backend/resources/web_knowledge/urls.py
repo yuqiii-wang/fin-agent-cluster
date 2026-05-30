@@ -128,11 +128,25 @@ def _option_chain_url(symbol: str, exchange: str | None) -> str:
     return f"https://www.nasdaq.com/market-activity/stocks/{symbol.lower()}/option-chain"
 
 
+def _estimate_url(symbol: str, exchange: str | None) -> str:
+    """Build the Nasdaq analyst-estimates URL.
+
+    Args:
+        symbol:   Equity ticker, e.g. ``'AAPL'``.
+        exchange: Unused — Nasdaq URL is exchange-agnostic.
+
+    Returns:
+        Fully qualified Nasdaq analyst-estimates page URL.
+    """
+    return f"https://finance.yahoo.com/quote/{symbol.upper()}/analysis/"
+
+
 #: Maps each :class:`WebPageType` to its URL-builder callable.
 URL_BUILDERS: dict[WebPageType, Callable[[str, str | None], str]] = {
     WebPageType.competitors: _competitors_url,
     WebPageType.press_releases: _press_releases_url,
     WebPageType.option_chain: _option_chain_url,
+    WebPageType.estimate: _estimate_url,
 }
 
 

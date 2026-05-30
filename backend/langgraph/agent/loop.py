@@ -210,12 +210,39 @@ async def run_agent_loop(
         get_memory_entries,
     )
     from backend.langgraph.agent.pause import is_agent_auto_resume_set, is_agent_pause_flag_set
-    from backend.langgraph.agent.skills.ops import get_skills
+    from backend.langgraph.agent.skills.ops import copy_skills_from_node, get_skills
     from backend.langgraph.agent.tools import get_tool_infos_for_tasks
     from backend.llm.factory import get_llm
 
     node_id = ctx.node_id
     thread_id = ctx.thread_id
+
+    # --------------------------------------------------------------------- #
+    # On re-explore: inherit active skills from the previous version's node.
+    # Memory is NOT copied — the new branch intentionally starts fresh.
+    # This runs only on the first iteration (skills still empty for this
+    # new node_id) to avoid double-copying on pause+resume cycles.
+    # --------------------------------------------------------------------- #
+    if ctx.version > 1:
+        from backend.db.postgres import raw_conn as _raw_conn
+        from backend.langgraph.lifecycle.ids import make_node_id as _make_node_id
+
+        existing_skills = await get_skills(node_id, active_only=True)
+        if not existing_skills:
+            async with _raw_conn(readonly=True) as _conn:
+                _cur = await _conn.execute(
+                    """
+                    SELECT node_id, version
+                    FROM fin_agents.nodes
+                    WHERE thread_id = %s AND node_name = %s AND version < %s
+                    ORDER BY version DESC
+                    LIMIT 1
+                    """,
+                    (thread_id, ctx.node_name, ctx.version),
+                )
+                _prev_row = await _cur.fetchone()
+            if _prev_row:
+                await copy_skills_from_node(str(_prev_row["node_id"]), node_id, thread_id)
 
     # --------------------------------------------------------------------- #
     # Build all LangChain StructuredTools and their ToolInfo metadata

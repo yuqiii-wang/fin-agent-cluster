@@ -101,16 +101,18 @@ class GraphTopologyResponse(BaseModel):
 GRAPH_TOPOLOGY = GraphTopologyResponse(
     nodes=[
         TopologyNodeDef(node_name="query_node",       node_type="Workflow"),
-        TopologyNodeDef(node_name="prepare_peers",    node_type="Agent",    parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_peers",    node_type="Workflow",    parallel_group="analyze_parallel"),
         TopologyNodeDef(node_name="prepare_macro_stats",    node_type="Workflow", parallel_group="analyze_parallel"),
         TopologyNodeDef(node_name="prepare_index",    node_type="Workflow", parallel_group="analyze_parallel"),
-        TopologyNodeDef(node_name="prepare_news",     node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_news",        node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_derivatives", node_type="Workflow", parallel_group="analyze_parallel"),
     ],
     edges=[
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_peers",  kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_peers",        kind="sequential"),
         TopologyEdgeDef(from_node="query_node",    to_node="prepare_macro_stats",  kind="sequential"),
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_index",  kind="sequential"),
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_news",   kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_index",        kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_news",         kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_derivatives",  kind="sequential"),
     ],
 )
 

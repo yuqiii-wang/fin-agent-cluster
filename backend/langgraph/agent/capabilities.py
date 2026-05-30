@@ -346,21 +346,30 @@ async def resolve_capabilities(
 # ===========================================================================
 
 
-async def get_agent_capabilities(node_id: str) -> AgentCapabilities:
+async def get_agent_capabilities(node_id: str, *, include_all_memory: bool = False) -> AgentCapabilities:
     """Return the full (unfiltered) capability snapshot for *node_id*.
 
     Used by the API layer to display all capabilities to the UI.  The
     agent loop uses :func:`resolve_capabilities` for selective loading.
 
     Args:
-        node_id: Agent node UUID.
+        node_id:           Agent node UUID.
+        include_all_memory: When ``True`` (terminal nodes), return all memory
+                            entries regardless of status so the UI can display
+                            the complete history in read-only mode.
 
     Returns:
         :class:`AgentCapabilities` with all three capability lists populated.
     """
     tools_task = asyncio.create_task(get_tools_for_node(node_id))
     skills_task = asyncio.create_task(get_skills(node_id, active_only=True))
-    memory_task = asyncio.create_task(get_memory_entries(node_id))
+    memory_task = asyncio.create_task(
+        get_memory_entries(
+            node_id,
+            include_forgotten=include_all_memory,
+            include_compacted=include_all_memory,
+        )
+    )
 
     tools, skills, memory = await asyncio.gather(tools_task, skills_task, memory_task)
 

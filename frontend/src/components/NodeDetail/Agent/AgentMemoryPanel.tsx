@@ -13,6 +13,7 @@ import React, { useState } from 'react';
 import {
   Button,
   Checkbox,
+  Collapse,
   Input,
   Modal,
   Space,
@@ -25,14 +26,19 @@ import {
   DeleteOutlined,
   EyeInvisibleOutlined,
   EyeOutlined,
+  NodeIndexOutlined,
 } from '@ant-design/icons';
 import { STATUS_TAG_COLOR } from '../../../constants/statusColors';
 import {
   COLOR_BORDER_BASE,
+  COLOR_BORDER_INACTIVE,
+  COLOR_BRAND_BLUE_SUBTLE,
+  COLOR_STATUS_SUCCESS,
   COLOR_SURFACE_RAISED,
   COLOR_TEXT_SECONDARY,
 } from '../../../constants/styleColors';
-import type { MemoryEntry } from '../../../types';
+import type { MemoryEntry, StepStateEntry } from '../../../types';
+import AgentStepStatePanel from './AgentStepStatePanel';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -108,13 +114,19 @@ function contentMarkdown(entry: MemoryEntry): string {
 interface Props {
   memory: MemoryEntry[];
   nodeRunning: boolean;
+  /** When true the node has reached a terminal state — entries are shown in
+   *  read-only/immutable style.  All entries (including forgotten/compacted)
+   *  are visible; mutating controls (forget, compact) are hidden. */
+  readonly?: boolean;
   onForget: (memoryId: string) => Promise<void>;
   onCompact: (memoryIds: string[], summary: string) => Promise<void>;
   onViewData?: (label: string, data: string) => void;
+  stepStates?: StepStateEntry[];
 }
 
-const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCompact, onViewData }) => {
-  const [showAll, setShowAll] = useState(false);
+const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, readonly = false, onForget, onCompact, onViewData, stepStates = [] }) => {
+  // In readonly mode default to showing all entries (terminal node — nothing to hide).
+  const [showAll, setShowAll] = useState(readonly);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [compactOpen, setCompactOpen] = useState(false);
   const [compactSummary, setCompactSummary] = useState('');
@@ -156,7 +168,7 @@ const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCo
     }
   };
 
-  if (memory.length === 0) {
+  if (memory.length === 0 && stepStates.length === 0) {
     return <Text type="secondary" style={{ fontSize: 12 }}>No memory entries yet.</Text>;
   }
 
@@ -166,16 +178,18 @@ const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCo
         <Text strong style={{ fontSize: 12, color: COLOR_TEXT_SECONDARY }}>
           MEMORY ({visible.length}{showAll ? '' : ` / ${memory.length}`})
         </Text>
-        <Button
-          size="small"
-          type="text"
-          icon={showAll ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-          onClick={() => setShowAll((v) => !v)}
-          style={{ fontSize: 11, color: COLOR_TEXT_SECONDARY }}
-        >
-          {showAll ? 'Active only' : 'Show all'}
-        </Button>
-        {selected.size >= 2 && (
+        {!readonly && (
+          <Button
+            size="small"
+            type="text"
+            icon={showAll ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+            onClick={() => setShowAll((v) => !v)}
+            style={{ fontSize: 11, color: COLOR_TEXT_SECONDARY }}
+          >
+            {showAll ? 'Active only' : 'Show all'}
+          </Button>
+        )}
+        {!readonly && selected.size >= 2 && (
           <Button
             size="small"
             icon={<CompressOutlined />}
@@ -200,14 +214,14 @@ const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCo
               padding: '5px 8px',
               marginBottom: 3,
               borderRadius: 4,
-              borderLeft: `3px solid ${isActive ? '#1677ff33' : '#333'}`,
+              borderLeft: `3px solid ${isActive && !readonly ? COLOR_BRAND_BLUE_SUBTLE : COLOR_BORDER_INACTIVE}`,
               background: isSelected ? COLOR_SURFACE_RAISED : 'transparent',
-              opacity: isActive ? 1 : 0.45,
+              opacity: isActive && !readonly ? 1 : 0.5,
               cursor: onViewData ? 'pointer' : 'default',
             }}
             onClick={onViewData ? () => onViewData(`Memory #${entry.seq_num} · ${entry.entry_type.replace(/_/g, ' ')}`, contentMarkdown(entry)) : undefined}
           >
-            {isActive && (
+            {isActive && !readonly && (
               <Checkbox
                 checked={isSelected}
                 onChange={() => toggleSelect(entry.memory_id)}
@@ -217,8 +231,8 @@ const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCo
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                 <Tag
-                  color={ENTRY_TYPE_COLOR[entry.entry_type] ?? 'default'}
-                  style={{ fontSize: 10, margin: 0 }}
+                  color={readonly ? undefined : (ENTRY_TYPE_COLOR[entry.entry_type] ?? 'default')}
+                  style={{ fontSize: 10, margin: 0, opacity: readonly ? 0.6 : 1 }}
                 >
                   {entry.entry_type.replace('_', ' ')}
                 </Tag>
@@ -226,10 +240,13 @@ const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCo
                 {entry.status !== 'active' && (
                   <Tag style={{ fontSize: 10, margin: 0 }}>{entry.status}</Tag>
                 )}
+                {readonly && (
+                  <Tag style={{ fontSize: 9, margin: 0, opacity: 0.5 }}>immutable</Tag>
+                )}
               </div>
               <Text style={{ fontSize: 11 }}>{contentSummary(entry)}</Text>
             </div>
-            {isActive && (
+            {isActive && !readonly && (
               <Tooltip title="Forget (excludes from future context)">
                 <Button
                   size="small"
@@ -237,7 +254,7 @@ const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCo
                   danger
                   icon={<DeleteOutlined />}
                   loading={forgettingId === entry.memory_id}
-                  onClick={() => handleForget(entry.memory_id)}
+                  onClick={(e) => { e.stopPropagation(); handleForget(entry.memory_id); }}
                   style={{ padding: '0 4px' }}
                 />
               </Tooltip>
@@ -246,30 +263,57 @@ const AgentMemoryPanel: React.FC<Props> = ({ memory, nodeRunning, onForget, onCo
         );
       })}
 
-      <Modal
-        open={compactOpen}
-        title="Compact memory entries"
-        okText="Compact"
-        confirmLoading={compacting}
-        onOk={handleCompact}
-        onCancel={() => { setCompactOpen(false); setCompactSummary(''); }}
-        okButtonProps={{ disabled: !compactSummary.trim() || selected.size < 2 }}
-        destroyOnClose
-      >
-        <Space direction="vertical" style={{ width: '100%' }} size="small">
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            Compacting {selected.size} entries. Enter a summary that will replace them.
-            {nodeRunning && ' The agent will pause and restart with the new context.'}
-          </Text>
-          <TextArea
-            rows={4}
-            placeholder="Summary of the selected memory entries…"
-            value={compactSummary}
-            onChange={(e) => setCompactSummary(e.target.value)}
-            autoFocus
-          />
-        </Space>
-      </Modal>
+      {!readonly && (
+        <Modal
+          open={compactOpen}
+          title="Compact memory entries"
+          okText="Compact"
+          confirmLoading={compacting}
+          onOk={handleCompact}
+          onCancel={() => { setCompactOpen(false); setCompactSummary(''); }}
+          okButtonProps={{ disabled: !compactSummary.trim() || selected.size < 2 }}
+          destroyOnClose
+        >
+          <Space direction="vertical" style={{ width: '100%' }} size="small">
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Compacting {selected.size} entries. Enter a summary that will replace them.
+              {nodeRunning && ' The agent will pause and restart with the new context.'}
+            </Text>
+            <TextArea
+              rows={4}
+              placeholder="Summary of the selected memory entries…"
+              value={compactSummary}
+              onChange={(e) => setCompactSummary(e.target.value)}
+              autoFocus
+            />
+          </Space>
+        </Modal>
+      )}
+
+      {stepStates.length > 0 && (
+        <Collapse
+          size="small"
+          ghost
+          style={{ marginTop: 12 }}
+          items={[{
+            key: 'states',
+            label: (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <NodeIndexOutlined style={{ fontSize: 11, color: COLOR_STATUS_SUCCESS }} />
+                <Text strong style={{ fontSize: 12, color: COLOR_TEXT_SECONDARY }}>
+                  STATES ({stepStates.length})
+                </Text>
+              </div>
+            ),
+            children: (
+              <AgentStepStatePanel
+                iterations={stepStates}
+                onViewData={onViewData}
+              />
+            ),
+          }]}
+        />
+      )}
     </>
   );
 };

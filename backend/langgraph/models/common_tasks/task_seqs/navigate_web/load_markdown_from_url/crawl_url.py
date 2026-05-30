@@ -27,7 +27,10 @@ Public exports
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
@@ -35,6 +38,8 @@ from langgraph.func import task
 from pydantic import BaseModel, Field, field_validator
 
 from backend.celery_task.workers.task_delegation import delegate_completion
+from backend.db.postgres import raw_conn
+from backend.db.postgres.queries.fin_markets_news import NewsRawSQL
 from backend.httpx_client import RequestError, make_web_browser_async_client
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import (
@@ -49,6 +54,23 @@ logger = logging.getLogger(__name__)
 _TASK_NAME = "crawl_url"
 _FETCH_TIMEOUT_SECONDS = 30
 _MAX_LINKS_DEFAULT = 50
+_SOURCE = "web_crawl"
+_METHOD = "crawl_url"
+_NODE_NAME = "common_tasks/crawl_url"
+_CACHE_TTL_HOURS = 4
+
+
+def _make_cache_key(url: str) -> str:
+    """Compute a deterministic SHA-256 cache key for ``news_raw`` lookup.
+
+    Args:
+        url: The fully-qualified URL to crawl.
+
+    Returns:
+        Hex-encoded 64-character SHA-256 digest.
+    """
+    payload = json.dumps({"source": _SOURCE, "method": _METHOD, "url": url}, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +137,8 @@ class CrawlUrlInput(BaseModel):
         url:       HTTP/HTTPS URL to fetch.
         max_links: Maximum number of unique links to extract from the page.
                    Defaults to 50.
+        thread_id: LangGraph thread ID; forwarded to ``news_raw`` for provenance.
+        node_name: Calling node name; forwarded to ``news_raw`` for provenance.
     """
 
     url: str = Field(description="HTTP/HTTPS URL to crawl.")
@@ -124,6 +148,8 @@ class CrawlUrlInput(BaseModel):
         le=500,
         description="Maximum number of unique links to extract from the page.",
     )
+    thread_id: str | None = Field(default=None, description="Thread ID for news_raw provenance.")
+    node_name: str = Field(default=_NODE_NAME, description="Node name for news_raw provenance.")
 
     @field_validator("url")
     @classmethod
@@ -142,12 +168,13 @@ class CrawlUrlOutput(BaseModel):
     """Output from the crawl_url task.
 
     Attributes:
-        url:         Final URL after redirects.
-        status_code: HTTP response status code.
-        title:       Page title extracted from ``<title>`` tag, or empty string.
-        raw_html:    Full response body (HTML string).
-        links:       Unique absolute links extracted from the page (up to max_links).
+        url:          Final URL after redirects.
+        status_code:  HTTP response status code.
+        title:        Page title extracted from ``<title>`` tag, or empty string.
+        raw_html:     Full response body (HTML string).
+        links:        Unique absolute links extracted from the page (up to max_links).
         content_type: ``Content-Type`` header value from the response.
+        from_cache:   ``True`` when served from the ``news_raw`` cache.
     """
 
     url: str = Field(description="Final URL after any HTTP redirects.")
@@ -159,6 +186,7 @@ class CrawlUrlOutput(BaseModel):
         description="Unique absolute links extracted from the page.",
     )
     content_type: str = Field(default="", description="Content-Type header from the response.")
+    from_cache: bool = Field(default=False, description="True when served from news_raw cache.")
 
 
 # ---------------------------------------------------------------------------
@@ -202,14 +230,35 @@ async def _handler(payload: dict) -> dict:
     links = _extract_links(raw_html, base_url=final_url, max_links=inp.max_links)
     title = _extract_title(raw_html)
 
-    return CrawlUrlOutput(
+    output = CrawlUrlOutput(
         url=final_url,
         status_code=response.status_code,
         title=title,
         raw_html=raw_html,
         links=links,
         content_type=content_type,
-    ).model_dump()
+    )
+    cache_key = _make_cache_key(inp.url)
+    try:
+        async with raw_conn() as conn:
+            await conn.execute(
+                NewsRawSQL.INSERT,
+                (
+                    inp.thread_id,
+                    inp.node_name,
+                    _SOURCE,
+                    _METHOD,
+                    cache_key,
+                    json.dumps({"url": inp.url, "max_links": inp.max_links}),
+                    json.dumps(output.model_dump(mode="json")),
+                ),
+            )
+    except Exception as cache_exc:
+        logger.error(
+            "crawl_url: failed to insert news_raw cache for url=%r: %s",
+            inp.url, cache_exc,
+        )
+    return output.model_dump()
 
 
 def _extract_title(html: str) -> str:
@@ -250,6 +299,8 @@ async def _crawl_url_task(
     """
     ctx = task_input.ctx
     payload = task_input.content.model_dump(mode="json")
+    payload["thread_id"] = ctx.thread_id
+    payload["node_name"] = ctx.node_name
 
     await create_task(
         ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,
@@ -280,16 +331,43 @@ async def _crawl_url_task(
         raise
 
 
+async def _crawl_url_pg_cache(
+    inp: CrawlUrlInput, ctx: NodeContext
+) -> CrawlUrlOutput | None:
+    """Check ``news_raw`` for a recent crawl result for the same URL.
+
+    Queries ``NewsRawSQL.GET_CACHED`` with a 4-hour TTL.
+
+    Args:
+        inp: Typed task input.
+        ctx: Current node context (unused; present for signature compatibility).
+
+    Returns:
+        ``CrawlUrlOutput`` with ``from_cache=True`` on a hit, or ``None``.
+    """
+    cache_key = _make_cache_key(inp.url)
+    ttl_cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=_CACHE_TTL_HOURS)
+    async with raw_conn(readonly=True) as conn:
+        cur = await conn.execute(NewsRawSQL.GET_CACHED, (cache_key, ttl_cutoff))
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    cached: dict = row["output"]
+    return CrawlUrlOutput.model_validate({**cached, "from_cache": True})
+
+
 crawl_url: NodeTask[CrawlUrlInput, CrawlUrlOutput] = NodeTask(
     name=_TASK_NAME,
     description=(
         "Fetch a web page by URL (http/https), follow redirects, "
-        "extract hyperlinks from the HTML body, and return the raw HTML with metadata."
+        "extract hyperlinks from the HTML body, and return the raw HTML with metadata. "
+        "Caches raw output in fin_markets.news_raw with a 4-hour TTL."
     ),
     input_type=CrawlUrlInput,
     output_type=CrawlUrlOutput,
     task_fn=_crawl_url_task,
     handler=_handler,
+    pg_cache_fn=_crawl_url_pg_cache,
     is_required_llm_orchestration=True,
 )
 

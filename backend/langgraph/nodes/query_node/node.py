@@ -20,17 +20,17 @@ Flow
 3. ``get_and_calculate_stats`` fetches 2 years of daily OHLCV bars for the
    confirmed stock, caches the raw record in ``quant_raw``, computes technical
    indicators and upserts rows to ``quant_stats``, or bypasses recomputation
-   when the cache is fresh.  As a side-effect it also upserts
-   ``stock_index_memberships`` so downstream nodes can filter by shared index.
+   when the cache is fresh.
 
 Downstream
 ----------
 ``prepare_peers`` (Agent node) receives stock_name and uses the pre-populated
-``quant_stats`` rows and ``stock_index_memberships`` for peer validation.
+``quant_stats`` rows for peer validation.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, ClassVar
 
 from backend.db.postgres.types import NodeType
@@ -38,10 +38,6 @@ from langchain_core.runnables import Runnable, RunnableLambda
 from backend.langgraph.models.node import BaseNode
 from backend.langgraph.models.models import NodeContext, TaskOutput
 from backend.langgraph.models.task import NodeTask
-from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats import (
-    get_and_calculate_stats,
-    GetAndCalculateStatsInput,
-)
 from backend.langgraph.nodes.query_node.models import (
     QueryNodeInput, QueryNodeOutput, WebStockInput,
 )
@@ -52,8 +48,6 @@ from backend.langgraph.nodes.query_node.tasks.analyze_stock_from_web_if_not_seen
     AnalyzeWebStockInput,
 )
 from backend.langgraph.state import GraphState
-
-_STATS_PERIOD = "2y"
 
 
 class QueryNode(BaseNode[QueryNodeInput, QueryNodeOutput]):
@@ -75,7 +69,6 @@ class QueryNode(BaseNode[QueryNodeInput, QueryNodeOutput]):
         analyze_query,
         get_stock_from_web_if_not_seen,
         analyze_stock_from_web_if_not_seen,
-        *get_and_calculate_stats.tasks,
     ]
     _prev_node_names: ClassVar[list[str]] = []
 
@@ -88,23 +81,35 @@ class QueryNode(BaseNode[QueryNodeInput, QueryNodeOutput]):
         return QueryNodeInput(query=state.get("query", ""))
 
     def build_chain(self, ctx: NodeContext) -> Runnable[QueryNodeInput, dict[str, TaskOutput]]:
-        """Chain: analyze_query → (optional web tasks) → get_and_calculate_stats."""
+        """Chain: analyze_query → (optional web tasks)."""
         async def _orchestrate(node_input: QueryNodeInput) -> dict[str, TaskOutput]:
+            query_stripped = node_input.query.strip()
+
+            # Fast-path: single-token input is a direct symbol — bypass LLM entirely.
+            if len(query_stripped.split()) == 1:
+                stock_name = query_stripped.upper()
+                results: dict[str, Any] = {
+                    analyze_query.name: SimpleNamespace(
+                        content=SimpleNamespace(stock_name=stock_name)
+                    )
+                }
+                return results  # type: ignore[return-value]
+
             # Step 1: extract stock name from query.
-            analyze_result = await self.run_task(analyze_query, ctx, AnalyzeQueryInput(query=node_input.query))
-            results: dict[str, TaskOutput] = {analyze_query.name: analyze_result}
+            analyze_result = await self.run_task(analyze_query, ctx, AnalyzeQueryInput(query=query_stripped))
+            results = {analyze_query.name: analyze_result}
 
             stock_name = analyze_result.content.stock_name
 
-            # Step 2: web resolution when LLM did not recognise the stock
+            # Step 2: web resolution when LLM did not recognise the stock.
             if analyze_result.content.not_seen:
-                web_input = WebStockInput(stock_name=stock_name, query=node_input.query)
+                web_input = WebStockInput(stock_name=stock_name, query=query_stripped)
                 web_result = await self.run_task(get_stock_from_web_if_not_seen, ctx, web_input)
                 results[get_stock_from_web_if_not_seen.name] = web_result
 
                 analyze_web_input = AnalyzeWebStockInput(
                     stock_name=stock_name,
-                    query=node_input.query,
+                    query=query_stripped,
                     web_title=web_result.content.title,
                     web_url=web_result.content.url,
                     web_content=web_result.content.content,
@@ -115,12 +120,6 @@ class QueryNode(BaseNode[QueryNodeInput, QueryNodeOutput]):
                 )
                 results[analyze_stock_from_web_if_not_seen.name] = analyze_web_result
                 stock_name = analyze_web_result.content.stock_name
-
-            # Step 3: fetch 2y daily OHLCV + compute technical indicators.
-            # Side-effect: upserts stock_index_memberships for the confirmed ticker.
-            await get_and_calculate_stats.run(
-                self.run_task, ctx, GetAndCalculateStatsInput(symbol=stock_name, period=_STATS_PERIOD)
-            )
 
             return results
 

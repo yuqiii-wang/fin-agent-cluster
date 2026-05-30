@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 
-from backend.langgraph.models.common_tasks.propose_web_knowledge_urls import (
+from backend.langgraph.models.common_tasks.task_seqs.navigate_web.propose_web_knowledge_urls import (
     ProposeWebKnowledgeUrlsInput,
     propose_web_knowledge_urls,
 )
 from backend.langgraph.nodes.prepare_derivatives.agent_steps.constants import STEP_PROPOSE_URL
-from backend.langgraph.nodes.prepare_derivatives.agent_steps.state import DerivativesStepContext
+from backend.langgraph.nodes.prepare_derivatives.models.state import DerivativesStepContext
 
 logger = logging.getLogger(__name__)
 

@@ -21,7 +21,7 @@ DROP TYPE IF EXISTS fin_agents.node_view_types CASCADE;
 CREATE TYPE fin_agents.node_view_types AS ENUM ( 'Stats', 'Markdown', 'Json', 'Mirror', 'Hybrid');
 
 DROP TYPE IF EXISTS fin_agents.stats_view_types CASCADE;
-CREATE TYPE fin_agents.stats_view_types AS ENUM ( 'DataFrame', 'CandleStick', 'StackCandleStick', 'LineChart', 'BarChart', 'PieChart');
+CREATE TYPE fin_agents.stats_view_types AS ENUM ( 'DataFrame', 'CandleStick', 'StackCandleStick', 'LineChart', 'BarChart', 'PieChart', 'OptionsVolatilitySmile');
 
 
 CREATE TABLE IF NOT EXISTS fin_agents.user_queries (
@@ -229,6 +229,7 @@ CREATE TABLE IF NOT EXISTS fin_agents.llm_responses (
     node_name         TEXT,
     input_tokens     INT NOT NULL DEFAULT 0,
     prompts           TEXT,
+    prompt_hash        TEXT,
     thinking          TEXT,
     answer            TEXT,
     output_tokens    INT NOT NULL DEFAULT 0,

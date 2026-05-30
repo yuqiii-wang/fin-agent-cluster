@@ -93,12 +93,34 @@ class ChildRunnerMixin:
             if self.view_type == "Mirror" and ctx.task_ids  # type: ignore[attr-defined]
             else node_output.model_dump()
         )
+
+        # Derive node terminal status from the last finished task so that a
+        # task failure absorbed inside an agent step loop is reflected in the
+        # child node's status.
+        _node_failed = False
+        _node_error: str | None = None
+        if ctx.task_ids:
+            from backend.db.postgres import raw_conn as _raw_conn  # noqa: PLC0415
+            async with _raw_conn(readonly=True) as _conn:
+                _cur = await _conn.execute(
+                    "SELECT status FROM fin_agents.tasks WHERE task_id = %s",
+                    (ctx.task_ids[-1],),
+                )
+                _row = await _cur.fetchone()
+            if _row and _row["status"] == "failed":
+                _node_failed = True
+                _node_error = f"last task {ctx.task_ids[-1]} failed"
+
         await complete_node(
             thread_id=thread_id,
             node_id=node_id,
             node_name=self.node_name,  # type: ignore[attr-defined]
             output_data=stored_output,
+            failed=_node_failed,
+            error=_node_error,
         )
+        if _node_failed:
+            raise RuntimeError(_node_error)
         return node_output
 
 

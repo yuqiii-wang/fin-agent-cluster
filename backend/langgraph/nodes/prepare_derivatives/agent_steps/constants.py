@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-STEP_PROPOSE_URL: str = "propose_url"
 STEP_NAVIGATE_WEB: str = "navigate_web"
 STEP_GET_STATS: str = "get_stats"
+STEP_CALCULATE_OPTIONS: str = "calculate_options"
 
 # Canonical execution order.
-STEP_ORDER: list[str] = [STEP_PROPOSE_URL, STEP_NAVIGATE_WEB, STEP_GET_STATS]
+STEP_ORDER: list[str] = [
+    STEP_NAVIGATE_WEB,
+    STEP_GET_STATS,
+    STEP_CALCULATE_OPTIONS,
+]
 
 __all__ = [
-    "STEP_PROPOSE_URL",
     "STEP_NAVIGATE_WEB",
     "STEP_GET_STATS",
+    "STEP_CALCULATE_OPTIONS",
     "STEP_ORDER",
 ]
+

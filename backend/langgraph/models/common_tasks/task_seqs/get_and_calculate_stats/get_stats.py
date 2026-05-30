@@ -3,8 +3,16 @@
 Fetches OHLCV market data via :class:`~backend.resources.stats.client.StatsClient`
 and recent news via :class:`~backend.resources.news.client.NewsClient` for a given
 symbol and period.  The raw API response is cached in ``fin_markets.quant_raw`` with
-a same-day TTL (midnight UTC); subsequent calls on the same calendar day are served
-from the DB cache rather than making a new external request.
+a 4-hour TTL; subsequent calls within the TTL window are served from the DB cache
+rather than making a new external request.
+
+Direct injection paths
+----------------------
+When ``text_content`` or ``json_input`` is provided, the external API is bypassed.
+Both paths store the caller-supplied data in ``quant_raw`` under a deterministic
+cache key.  An optional ``src_task_id`` can be supplied to record which upstream
+task produced the data; :func:`validate_src_reference` will then cross-check that
+the injected payload traces back to that task's ``task_executions`` output.
 
 Execution layers
 ----------------
@@ -14,93 +22,44 @@ LangGraph layer (``_get_stats_task`` decorated with ``@task``):
     On exception, calls ``complete_task(failed=True)`` to emit the failure SSE.
 
 Celery layer (``_handler``):
-    1. Computes a deterministic SHA-256 cache_key.
-    2. Checks ``fin_markets.quant_raw`` for a fresh entry created on the same calendar day (UTC).
-    3. On cache miss: calls StatsClient + NewsClient, inserts into ``quant_raw``.
-    4. Returns serialised ``GetStatsOutput``.
+    Dispatches to one of three sub-handlers from ``get_stats_utils``:
+    1. ``handle_json_input``     — when ``json_input`` is provided.
+    2. ``handle_text_input``     — when ``text_content`` is provided.
+    3. ``handle_external_fetch`` — external API call with provider/period fallback.
+    After dispatch, if ``src_task_id`` is set, calls ``validate_src_reference`` to
+    confirm data provenance.
 
 Public exports
 --------------
-``get_stats``  — ``NodeTask`` instance used by node task runners.
-``HANDLERS``   — dict slice for registration in ``backend.langgraph.nodes.HANDLERS``.
+``get_stats``     — ``NodeTask`` instance used by node task runners.
+``HANDLERS``      — dict slice for registration in ``backend.langgraph.nodes.HANDLERS``.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
-from datetime import datetime, timedelta, timezone
 
 from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
-from backend.config import get_settings
-from backend.db.postgres import raw_conn
-from backend.db.postgres.queries.fin_markets_indexes import derive_yf_exchange_from_ticker, upsert_stock_index_memberships
-from backend.db.postgres.queries.fin_markets_quant import OhlcvStatsSQL, QuantRawSQL
 from backend.langgraph.lifecycle import complete_task, create_task
-from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculate_stats import PERIOD_TO_GRANULARITY
-from backend.langgraph.models.common_tasks.errors.codes import (
-    STATS_TASK_NO_DATA,
-    STATS_TASK_PERIOD_FALLBACK,
-    STATS_TASK_PROVIDER_FALLBACK,
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.get_stats_utils import (
+    get_stats_pg_cache,
+    handle_external_fetch,
+    handle_json_input,
+    handle_text_input,
+    validate_src_reference,
 )
 from backend.langgraph.models.models import NodeContext, TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
-from backend.resources.news.client import NewsClient
 from backend.resources.news.models import NewsArticle
-from backend.resources.stats.client import StatsClient
-from backend.resources.stats.models import StatsMatrix, StatsRecord
-from backend.resources.stats.routing import provider_for_symbol
+from backend.resources.stats.models import StatsRecord
 
 logger = logging.getLogger(__name__)
 
 _TASK_NAME = "get_stats"
-_CACHE_TTL_HOURS = 4
 
-# Ordered fallback chain: if the requested period returns no data, try the next shorter period.
-_PERIOD_FALLBACKS: dict[str, list[str]] = {
-    "2y": ["1y"],
-    "1y": ["3mo"],
-    "3mo": ["1mo"],
-    "1mo": ["1w"],
-    "1w": ["1d"],
-}
-
-
-_MIN_BARS_FOR_CORR = 2  # noqa: F401 (kept for calculate_corr parity)
-
-# Ordered provider fallback chains: when the primary provider returns no data,
-# the next provider in the list is tried before giving up.
-_PROVIDER_FALLBACK_CHAINS: dict[str, list[str]] = {
-    "fmp": ["fmp", "yfinance"],
-    "yfinance": ["yfinance", "fmp"],
-    "mock": ["mock"],
-}
-
-
-def _build_provider_chain(symbol: str) -> list[str]:
-    """Return the ordered list of stats providers to try for *symbol*.
-
-    The primary provider is resolved from ticker-suffix routing, then the
-    remaining chain entries from :data:`_PROVIDER_FALLBACK_CHAINS` are
-    appended.  ``fmp`` is excluded from the chain when ``FMP_API_KEY`` is
-    not configured.
-
-    Args:
-        symbol: Normalised (uppercase) ticker symbol.
-
-    Returns:
-        Non-empty list of provider labels in priority order.
-    """
-    settings = get_settings()
-    primary = provider_for_symbol(symbol) or (settings.STATS_PROVIDER or "mock").strip().lower()
-    chain = _PROVIDER_FALLBACK_CHAINS.get(primary, [primary])
-    if not settings.FMP_API_KEY:
-        chain = [p for p in chain if p != "fmp"]
-    return chain or ["mock"]
 
 
 # ---------------------------------------------------------------------------
@@ -113,11 +72,21 @@ class GetStatsInput(BaseModel):
 
     Attributes:
         symbol:                   Equity ticker symbol, e.g. ``'AAPL'``.
-        period:                   Aggregation period: ``'1d'``, ``'1w'``, ``'1mo'``, ``'3mo'``, ``'1y'``.
+        period:                   Aggregation period: ``'1d'``, ``'1w'``, ``'1mo'``, ``'3mo'``, ``'1y'``, ``'2y'``.
         news_limit:               Maximum number of news articles to fetch.
         bypass_threshold_minutes: If the last raw-data fetch was within this many minutes,
                                   signal downstream tasks to bypass recomputation and read
                                   directly from the DB.  Defaults to 60 minutes.
+        text_content:             Optional pre-fetched text content (e.g. Markdown from
+                                  ``html_to_markdown``).  When provided, bypasses the
+                                  external API call.
+        json_input:               Optional structured JSON data (e.g. from ``run_sandbox``
+                                  stdout).  When provided, bypasses the external API call.
+        src_task_id:              Optional ``task_id`` of the upstream task that produced
+                                  the injected data (``text_content`` or ``json_input``).
+                                  When set, :func:`validate_src_reference` loads that
+                                  task's ``task_executions`` output and cross-checks that
+                                  the injected payload values can be traced back to it.
     """
 
     symbol: str = Field(description="Equity ticker symbol, e.g. 'AAPL'.")
@@ -129,7 +98,7 @@ class GetStatsInput(BaseModel):
     text_content: str | None = Field(
         default=None,
         description=(
-            "Optional pre-fetched text content (e.g. from navigate_web). "
+            "Optional pre-fetched text content (e.g. Markdown from html_to_markdown). "
             "When provided, bypasses the external API call and stores the text "
             "directly in quant_raw with source='web_content', method='text_input'."
         ),
@@ -140,6 +109,15 @@ class GetStatsInput(BaseModel):
             "Optional structured JSON data (e.g. from run_sandbox stdout). "
             "When provided, bypasses the external API call and stores the dict "
             "directly in quant_raw with source='sandbox', method='json_input'."
+        ),
+    )
+    src_task_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional task_id of the upstream task that produced the injected data "
+            "(text_content or json_input). When set, validate_src_reference loads that "
+            "task's output from fin_agents.task_executions and cross-checks that the "
+            "injected payload values can be traced back to it."
         ),
     )
 
@@ -163,268 +141,42 @@ class GetStatsOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_cache_key(source: str, method: str, symbol: str, period: str) -> str:
-    """Compute a deterministic SHA-256 cache key for ``quant_raw`` lookup.
-
-    Args:
-        source: Provider name, e.g. ``'yfinance'``.
-        method: API method name, e.g. ``'list_stats'``.
-        symbol: Normalised (uppercase) ticker.
-        period: Aggregation period string.
-
-    Returns:
-        Hex-encoded 64-character SHA-256 digest.
-    """
-    payload = json.dumps(
-        {"source": source, "method": method, "symbol": symbol, "period": period},
-        sort_keys=True,
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()
-
-
-# ---------------------------------------------------------------------------
-# Celery layer — business logic
+# Celery layer — dispatcher
 # ---------------------------------------------------------------------------
 
 
 async def _handler(payload: dict) -> dict:
-    """Fetch OHLCV stats and news, writing the raw response to ``quant_raw``.
+    """Dispatch get_stats to the appropriate sub-handler.
 
-    Tries each provider in the fallback chain for the symbol.  For each
-    provider, period fallbacks are attempted before moving to the next
-    provider.  The first successful result is cached and returned.
-
-    The pg cache check is handled upstream by ``run_task`` via ``pg_cache_fn``.
-    This function is only reached on a cache miss.
+    Delegates to one of three sub-handlers from ``get_stats_utils`` based on
+    whether the input carries injected data or requires an external fetch.
+    When ``src_task_id`` is set, validates data provenance after dispatch.
 
     Args:
         payload: Serialised :class:`GetStatsInput` dict.
 
     Returns:
         Serialised :class:`GetStatsOutput` dict.
-
-    Raises:
-        ValueError: When all providers return no data for the symbol/period.
     """
     inp = GetStatsInput.model_validate(payload)
-    symbol = inp.symbol.upper()
-    method = "list_stats"
-    bypass_cutoff = datetime.now(timezone.utc) - timedelta(minutes=inp.bypass_threshold_minutes)
 
-    # --- json input path: store structured JSON in quant_raw, bypass API ---
     if inp.json_input is not None:
-        cache_key = _make_cache_key("sandbox", "json_input", symbol, inp.period)
-        async with raw_conn() as conn:
-            await conn.execute(
-                QuantRawSQL.INSERT,
-                (
-                    None,
-                    "common_tasks/get_stats",
-                    "sandbox",
-                    "json_input",
-                    symbol,
-                    cache_key,
-                    json.dumps({"symbol": symbol, "period": inp.period}),
-                    json.dumps(inp.json_input),
-                ),
+        result = await handle_json_input(inp)
+        if inp.src_task_id:
+            await validate_src_reference(
+                inp.src_task_id, injected_json=inp.json_input
             )
-        stub_record = StatsRecord(
-            id=f"json-{symbol}-{inp.period}",
-            symbol=symbol,
-            period=inp.period,
-            content=StatsMatrix(timestamps=[], series={}),
-        )
-        return GetStatsOutput(
-            stats_record=stub_record,
-            news_articles=[],
-            from_cache=False,
-            bypass_calculate=True,
-        ).model_dump(mode="json")
+        return result
 
-    # --- text input path: store pre-fetched content in quant_raw, bypass API ---
     if inp.text_content:
-        cache_key = _make_cache_key("web_content", "text_input", symbol, inp.period)
-        async with raw_conn() as conn:
-            await conn.execute(
-                QuantRawSQL.INSERT,
-                (
-                    None,
-                    "common_tasks/get_stats",
-                    "web_content",
-                    "text_input",
-                    symbol,
-                    cache_key,
-                    json.dumps({"symbol": symbol, "period": inp.period}),
-                    json.dumps({"text_content": inp.text_content}),
-                ),
+        result = await handle_text_input(inp)
+        if inp.src_task_id:
+            await validate_src_reference(
+                inp.src_task_id, injected_text=inp.text_content
             )
-        stub_record = StatsRecord(
-            id=f"text-{symbol}-{inp.period}",
-            symbol=symbol,
-            period=inp.period,
-            content=StatsMatrix(timestamps=[], series={}),
-        )
-        return GetStatsOutput(
-            stats_record=stub_record,
-            news_articles=[],
-            from_cache=False,
-            bypass_calculate=True,
-        ).model_dump(mode="json")
+        return result
 
-    providers = _build_provider_chain(symbol)
-    news_client = NewsClient()
-    last_error: str | None = None
-
-    for provider in providers:
-        stats_client = StatsClient(symbol=symbol, force_provider=provider)
-        try:
-            source = stats_client.provider
-            cache_key = _make_cache_key(source, method, symbol, inp.period)
-            periods_to_try = [inp.period] + _PERIOD_FALLBACKS.get(inp.period, [])
-            stats_record: StatsRecord | None = None
-            actual_period = inp.period
-            provider_fetch_failed = False
-            for period_attempt in periods_to_try:
-                try:
-                    stats_resp = await stats_client.list_stats(symbol, period_attempt, limit=1)
-                except Exception as exc:
-                    last_error = f"provider={provider} period={period_attempt}: {exc}"
-                    logger.error(
-                        "[%s] symbol=%s provider=%s period=%s error=%s, trying next provider",
-                        STATS_TASK_PROVIDER_FALLBACK, symbol, provider, period_attempt, exc,
-                    )
-                    provider_fetch_failed = True
-                    break
-                if stats_resp.items:
-                    stats_record = stats_resp.items[0]
-                    actual_period = period_attempt
-                    break
-
-            if provider_fetch_failed or stats_record is None:
-                if not provider_fetch_failed:
-                    last_error = f"provider={provider} returned no data for symbol={symbol} period={inp.period}"
-                    logger.error(
-                        "[%s] symbol=%s provider=%s returned no data, trying next provider",
-                        STATS_TASK_PROVIDER_FALLBACK, symbol, provider,
-                    )
-                continue
-
-            if actual_period != inp.period:
-                logger.error(
-                    "[%s] symbol=%s period=%s unavailable, fell back to period=%s",
-                    STATS_TASK_PERIOD_FALLBACK, symbol, inp.period, actual_period,
-                )
-
-            news_resp = await news_client.list_news(symbol, limit=inp.news_limit)
-            news_articles = news_resp.items
-
-            # --- persist in quant_raw (thread_id=None → cache is thread-agnostic) ---
-            output_payload: dict = {
-                "stats_record": stats_record.model_dump(mode="json"),
-                "news_articles": [a.model_dump(mode="json") for a in news_articles],
-            }
-            async with raw_conn() as conn:
-                await conn.execute(
-                    QuantRawSQL.INSERT,
-                    (
-                        None,
-                        "common_tasks/get_stats",
-                        source,
-                        method,
-                        symbol,
-                        cache_key,
-                        json.dumps({"symbol": symbol, "period": inp.period}),
-                        json.dumps(output_payload),
-                    ),
-                )
-
-            yf_exchange = stats_record.yf_exchange or derive_yf_exchange_from_ticker(symbol)
-            await upsert_stock_index_memberships(symbol, yf_exchange)
-
-            return GetStatsOutput(
-                stats_record=stats_record,
-                news_articles=news_articles,
-                from_cache=False,
-            ).model_dump(mode="json")
-
-        finally:
-            await stats_client.aclose()
-
-    raise ValueError(
-        f"[{STATS_TASK_NO_DATA}] No stats data for symbol={symbol} period={inp.period} "
-        f"from any provider. Last error: {last_error}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# PG cache function
-# ---------------------------------------------------------------------------
-
-
-async def _get_stats_pg_cache(
-    inp: GetStatsInput, ctx: NodeContext
-) -> GetStatsOutput | None:
-    """Check pg for a recent ``quant_raw`` record matching the same input parameters.
-
-    Queries each provider's cache key in fallback order using a 4-hour TTL.
-    On a hit, checks whether the cached entry is fresh enough to bypass
-    downstream stats recomputation.
-
-    Args:
-        inp: Typed task input.
-        ctx: Current node context (unused; present for signature compatibility).
-
-    Returns:
-        ``GetStatsOutput`` with ``from_cache=True`` on a cache hit, or ``None``.
-    """
-    # Text input is always fresh — skip cache lookup.
-    if inp.text_content:
-        return None
-
-    # JSON input is always fresh — skip cache lookup.
-    if inp.json_input is not None:
-        return None
-
-    symbol = inp.symbol.upper()
-    method = "list_stats"
-    ttl_cutoff = datetime.now(timezone.utc) - timedelta(hours=_CACHE_TTL_HOURS)
-    bypass_cutoff = datetime.now(timezone.utc) - timedelta(minutes=inp.bypass_threshold_minutes)
-    providers = _build_provider_chain(symbol)
-
-    for provider in providers:
-        cache_key = _make_cache_key(provider, method, symbol, inp.period)
-        async with raw_conn(readonly=True) as conn:
-            cur = await conn.execute(QuantRawSQL.GET_CACHED, (cache_key, ttl_cutoff))
-            row = await cur.fetchone()
-        if row is None:
-            continue
-        cached: dict = row["output"]
-        stats_record = StatsRecord.model_validate(cached["stats_record"])
-        news_articles = [NewsArticle.model_validate(a) for a in cached.get("news_articles", [])]
-        created_at: datetime = row["created_at"]
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        bypass_calculate = False
-        if created_at >= bypass_cutoff:
-            granularity = PERIOD_TO_GRANULARITY.get(inp.period)
-            if granularity:
-                async with raw_conn(readonly=True) as conn:
-                    cur = await conn.execute(
-                        OhlcvStatsSQL.COUNT_BY_SYMBOL_GRANULARITY, (symbol, granularity)
-                    )
-                    count_row = await cur.fetchone()
-                bypass_calculate = count_row is not None and count_row["row_count"] > 0
-        return GetStatsOutput(
-            stats_record=stats_record,
-            news_articles=news_articles,
-            from_cache=True,
-            bypass_calculate=bypass_calculate,
-        )
-    return None
+    return await handle_external_fetch(inp)
 
 
 # ---------------------------------------------------------------------------
@@ -477,13 +229,19 @@ get_stats = NodeTask(
     description=(
         "Fetch OHLCV market statistics and recent news for an equity symbol from the "
         "configured stats provider (mock / yfinance / fmp).  Raw API responses are cached "
-        "in fin_markets.quant_raw for the remainder of the same calendar day (UTC)."
+        "in fin_markets.quant_raw for 4 hours.  "
+        "When json_input is provided it must include 'data_type' ('ohlcv', 'options', or "
+        "'fundamentals') with the required fields for that type; invalid payloads raise "
+        "immediately so llm_orchestration can supply a corrected json_input.  "
+        "When src_task_id is also provided, validate_src_reference cross-checks the "
+        "injected payload against the named task's output in fin_agents.task_executions."
     ),
     input_type=GetStatsInput,
     output_type=GetStatsOutput,
     task_fn=_get_stats_task,
     handler=_handler,
-    pg_cache_fn=_get_stats_pg_cache,
+    pg_cache_fn=get_stats_pg_cache,
+    is_required_llm_orchestration=True,
 )
 
 HANDLERS: dict = {_TASK_NAME: _handler}

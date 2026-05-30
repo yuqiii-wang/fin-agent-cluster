@@ -157,8 +157,54 @@ def search_skill_candidates(
     return (matched if matched else skills)[:max_results]
 
 
+async def copy_skills_from_node(src_node_id: str, dst_node_id: str, thread_id: str) -> int:
+    """Copy active skills from *src_node_id* into *dst_node_id*.
+
+    Used when a re-explore fork creates a new node_id for the same logical
+    agent node.  Active skills from the previous run are preserved so the
+    user does not have to re-enter them.  Memory is intentionally NOT copied
+    (the new branch starts with fresh memory).
+
+    Args:
+        src_node_id: Source node UUID to copy skills from.
+        dst_node_id: Destination node UUID (the newly forked node).
+        thread_id:   LangGraph thread UUID (stored on the new rows).
+
+    Returns:
+        Number of skills copied.
+    """
+    async with raw_conn(readonly=True) as conn:
+        cur = await conn.execute(
+            """
+            SELECT summary, instructions
+            FROM fin_agents.agent_skills
+            WHERE node_id = %s AND status = 'active'
+            ORDER BY created_at
+            """,
+            (src_node_id,),
+        )
+        rows = await cur.fetchall()
+
+    if not rows:
+        return 0
+
+    async with raw_conn() as conn:
+        for row in rows:
+            await conn.execute(
+                """
+                INSERT INTO fin_agents.agent_skills
+                    (thread_id, node_id, summary, instructions)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (thread_id, dst_node_id, row["summary"], row["instructions"]),
+            )
+    return len(rows)
+
+
 __all__ = [
     "add_skill",
+    "copy_skills_from_node",
     "forget_skill",
     "get_skills",
     "search_skill_candidates",

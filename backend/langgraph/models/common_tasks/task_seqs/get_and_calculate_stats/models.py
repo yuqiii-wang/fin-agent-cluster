@@ -16,6 +16,9 @@ class GetAndCalculateStatsInput(BaseModel):
         period:                   Aggregation period: ``'1d'``, ``'1w'``, ``'1mo'``, ``'3mo'``, ``'1y'``, ``'2y'``.
         news_limit:               Max news articles passed to ``get_stats``.
         bypass_threshold_minutes: Cache bypass threshold passed to ``get_stats``.
+        src_task_id:              Optional ``task_id`` of the upstream task that produced
+                                  the injected data (``text_content`` or ``json_input``).
+                                  Forwarded to ``get_stats`` for source reference validation.
     """
 
     symbol: str = Field(description="Equity ticker symbol, e.g. 'AAPL'.")
@@ -36,6 +39,13 @@ class GetAndCalculateStatsInput(BaseModel):
         description=(
             "Optional structured JSON data forwarded to get_stats (e.g. from run_sandbox). "
             "When provided, bypasses the external stats API and stores the dict in quant_raw."
+        ),
+    )
+    src_task_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional task_id of the upstream task that produced the injected data. "
+            "Forwarded to get_stats for validate_src_reference cross-check."
         ),
     )
 

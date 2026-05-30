@@ -6,7 +6,7 @@ Tasks
 ``calculate_stats``             — compute technical indicators from a StatsRecord, upsert to quant_stats.
 ``calculate_corr``              — compute pairwise Pearson correlation of close prices from quant_stats.
 ``propose_web_knowledge_urls``  — map a symbol to its Yahoo Finance options URL for downstream navigate_web.
-``llm_orchestration``           — streaming LLM recovery decision for tasks with is_required_llm_orchestration=True.
+``llm_orchestration_on_failure``           — streaming LLM recovery decision for tasks with is_required_llm_orchestration=True.
 
 HANDLERS registry
 -----------------
@@ -28,6 +28,13 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.cal
     CalculateStatsInput,
     CalculateStatsOutput,
     HANDLERS as _CS_HANDLERS,
+)
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_option_stats import (
+    calculate_option_stats,
+    CalculateOptionStatsInput,
+    CalculateOptionStatsOutput,
+    parse_contract_name,
+    HANDLERS as _COS_HANDLERS,
 )
 from backend.langgraph.models.common_tasks.calculate_corr import (
     calculate_corr,
@@ -64,16 +71,18 @@ from backend.langgraph.models.common_tasks.task_seqs.navigate_web import (
     study_web_content,
     StudyWebContentInput,
     StudyWebContentOutput,
-    llm_orchestration,
+    llm_orchestration_on_failure,
     LlmOrchestrationInput,
     LlmOrchestrationOutput,
+    StepResult,
+    StepInfo,
     navigate_web,
     NavigateWebInput,
     NavigateWebOutput,
     HANDLERS as _NW_HANDLERS,
     STREAM_PROMPT_BUILDERS as _NW_SPB,
 )
-from backend.langgraph.models.common_tasks.propose_web_knowledge_urls import (
+from backend.langgraph.models.common_tasks.task_seqs.navigate_web.propose_web_knowledge_urls import (
     propose_web_knowledge_urls,
     ProposeWebKnowledgeUrlsInput,
     ProposeWebKnowledgeUrlsOutput,
@@ -85,16 +94,27 @@ from backend.langgraph.models.common_tasks.run_sandbox import (
     RunSandboxOutput,
     HANDLERS as _SB_HANDLERS,
 )
+from backend.langgraph.models.common_tasks.task_seqs.prepare_fundamentals import (
+    get_fundamentals,
+    GetFundamentalsInput,
+    GetFundamentalsOutput,
+    calculate_fundamental_stats,
+    CalculateFundamentalStatsInput,
+    CalculateFundamentalStatsOutput,
+    HANDLERS as _PF_HANDLERS,
+)
 
 HANDLERS: dict = {
     **_GS_HANDLERS,
     **_CS_HANDLERS,
+    **_COS_HANDLERS,
     **_CC_HANDLERS,
     **_GDN_HANDLERS,
     **_PTM_HANDLERS,
     **_NW_HANDLERS,
     **_PWKU_HANDLERS,
     **_SB_HANDLERS,
+    **_PF_HANDLERS,
 }
 STREAM_PROMPT_BUILDERS: dict = {**_GDN_SPB, **_NW_SPB}
 
@@ -105,6 +125,10 @@ __all__ = [
     "calculate_stats",
     "CalculateStatsInput",
     "CalculateStatsOutput",
+    "calculate_option_stats",
+    "CalculateOptionStatsInput",
+    "CalculateOptionStatsOutput",
+    "parse_contract_name",
     "calculate_corr",
     "CalculateCorrInput",
     "CalculateCorrOutput",
@@ -135,12 +159,20 @@ __all__ = [
     "study_web_content",
     "StudyWebContentInput",
     "StudyWebContentOutput",
-    "llm_orchestration",
+    "llm_orchestration_on_failure",
     "LlmOrchestrationInput",
     "LlmOrchestrationOutput",
+    "StepResult",
+    "StepInfo",
     "navigate_web",
     "NavigateWebInput",
     "NavigateWebOutput",
+    "get_fundamentals",
+    "GetFundamentalsInput",
+    "GetFundamentalsOutput",
+    "calculate_fundamental_stats",
+    "CalculateFundamentalStatsInput",
+    "CalculateFundamentalStatsOutput",
     "HANDLERS",
     "STREAM_PROMPT_BUILDERS",
 ]

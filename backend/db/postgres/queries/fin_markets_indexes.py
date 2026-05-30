@@ -1,4 +1,4 @@
-"""SQL queries for ``fin_markets.market_indexes`` and ``fin_markets.stock_index_memberships``.
+"""SQL queries for ``fin_markets.market_indexes``.
 
 Provides in-process caches for market index metadata and helpers to
 detect which indexes a stock belongs to from its yfinance exchange code.
@@ -23,7 +23,6 @@ __all__ = [
     "get_primary_index_for_exchange",
     "derive_yf_exchange_from_ticker",
     "is_index_ticker",
-    "upsert_stock_index_memberships",
     "get_symbol_index_codes",
 ]
 
@@ -259,74 +258,47 @@ def derive_yf_exchange_from_ticker(symbol: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# DB write helpers
+# DB read helpers
 # ---------------------------------------------------------------------------
 
-_UPSERT_MEMBERSHIP_SQL = """
-    INSERT INTO fin_markets.stock_index_memberships (symbol, index_code, is_primary, upserted_at)
-    VALUES (%s, %s, %s, NOW())
-    ON CONFLICT (symbol, index_code) DO UPDATE SET
-        is_primary  = EXCLUDED.is_primary,
-        upserted_at = NOW()
-"""
-
-_GET_SYMBOL_MEMBERSHIPS_SQL = """
-    SELECT index_code FROM fin_markets.stock_index_memberships
+_GET_SYMBOL_INDEX_CODES_SQL = """
+    SELECT
+        primary_index_name,
+        other_opt1_index_name,
+        other_opt2_index_name,
+        other_opt3_index_name
+    FROM fin_markets.quant_static_stats
     WHERE symbol = %s
+    ORDER BY created_at DESC
+    LIMIT 1
 """
-
-
-async def upsert_stock_index_memberships(
-    symbol: str, yf_exchange: str
-) -> MarketIndex | None:
-    """Upsert all index memberships for *symbol* based on *yf_exchange*.
-
-    Looks up all market indexes that cover *yf_exchange*, then writes a row for
-    each to ``stock_index_memberships``.  The index with the lowest ``sort_order``
-    is flagged ``is_primary = TRUE``.
-
-    Args:
-        symbol:      Stock ticker, e.g. ``'AAPL'``, ``'0700.HK'``.
-        yf_exchange: Exchange code from yfinance, e.g. ``'NMS'``, ``'HKG'``.
-
-    Returns:
-        The primary :class:`MarketIndex` if any memberships were written, else ``None``.
-    """
-    indexes = get_indexes_for_exchange(yf_exchange)
-    if not indexes:
-        return None
-
-    primary = indexes[0]
-    try:
-        async with raw_conn() as conn:
-            for idx in indexes:
-                await conn.execute(
-                    _UPSERT_MEMBERSHIP_SQL,
-                    (symbol, idx.code, idx.code == primary.code),
-                )
-        return primary
-    except Exception as exc:
-        logger.error(
-            "[%s] upsert_stock_index_memberships failed symbol=%r exchange=%r: %s",
-            PG_QUERY_FAILED, symbol, yf_exchange, exc,
-        )
-        return None
 
 
 async def get_symbol_index_codes(symbol: str) -> frozenset[str]:
-    """Return all index codes that *symbol* is a member of.
+    """Return all index codes that *symbol* belongs to.
+
+    Reads from the most recent ``quant_static_stats`` row for the symbol and
+    collects all non-NULL index name columns.
 
     Args:
         symbol: Stock ticker, e.g. ``'AAPL'``.
 
     Returns:
-        Frozen set of index code strings (empty if no memberships found or on error).
+        Frozen set of index code strings (empty if no data found or on error).
     """
     try:
         async with raw_conn(readonly=True) as conn:
-            cur = await conn.execute(_GET_SYMBOL_MEMBERSHIPS_SQL, (symbol,))
-            rows = await cur.fetchall()
-        return frozenset(row["index_code"] for row in rows)
+            cur = await conn.execute(_GET_SYMBOL_INDEX_CODES_SQL, (symbol,))
+            row = await cur.fetchone()
+        if not row:
+            return frozenset()
+        codes = {
+            row["primary_index_name"],
+            row["other_opt1_index_name"],
+            row["other_opt2_index_name"],
+            row["other_opt3_index_name"],
+        }
+        return frozenset(c for c in codes if c)
     except Exception as exc:
         logger.error(
             "[%s] get_symbol_index_codes failed symbol=%r: %s",

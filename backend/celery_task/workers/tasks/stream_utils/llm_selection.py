@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def select_llm(query: str) -> Any:
+def select_llm(query: str, llm: str = "ollama") -> Any:
     """Select LLM based on query prefix.
 
     Returns a ``MockLLM`` (with optional rate/duration overrides) when the
@@ -31,4 +31,4 @@ def select_llm(query: str) -> Any:
         _tps = float(_tps_m.group(1)) if _tps_m else SEMANTIC_TOKENS_PER_SEC
         _dur = float(_dur_m.group(1)) if _dur_m else float(SEMANTIC_DURATION_SECS)
         return get_mock_llm(tokens_per_sec=_tps, duration_secs=_dur)
-    return get_llm("ollama")
+    return get_llm(llm)

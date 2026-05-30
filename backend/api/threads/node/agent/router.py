@@ -83,11 +83,15 @@ async def get_capabilities_route(
     thread_id: TThreadId,
     node_id: TNodeId,
 ) -> AgentCapabilitiesResponse:
-    """Return the current tools, skills, and memory for an agent node execution."""
-    # Verify node exists and belongs to thread
-    await _is_node_running(thread_id, node_id)
+    """Return the current tools, skills, and memory for an agent node execution.
 
-    caps: AgentCapabilities = await get_agent_capabilities(node_id)
+    For non-running (terminal) nodes all memory entries including forgotten and
+    compacted originals are returned so the UI can display the full history in
+    read-only/immutable mode.
+    """
+    is_running = await _is_node_running(thread_id, node_id)
+
+    caps: AgentCapabilities = await get_agent_capabilities(node_id, include_all_memory=not is_running)
     return AgentCapabilitiesResponse(
         tools=[t.model_dump() for t in caps.tools],
         skills=list(caps.skills),

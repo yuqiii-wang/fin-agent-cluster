@@ -34,7 +34,7 @@ from typing import Optional
 
 from backend.config import get_settings
 from backend.httpx_client import AsyncClient, make_fmp_async_client, make_mock_transport_async_client
-from backend.resources.stats.errors import STATS_FMP_EMPTY, STATS_YFINANCE_EMPTY
+from backend.resources.stats.errors import STATS_AKSHARE_EMPTY, STATS_FMP_EMPTY, STATS_YFINANCE_EMPTY
 from backend.resources.stats.mock.transport import MockStatsTransport
 from backend.resources.stats.models import StatsListResponse, StatsRecord
 from backend.resources.stats.routing import provider_for_symbol
@@ -42,7 +42,7 @@ from backend.resources.stats.routing import provider_for_symbol
 logger = logging.getLogger(__name__)
 
 _MOCK_BASE_URL = "http://mock-stats"
-_VALID_PROVIDERS = frozenset({"mock", "yfinance", "fmp"})
+_VALID_PROVIDERS = frozenset({"mock", "yfinance", "fmp", "akshare"})
 
 
 class StatsClient:
@@ -101,8 +101,8 @@ class StatsClient:
 
         self.provider = requested
 
-        # Each provider needs its own httpx client (or None for yfinance which
-        # does not use httpx at all).
+        # Each provider needs its own httpx client (or None for yfinance/akshare
+        # which do not use httpx at all).
         if self.provider == "mock":
             self._http: Optional[AsyncClient] = make_mock_transport_async_client(
                 _MOCK_BASE_URL, MockStatsTransport()
@@ -110,8 +110,8 @@ class StatsClient:
         elif self.provider == "fmp":
             self._http = make_fmp_async_client()
         else:
-            # yfinance — no httpx client needed; the library manages its own
-            # HTTP session internally.
+            # yfinance / akshare — no httpx client needed; each library manages
+            # its own HTTP session internally.
             self._http = None
 
         logger.info("StatsClient initialised provider=%s", self.provider)
@@ -152,6 +152,8 @@ class StatsClient:
             return await self._list_stats_yfinance(symbol, period)
         if self.provider == "fmp":
             return await self._list_stats_fmp(symbol, period)
+        if self.provider == "akshare":
+            return await self._list_stats_akshare(symbol, period)
 
         # Should never reach here — provider is validated in __init__.
         return StatsListResponse(items=[], total=0)
@@ -177,6 +179,8 @@ class StatsClient:
             return await self._get_stats_real(record_id, prefix="yf")
         if self.provider == "fmp":
             return await self._get_stats_real(record_id, prefix="fmp")
+        if self.provider == "akshare":
+            return await self._get_stats_real(record_id, prefix="ak")
 
         return None
 
@@ -287,6 +291,39 @@ class StatsClient:
         return StatsListResponse(items=items, total=len(items))
 
     # ------------------------------------------------------------------
+    # akshare dispatch
+    # ------------------------------------------------------------------
+
+    async def _list_stats_akshare(
+        self,
+        symbol: str | None,
+        period: str | None,
+    ) -> StatsListResponse:
+        """Fetch a single (symbol, period) record from akshare.
+
+        Returns an empty list when ``symbol`` is not provided, since
+        akshare requires an explicit A-share ticker.
+        """
+        if not symbol:
+            logger.debug("stats.list_stats akshare: symbol required, returning empty")
+            return StatsListResponse(items=[], total=0)
+
+        from backend.resources.stats.akshare.fetcher import fetch as ak_fetch
+
+        periods = [period] if period else ["1d", "1w", "1mo", "3mo", "1y"]
+        items: list[StatsRecord] = []
+        for p in periods:
+            try:
+                record = await ak_fetch(symbol, p)
+                items.append(record)
+            except ValueError as exc:
+                if STATS_AKSHARE_EMPTY in str(exc):
+                    logger.warning("stats.list_stats akshare skip period=%s (empty): %s", p, exc)
+                else:
+                    raise
+        return StatsListResponse(items=items, total=len(items))
+
+    # ------------------------------------------------------------------
     # Shared real-provider get_stats helper
     # ------------------------------------------------------------------
 
@@ -295,7 +332,7 @@ class StatsClient:
 
         Args:
             record_id: Full record identifier, e.g. ``"yf-aapl-1d"``.
-            prefix:    Expected provider prefix (``"yf"`` or ``"fmp"``).
+            prefix:    Expected provider prefix (``"yf"``, ``"fmp"``, or ``"ak"``).
 
         Returns:
             :class:`~backend.resources.stats.models.StatsRecord` or ``None``.
@@ -313,10 +350,12 @@ class StatsClient:
             if self.provider == "yfinance":
                 from backend.resources.stats.yfinance.fetcher import fetch as yf_fetch
                 return await yf_fetch(symbol, period)
-            else:
-                from backend.resources.stats.fmp.fetcher import fetch as fmp_fetch
-                assert self._http is not None
-                return await fmp_fetch(symbol, period, self._http)
-        except ValueError as exc:
+            if self.provider == "akshare":
+                from backend.resources.stats.akshare.fetcher import fetch as ak_fetch
+                return await ak_fetch(symbol, period)
+            from backend.resources.stats.fmp.fetcher import fetch as fmp_fetch
+            assert self._http is not None
+            return await fmp_fetch(symbol, period, self._http)
+        except Exception as exc:
             logger.warning("stats.get_stats %s id=%r: %s", self.provider, record_id, exc)
             return None

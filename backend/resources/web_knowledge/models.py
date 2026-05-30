@@ -13,6 +13,7 @@ class WebPageType(str, Enum):
     competitors = "competitors"
     press_releases = "press_releases"
     option_chain = "option_chain"
+    estimate = "estimate"
 
 
 class WebPageResponse(BaseModel):

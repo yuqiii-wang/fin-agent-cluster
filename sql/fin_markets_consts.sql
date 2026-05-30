@@ -210,7 +210,7 @@ VALUES
 ('IBOVESPA',    'Ibovespa',          '^BVSP',   'BRL', 'yfinance', 'amer', ARRAY['SAO'],                                           6),
 -- ── Asia-Pacific ────────────────────────────────────────────────────────────
 ('HANG_SENG',   'Hang Seng',         '^HSI',    'HKD', 'fmp',      'apac', ARRAY['HKG'],                                           1),
-('CSI_300',     'CSI 300',           '000300.SS','CNY','yfinance', 'apac', ARRAY['SHH','SHZ'],                                     2),
+('CSI_300',     'CSI 300',           '000300.SS','CNY','akshare', 'apac', ARRAY['SHH','SHZ'],                                     2),
 ('NIKKEI_225',  'Nikkei 225',        '^N225',   'JPY', 'yfinance', 'apac', ARRAY['TYO','OSA','JPX'],                               3),
 ('TOPIX',       'TOPIX',             '^TOPX',   'JPY', 'yfinance', 'apac', ARRAY['TYO','OSA','JPX'],                               4),
 ('KOSPI',       'KOSPI',             '^KS11',   'KRW', 'yfinance', 'apac', ARRAY['KSC'],                                           5),

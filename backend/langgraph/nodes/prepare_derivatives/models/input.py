@@ -20,6 +20,6 @@ class PrepareDerivativesInput(BaseModel):
         description="Ticker of the stock under analysis; resolved from query_node output.",
     )
     stats_period: str = Field(
-        default="1y",
+        default="2y",
         description="Aggregation period for get_and_calculate_stats: '1d', '1w', '1mo', '1y', '2y'.",
     )

@@ -10,6 +10,7 @@ from psycopg import AsyncConnection
 from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from backend.config import get_settings
 from backend.db.redis.lock_manager import RedisLock
@@ -17,6 +18,17 @@ from backend.db.redis.router import get_redis_router
 from backend.db.postgres.errors import PG_CHECKPOINTER_TIMEOUT, PG_CHECKPOINTER_SETUP_FAILED
 
 logger = logging.getLogger(__name__)
+
+# Explicitly allow our custom Pydantic envelope types so LangGraph does not
+# emit deserialization warnings (or block in strict mode).
+_SERDE = JsonPlusSerializer(
+    allowed_msgpack_modules=[
+        ("backend.langgraph.models.models", "TaskOutput"),
+        ("backend.langgraph.models.models", "TaskInput"),
+        ("backend.langgraph.models.models", "NodeContext"),
+        ("backend.langgraph.models.models", "TaskContext"),
+    ]
+)
 
 _setup_done: bool = False
 
@@ -160,7 +172,7 @@ def get_pool_checkpointer() -> AsyncPostgresSaver:
     from backend.db.postgres.pool import get_checkpointer_pool
 
     pool = get_checkpointer_pool()
-    return AsyncPostgresSaver(pool)
+    return AsyncPostgresSaver(pool, serde=_SERDE)
 
 
 @asynccontextmanager
@@ -181,6 +193,6 @@ async def checkpointer() -> AsyncGenerator[AsyncPostgresSaver, None]:
         options="-csearch_path=fin_agents",
     )
     try:
-        yield AsyncPostgresSaver(conn)
+        yield AsyncPostgresSaver(conn, serde=_SERDE)
     finally:
         await conn.close()

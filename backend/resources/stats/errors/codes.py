@@ -27,6 +27,9 @@ STATS_FMP_EMPTY = "STATS_FMP_EMPTY"
 #: FMP API key is missing or invalid (HTTP 401 / 403).
 STATS_FMP_AUTH_ERROR = "STATS_FMP_AUTH_ERROR"
 
+#: akshare returned an empty DataFrame for the requested symbol / period.
+STATS_AKSHARE_EMPTY = "STATS_AKSHARE_EMPTY"
+
 # ---------------------------------------------------------------------------
 # Description registry
 # ---------------------------------------------------------------------------
@@ -60,5 +63,9 @@ STATS_ERRORS: dict[str, str] = {
     STATS_FMP_AUTH_ERROR: (
         "FMP API key is missing or invalid. "
         "Set the FMP_API_KEY environment variable and restart the service."
+    ),
+    STATS_AKSHARE_EMPTY: (
+        "akshare returned an empty DataFrame for the requested symbol and period. "
+        "The A-share code may be invalid or no data is available for that date range."
     ),
 }
