@@ -1,47 +1,44 @@
-"""llm_orchestration_on_failure — NodeTask: generic LLM-driven step orchestrator for agent loops.
+"""llm_orchestration_on_failure — NodeTask: LLM-driven recovery decision after a step failure.
 
-Used by AGENT-type nodes that define a named step loop (via ``AgentStepMixin``).
-After each iteration, this task presents the iteration's execution summary to the
-LLM and asks it to decide the next action.
+When an AGENT node step raises, the generic step runner invokes this task to
+study the failure and decide how to recover.  The decision is produced in two
+LLM phases so the model never has to read every historical output at once:
 
-Decision actions
-----------------
-``action: "finish"``
-    The loop's finish condition is met. Stop the loop and proceed to final output.
+Phase 1 — Task selection (lightweight, non-streaming)
+    The node's *completed* task descriptors (task_id / task_name / description)
+    plus the *failed* task output are presented to the LLM, which selects the
+    subset of completed task_ids whose full outputs are worth reading to make a
+    recovery decision.
 
-``action: "next_iteration"``
-    Start a fresh iteration from the first step.
+Phase 2 — Recovery decision (streaming)
+    The selected task outputs are loaded in full and streamed to the LLM, which
+    proposes either:
 
-``action: "retry_from_step"``
-    Restart the next iteration from ``retry_from_step`` using ``input_overrides``
-    to modify that step's behaviour.
-
-``action: "fail"``
-    No useful recovery is possible. The loop exits with best-available results.
-
-Step info and overrides
------------------------
-The caller populates ``step_info`` with per-step descriptions and override schemas
-so the LLM knows what overrides are valid for each step.
+    * ``"retry_from_step"`` — regenerate an earlier LLM *streaming* step (chosen
+      from ``retry_candidates``).  No concrete values are injected; instead the
+      failure reason and the decision's ``reasoning`` are forwarded to the
+      regenerated streaming task so it can correct its output (e.g. rewrite an
+      extraction script).  The new failure-context changes the task input hash so
+      the retried task runs fresh (cache is bypassed naturally).
+    * ``"fail"``            — the failure is unrecoverable.
 
 Execution layers
 ----------------
 LangGraph layer (``_llm_orchestration_on_failure_task`` decorated with ``@task``):
-    Creates a Streaming task, delegates to the Celery stream worker, parses
-    the structured JSON answer, and completes the task.
+    Runs phase 1 selection, loads selected histories, creates a Streaming task,
+    delegates phase 2 to the Celery stream worker, parses the structured JSON
+    decision, and completes the task.
 
-Celery layer (``stream_task.run_stream``):
+Celery layer (``STREAM_PROMPT_BUILDERS``):
     Dispatched via ``STREAM_PROMPT_BUILDERS`` to ``_build_orchestration_prompt``.
 
 Public exports
 --------------
-``llm_orchestration_on_failure``       — ``NodeTask`` instance.
-``StepResult``              — Generic per-step execution record.
-``StepInfo``                — Step descriptor (name, description, override schema).
-``LlmOrchestrationInput``   — Pydantic input model.
-``LlmOrchestrationOutput``  — Pydantic output model.
-``STREAM_PROMPT_BUILDERS``  — dict slice for the Celery stream prompt registry.
-``HANDLERS``                — empty dict (streaming task; no completion handler).
+``llm_orchestration_on_failure``   — ``NodeTask`` instance.
+``LlmOrchestrationInput``          — Pydantic input model.
+``LlmOrchestrationOutput``         — Pydantic output (decision) model.
+``STREAM_PROMPT_BUILDERS``         — dict slice for the Celery stream prompt registry.
+``HANDLERS``                       — handler slice (streaming task; raises if called directly).
 """
 
 from __future__ import annotations
@@ -55,51 +52,27 @@ from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
+from backend.celery_task.workers.tasks.stream_utils import extract_json_from_text
+from backend.langgraph.agent.memory import (
+    COMPLETED_STATUSES,
+    FAILED_STATUSES,
+    get_task_memory,
+    get_task_outputs,
+)
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import LLM_ORCH_DECIDE_ERROR
 from backend.langgraph.models.models import TaskInput, TaskOutput
 from backend.langgraph.models.streaming_output import StreamingTaskOutput
 from backend.langgraph.models.task import NodeTask
 from backend.langgraph.models.view_types import TASK_VIEW_STREAMING
+from backend.llm.factory import get_llm
 
 logger = logging.getLogger(__name__)
 
 _TASK_NAME = "llm_orchestration_on_failure"
 
-# ---------------------------------------------------------------------------
-# Shared step models (used by both the task and agent step state)
-# ---------------------------------------------------------------------------
-
-
-class StepResult(BaseModel):
-    """Execution record for a single step, surfaced to the LLM orchestration task.
-
-    Attributes:
-        step:           Step name from the step order list.
-        success:        ``True`` when the step completed without raising.
-        output_summary: Lightweight serialisable dict for LLM consumption.
-                        Must not include heavy data blobs.
-        failure_reason: Exception message when ``success=False``.
-    """
-
-    step: str
-    success: bool
-    output_summary: dict[str, Any] = Field(default_factory=dict)
-    failure_reason: str | None = None
-
-
-class StepInfo(BaseModel):
-    """Descriptor for a single step passed to the LLM for context.
-
-    Attributes:
-        name:                  Step name matching ``step_order``.
-        description:           What this step does.
-        input_override_schema: Mapping of override key → human-readable description.
-    """
-
-    name: str
-    description: str
-    input_override_schema: dict[str, str] = Field(default_factory=dict)
+# Max number of completed task outputs the LLM may read in phase 2.
+_MAX_SELECTED = 5
 
 
 # ---------------------------------------------------------------------------
@@ -108,180 +81,201 @@ class StepInfo(BaseModel):
 
 
 class LlmOrchestrationInput(BaseModel):
-    """Generic input for the llm_orchestration task.
+    """Input for the llm_orchestration_on_failure task.
 
     Attributes:
-        iteration:        Current outer iteration counter (1-based).
-        max_iterations:   Maximum loop iterations configured for this run.
-        target:           Primary subject being processed (e.g. stock ticker, URL).
-        objective:        Research objective driving this pipeline execution.
-        step_order:       Canonical step execution order.
-        step_info:        Per-step descriptors with override schemas for the LLM.
-        step_results:     Per-step execution records for this iteration.
-        failed_step:      Name of the step that failed; ``None`` if iteration completed.
-        failure_reason:   Error message from the failed step; ``None`` if no failure.
-        context_summary:  Node-specific key/value context (e.g. confirmed counts).
-        finish_condition: Human-readable description of when the loop should finish.
+        failed_step:     Name of the step that raised.
+        failure_reason:  Exception message captured from the failed step.
+        objective:       One-sentence description of what the node is trying to
+                         accomplish (used for LLM context).
+        target:          Primary subject of the run (e.g. a symbol) for context.
+        step_order:      Ordered list of all step names (for context only).
+        retry_candidates: Subset of ``step_order`` that wrap an LLM *streaming*
+                         task and can be re-run to regenerate their output.
+                         ``retry_from_step`` must be chosen from this list.
+        finish_condition: Human description of what a successful run looks like.
+        context_summary: Small, serialisable extra context (no raw blobs).
     """
 
-    iteration: int = Field(ge=1, description="Current outer iteration counter.")
-    max_iterations: int = Field(ge=1, description="Maximum loop iterations.")
-    target: str = Field(description="Primary subject being processed.")
-    objective: str = Field(description="Research objective for this run.")
-    step_order: list[str] = Field(description="Canonical step execution order.")
-    step_info: list[StepInfo] = Field(
+    failed_step: str = Field(description="Name of the step that raised.")
+    failure_reason: str = Field(description="Exception message from the failed step.")
+    objective: str = Field(default="", description="What the node is trying to do.")
+    target: str = Field(default="", description="Primary subject of the run.")
+    step_order: list[str] = Field(
         default_factory=list,
-        description="Per-step descriptors with override schemas.",
+        description="Ordered step names (full pipeline, for context).",
     )
-    step_results: list[StepResult] = Field(
+    retry_candidates: list[str] = Field(
         default_factory=list,
-        description="Per-step execution records for this iteration.",
-    )
-    failed_step: str | None = Field(default=None, description="Name of the failed step, if any.")
-    failure_reason: str | None = Field(
-        default=None, description="Error message from the failed step."
-    )
-    context_summary: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Node-specific progress/state context for the LLM.",
+        description="Earlier LLM-streaming steps that may be regenerated; "
+        "retry_from_step must be one of these.",
     )
     finish_condition: str = Field(
-        default="",
-        description="Human-readable description of when to emit action='finish'.",
+        default="", description="Description of a successful run."
+    )
+    context_summary: dict[str, Any] = Field(
+        default_factory=dict, description="Small extra context for the LLM."
     )
 
 
 class LlmOrchestrationOutput(BaseModel):
-    """Output from the llm_orchestration task.
+    """Recovery decision produced by the llm_orchestration_on_failure task.
+
+    The decision never injects concrete corrected values (which would risk
+    hallucinating numbers).  Instead it selects an earlier LLM *streaming* step
+    to re-run; the step loop forwards the failure reason and this decision's
+    reasoning to that step's streaming task so it regenerates its output with
+    awareness of the prior failure.
 
     Attributes:
-        action:           Next loop action:
-                          ``"finish"`` — loop complete; proceed to final output.
-                          ``"next_iteration"`` — start a fresh iteration.
-                          ``"retry_from_step"`` — restart from ``retry_from_step``
-                          with ``input_overrides``.
-                          ``"fail"`` — propagate failure; use best-available output.
-        retry_from_step:  Step name to restart from (only when action="retry_from_step").
-        input_overrides:  Step-specific input overrides for the retried step.
-        reasoning:        LLM's brief rationale for the decision.
+        action:          ``"retry_from_step"`` to regenerate an earlier streaming
+                         step, or ``"fail"`` when recovery is impossible.
+        retry_from_step: Streaming step to regenerate (required when action is
+                         ``"retry_from_step"``; must be in ``retry_candidates``).
+        selected_task_ids: Completed task_ids whose outputs informed the decision.
+        reasoning:       Rationale carried to the regenerated streaming task so it
+                         can avoid repeating the failure (1-4 sentences).
     """
 
-    action: Literal["finish", "next_iteration", "retry_from_step", "fail"] = Field(
-        description="Next loop action.",
+    action: Literal["retry_from_step", "fail"] = Field(
+        description="Recovery action to take."
     )
     retry_from_step: str | None = Field(
-        default=None,
-        description="Step to restart from when action='retry_from_step'.",
+        default=None, description="Streaming step to regenerate when retrying."
     )
-    input_overrides: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Step-specific input overrides for the retried step.",
+    selected_task_ids: list[str] = Field(
+        default_factory=list, description="Task outputs used to decide."
     )
-    reasoning: str = Field(default="", description="LLM reasoning for the decision.")
+    reasoning: str = Field(default="", description="Rationale carried to the retried step.")
 
 
 # ---------------------------------------------------------------------------
-# Prompt builder (registered in STREAM_PROMPT_BUILDERS)
+# Phase 1 — task selection prompt (non-streaming)
 # ---------------------------------------------------------------------------
 
-_SYSTEM_TEMPLATE = """\
-You are a financial research orchestration agent managing an iterative pipeline.
+_SELECT_SYSTEM_TEMPLATE = """\
+You are a recovery-planning agent for a financial data pipeline.
 
-The pipeline executes these steps in order to accomplish a research objective:
-{step_descriptions}
+A pipeline step named "{failed_step}" just failed.  Below is the list of
+COMPLETED tasks already produced by this node (each with an id, name and
+description) and the FAILED task's output.
 
-Available actions:
-- "finish":           The objective is sufficiently achieved. Stop the loop.
-  Finish condition: {finish_condition}
-- "next_iteration":   Start a fresh iteration from the beginning.
-- "retry_from_step":  Restart the next iteration from a specific step with modified input.
-- "fail":             Recovery is impossible. Halt the pipeline with best-available output.
+Decide which completed task outputs you need to READ IN FULL to understand the
+failure and propose a fix.  Select only the most relevant tasks (at most {max_selected}).
 
-Respond ONLY with a valid JSON object — no preamble, no explanation outside the JSON.
-
-Schema:
+Return ONLY a JSON object — no prose:
 {{
-  "action":           "finish" | "next_iteration" | "retry_from_step" | "fail",
-  "retry_from_step":  "<one of: {step_order}> or null",
-  "input_overrides":  {{}},
-  "reasoning":        "<1-3 sentence explanation>"
+  "selected_task_ids": ["<task_id>", ...]
+}}
+"""
+
+_SELECT_HUMAN_TEMPLATE = """\
+Objective: {objective}
+Target: {target}
+Failed step: {failed_step}
+Failure reason: {failure_reason}
+
+COMPLETED TASKS (id — name: description):
+{descriptors}
+
+FAILED TASK OUTPUT:
+{failed_output}\
+"""
+
+
+def _format_descriptors(descriptors: list[dict[str, Any]]) -> str:
+    """Render completed-task descriptors as a bullet list for the LLM."""
+    if not descriptors:
+        return "(none)"
+    return "\n".join(
+        f"- {d['task_id']} — {d['task_name']}: {d.get('description') or ''}"
+        for d in descriptors
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — decision prompt (streaming, registered in STREAM_PROMPT_BUILDERS)
+# ---------------------------------------------------------------------------
+
+_DECIDE_SYSTEM_TEMPLATE = """\
+You are a recovery-planning agent for a financial data pipeline.
+
+A pipeline step named "{failed_step}" failed.  Using the failure reason and the
+full outputs of the selected prior tasks, decide how to recover.
+
+You may re-run ONE earlier LLM step from RETRY CANDIDATES.  Each candidate wraps
+a streaming LLM task (e.g. it generates a data-extraction script).  Re-running it
+regenerates its output from scratch, and your "reasoning" plus the failure reason
+are handed to that task so it can fix the mistake (e.g. rewrite the script).
+
+You CANNOT inject concrete values.  Do NOT invent or hallucinate any numbers,
+fields, or data — the regenerated task must derive correct values itself from
+the source content.  Your job is only to (a) pick which earlier streaming step to
+regenerate and (b) explain, in "reasoning", what went wrong and what to fix.
+
+If no candidate could plausibly fix the failure, fail.
+
+Return ONLY a JSON object — no prose:
+{{
+  "action": "retry_from_step" | "fail",
+  "retry_from_step": "<one of the RETRY CANDIDATES names, or null when action is fail>",
+  "selected_task_ids": [{selected_ids}],
+  "reasoning": "<1-4 sentences: what went wrong and what the regenerated task must fix>"
 }}
 
 Rules:
-- Use "finish" only when the finish condition is met, or when max_iterations is reached
-  and some useful result exists.
-- Use "retry_from_step" only when you have a specific actionable override. Do not retry
-  without overrides — use "next_iteration" instead.
-- retry_from_step must be one of: {step_order}.
-- When action is NOT "retry_from_step", set retry_from_step to null and input_overrides to {{}}.\
+- "retry_from_step" MUST be one of the RETRY CANDIDATES: {retry_candidates}.
+- Never propose concrete data values; "reasoning" is guidance only.
+- Set "action" to "fail" only when no candidate could fix the failure.\
 """
 
-_HUMAN_TEMPLATE = """\
+_DECIDE_HUMAN_TEMPLATE = """\
 Objective: {objective}
-Target:    {target}
-Iteration: {iteration} / {max_iterations}
+Target: {target}
+Finish condition: {finish_condition}
+Failed step: {failed_step}
+Failure reason: {failure_reason}
 
-Pipeline state:
+STEP ORDER: {step_order}
+RETRY CANDIDATES: {retry_candidates}
+
+CONTEXT:
 {context_summary}
 
-This iteration's step results:
-{step_results_summary}
-
-Failed step:    {failed_step}
-Failure reason: {failure_reason}\
+SELECTED TASK OUTPUTS:
+{histories}\
 """
 
 
 def _build_orchestration_prompt(payload: dict) -> list:
-    """Build LangChain messages for the llm_orchestration streaming task.
+    """Build LangChain messages for the phase-2 streaming decision.
 
     Args:
-        payload: Serialised :class:`LlmOrchestrationInput` dict.
+        payload: Serialised :class:`LlmOrchestrationInput` augmented with
+                 ``histories`` (task_id -> output) and ``selected_task_ids``.
 
     Returns:
         ``[SystemMessage, HumanMessage]`` for the Celery stream worker.
     """
     inp = LlmOrchestrationInput.model_validate(payload)
+    histories: dict[str, Any] = payload.get("histories", {})
+    selected_ids: list[str] = payload.get("selected_task_ids", [])
 
-    step_desc_lines = []
-    for si in inp.step_info:
-        line = f"  {si.name}: {si.description}"
-        if si.input_override_schema:
-            overrides = ", ".join(
-                f'"{k}" — {v}' for k, v in si.input_override_schema.items()
-            )
-            line += f"\n    overrides: {overrides}"
-        step_desc_lines.append(line)
-    step_descriptions = "\n".join(step_desc_lines) or "  (no step descriptions provided)"
-
-    step_result_lines = []
-    for sr in inp.step_results:
-        status = "OK" if sr.success else "FAIL"
-        line = f"  [{status}] {sr.step}: {json.dumps(sr.output_summary)}"
-        if sr.failure_reason:
-            line += f"\n        error: {sr.failure_reason[:300]}"
-        step_result_lines.append(line)
-    step_results_summary = "\n".join(step_result_lines) or "  (no steps ran this iteration)"
-
-    context_lines = [f"  {k}: {v}" for k, v in inp.context_summary.items()]
-    context_summary = "\n".join(context_lines) or "  (no context)"
-
-    finish_condition = inp.finish_condition or "objective is accomplished"
-
-    system_content = _SYSTEM_TEMPLATE.format(
-        step_descriptions=step_descriptions,
-        finish_condition=finish_condition,
-        step_order=", ".join(inp.step_order),
+    system_content = _DECIDE_SYSTEM_TEMPLATE.format(
+        failed_step=inp.failed_step,
+        retry_candidates=", ".join(inp.retry_candidates),
+        selected_ids=", ".join(f'"{tid}"' for tid in selected_ids),
     )
-    human_content = _HUMAN_TEMPLATE.format(
-        objective=inp.objective,
-        target=inp.target,
-        iteration=inp.iteration,
-        max_iterations=inp.max_iterations,
-        context_summary=context_summary,
-        step_results_summary=step_results_summary,
-        failed_step=inp.failed_step or "none",
-        failure_reason=(inp.failure_reason or "none")[:500],
+    human_content = _DECIDE_HUMAN_TEMPLATE.format(
+        objective=inp.objective or "(unspecified)",
+        target=inp.target or "(unspecified)",
+        finish_condition=inp.finish_condition or "(unspecified)",
+        failed_step=inp.failed_step,
+        failure_reason=inp.failure_reason,
+        step_order=", ".join(inp.step_order),
+        retry_candidates=", ".join(inp.retry_candidates),
+        context_summary=json.dumps(inp.context_summary, indent=2),
+        histories=json.dumps(histories, indent=2, default=str),
     )
     return [SystemMessage(content=system_content), HumanMessage(content=human_content)]
 
@@ -294,52 +288,88 @@ STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_orchestration_prompt}
 # ---------------------------------------------------------------------------
 
 
-def _parse_orchestration_answer(
-    answer_dict: dict[str, Any],
-    step_order: list[str],
-) -> LlmOrchestrationOutput:
-    """Parse and validate the LLM JSON answer into a :class:`LlmOrchestrationOutput`.
+def _parse_decision(answer_dict: dict[str, Any], retry_candidates: list[str]) -> LlmOrchestrationOutput:
+    """Parse the LLM JSON answer into a :class:`LlmOrchestrationOutput`.
 
-    Invalid ``action`` values fall back to ``"fail"`` to avoid silently proceeding
-    with corrupted orchestration data.
+    Falls back to a ``"fail"`` decision when the structure is invalid or the
+    proposed ``retry_from_step`` is not a valid retry candidate.
 
     Args:
-        answer_dict: Parsed JSON dict from the streaming answer.
-        step_order:  Valid step names for ``retry_from_step`` validation.
+        answer_dict:      Parsed JSON dict from the streaming answer.
+        retry_candidates: Valid streaming step names for ``retry_from_step``.
 
     Returns:
         Validated :class:`LlmOrchestrationOutput`.
     """
-    action = answer_dict.get("action", "fail")
-    valid_actions = {"finish", "next_iteration", "retry_from_step", "fail"}
-    if action not in valid_actions:
-        logger.error(
-            "[%s] unexpected action %r from LLM orchestration; defaulting to 'fail'",
-            LLM_ORCH_DECIDE_ERROR, action,
+    action = answer_dict.get("action")
+    retry_from_step = answer_dict.get("retry_from_step")
+
+    if action == "retry_from_step" and retry_from_step in retry_candidates:
+        return LlmOrchestrationOutput(
+            action="retry_from_step",
+            retry_from_step=retry_from_step,
+            selected_task_ids=[str(t) for t in (answer_dict.get("selected_task_ids") or [])],
+            reasoning=str(answer_dict.get("reasoning", "")),
         )
-        action = "fail"
 
-    retry_from_step: str | None = answer_dict.get("retry_from_step") or None
-    if action == "retry_from_step":
-        if not retry_from_step or retry_from_step not in step_order:
-            logger.error(
-                "[%s] action='retry_from_step' but retry_from_step=%r is invalid; "
-                "falling back to 'next_iteration'",
-                LLM_ORCH_DECIDE_ERROR, retry_from_step,
-            )
-            action = "next_iteration"
-            retry_from_step = None
-
-    input_overrides = answer_dict.get("input_overrides") or {}
-    if not isinstance(input_overrides, dict):
-        input_overrides = {}
-
+    if action != "fail":
+        logger.error(
+            "[%s] invalid decision action=%r retry_from_step=%r; defaulting to fail",
+            LLM_ORCH_DECIDE_ERROR,
+            action,
+            retry_from_step,
+        )
     return LlmOrchestrationOutput(
-        action=action,
-        retry_from_step=retry_from_step if action == "retry_from_step" else None,
-        input_overrides=input_overrides if action == "retry_from_step" else {},
+        action="fail",
+        selected_task_ids=[str(t) for t in (answer_dict.get("selected_task_ids") or [])],
         reasoning=str(answer_dict.get("reasoning", "")),
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — task selection (non-streaming LLM call)
+# ---------------------------------------------------------------------------
+
+
+async def _select_task_ids(
+    inp: LlmOrchestrationInput,
+    descriptors: list[dict[str, Any]],
+    failed_output: dict[str, Any],
+) -> list[str]:
+    """Ask the LLM which completed task outputs to read in full.
+
+    Args:
+        inp:           Orchestration input.
+        descriptors:   Completed-task descriptor dicts (no outputs).
+        failed_output: Output payload of the failed task (may be empty).
+
+    Returns:
+        Selected task_ids, capped at ``_MAX_SELECTED`` and restricted to known
+        completed task_ids.  Empty when nothing is relevant.
+    """
+    valid_ids = {d["task_id"] for d in descriptors}
+    if not valid_ids:
+        return []
+
+    system_content = _SELECT_SYSTEM_TEMPLATE.format(
+        failed_step=inp.failed_step, max_selected=_MAX_SELECTED
+    )
+    human_content = _SELECT_HUMAN_TEMPLATE.format(
+        objective=inp.objective or "(unspecified)",
+        target=inp.target or "(unspecified)",
+        failed_step=inp.failed_step,
+        failure_reason=inp.failure_reason,
+        descriptors=_format_descriptors(descriptors),
+        failed_output=json.dumps(failed_output, indent=2, default=str),
+    )
+
+    llm = get_llm(streaming=False)
+    response = await llm.ainvoke(
+        [SystemMessage(content=system_content), HumanMessage(content=human_content)]
+    )
+    parsed = extract_json_from_text(str(getattr(response, "content", response)))
+    selected = [str(t) for t in (parsed.get("selected_task_ids") or []) if str(t) in valid_ids]
+    return selected[:_MAX_SELECTED]
 
 
 # ---------------------------------------------------------------------------
@@ -351,11 +381,10 @@ def _parse_orchestration_answer(
 async def _llm_orchestration_on_failure_task(
     task_input: TaskInput[LlmOrchestrationInput],
 ) -> TaskOutput[LlmOrchestrationOutput]:
-    """LangGraph @task: stream LLM step-routing decision for agent loops.
+    """LangGraph @task: decide how to recover from a failed agent step.
 
-    Creates a Streaming task, delegates to the Celery stream worker, parses
-    the structured JSON decision, and completes the task.  On exception,
-    marks the task as failed and re-raises so the caller can handle the error.
+    Phase 1 selects which completed task outputs to read; phase 2 streams the
+    full selected outputs to the LLM and parses a structured recovery decision.
 
     Args:
         task_input: Typed envelope with node context and
@@ -367,7 +396,32 @@ async def _llm_orchestration_on_failure_task(
     """
     ctx = task_input.ctx
     inp = task_input.content
+
+    # Phase 1 — gather descriptors + failed output, then select task_ids.
+    completed = await get_task_memory(
+        ctx.node_id, statuses=COMPLETED_STATUSES, with_output=False
+    )
+    descriptors = [
+        {
+            "task_id": m.task_id,
+            "task_name": m.task_name,
+            "description": m.description,
+        }
+        for m in completed
+    ]
+    failed = await get_task_memory(
+        ctx.node_id, statuses=FAILED_STATUSES, with_output=True
+    )
+    failed_output: dict[str, Any] = next(
+        (m.output for m in failed if m.task_name == inp.failed_step and m.output), {}
+    )
+
+    selected_ids = await _select_task_ids(inp, descriptors, failed_output)
+    histories = await get_task_outputs(selected_ids) if selected_ids else {}
+
     payload = inp.model_dump(mode="json")
+    payload["histories"] = histories
+    payload["selected_task_ids"] = selected_ids
 
     await create_task(
         ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,
@@ -381,10 +435,7 @@ async def _llm_orchestration_on_failure_task(
             node_name=ctx.node_name,
             payload=payload,
         )
-        output = _parse_orchestration_answer(
-            result.get("answer", {}),
-            step_order=inp.step_order,
-        )
+        output = _parse_decision(result.get("answer", {}), inp.retry_candidates)
         await complete_task(
             ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name,
             output_data=StreamingTaskOutput(
@@ -409,10 +460,9 @@ async def _llm_orchestration_on_failure_task(
 llm_orchestration_on_failure: NodeTask[LlmOrchestrationInput, LlmOrchestrationOutput] = NodeTask(
     name=_TASK_NAME,
     description=(
-        "Streaming LLM task: generic step orchestrator for AGENT-type node loops. "
-        "Takes agent iteration state and step registry context; returns action "
-        "('finish', 'next_iteration', 'retry_from_step', or 'fail') with optional "
-        "retry_from_step and input_overrides."
+        "Streaming LLM task: study a failed agent step, dynamically select which prior "
+        "task outputs to read, and decide whether to retry an earlier step with new inputs "
+        "or fail."
     ),
     input_type=LlmOrchestrationInput,
     output_type=LlmOrchestrationOutput,
@@ -426,8 +476,6 @@ HANDLERS: dict = {_TASK_NAME: llm_orchestration_on_failure.handler}
 
 __all__ = [
     "llm_orchestration_on_failure",
-    "StepResult",
-    "StepInfo",
     "LlmOrchestrationInput",
     "LlmOrchestrationOutput",
     "STREAM_PROMPT_BUILDERS",

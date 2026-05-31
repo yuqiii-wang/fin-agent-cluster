@@ -1,10 +1,12 @@
 """calculate_stats — entry NodeTask dispatching OHLCV indicator computation.
 
 Routes the calculation payload to the appropriate instrument-specific handler
-in :mod:`calculation_utils`:
+in :mod:`calculation_utils` based on the ``StatsRecord.id`` prefix:
 
-- All OHLCV-based instruments (equity, index, crypto, precious_metal, commodity) →
-  :func:`~calculation_utils.calculate_stock_stats.calculate_stock_stats_handler`
+- ``json-options-*``  → no-op (options stats are computed by ``calculate_option_stats``)
+- ``json-futures-*``  → no-op (futures stats calculation not yet implemented)
+- all other records   → :func:`~calculation_utils.calculate_stock_stats.calculate_stock_stats_handler`
+  (equity, index, crypto, precious_metal, commodity — any OHLCV-based record)
 
 Execution layers
 ----------------
@@ -40,6 +42,15 @@ from backend.langgraph.models.task import NodeTask
 
 _TASK_NAME = "calculate_stats"
 
+# data_type values that belong to non-OHLCV paths and must be short-circuited
+# before reaching calculate_stock_stats_handler.
+_NON_OHLCV_DATA_TYPES: frozenset[str] = frozenset({
+    "options",
+    "futures",
+    "text",
+    "fundamentals",
+})
+
 # Public aliases so existing importers of CalculateStatsInput/Output continue to work.
 CalculateStatsInput = CalculateStockStatsInput
 CalculateStatsOutput = CalculateStockStatsOutput
@@ -53,12 +64,27 @@ CalculateStatsOutput = CalculateStockStatsOutput
 async def _handler(payload: dict) -> dict:
     """Dispatch the calculate_stats payload to the appropriate instrument handler.
 
+    Routes by ``data_type`` from :class:`CalculateStatsInput`:
+    - Non-OHLCV types (``options``, ``futures``, ``text``, ``fundamentals``) →
+      return a zero-row stub; these have dedicated handlers elsewhere.
+    - ``ohlcv`` (default) → :func:`calculate_stock_stats_handler`.
+
     Args:
         payload: Serialised :class:`CalculateStatsInput` dict.
 
     Returns:
         Serialised :class:`CalculateStatsOutput` dict.
     """
+    inp = CalculateStockStatsInput.model_validate(payload)
+    if inp.data_type in _NON_OHLCV_DATA_TYPES:
+        return CalculateStockStatsOutput(
+            rows_upserted=0,
+            symbol=inp.stats_record.symbol.upper(),
+            granularity="",
+            source="",
+            df_split={},
+            stats_views=[],
+        ).model_dump()
     return await calculate_stock_stats_handler(payload)
 
 

@@ -2,7 +2,7 @@
  * Threads API client — wraps all /api/v1/threads/* and /api/v1/auth/centrifugo/* calls.
  */
 
-import type { CentrifugoTokenResponse, GraphTopology, NodeInfo, NodeMeta, QueryResponse, TaskInfo, ThreadSummary, VersionGraphResponse, AgentCapabilities, AgentStepStatesResponse, Skill, NodeSkillsResponse } from '../types';
+import type { CentrifugoTokenResponse, GraphTopology, NodeInfo, NodeMeta, QueryResponse, TaskInfo, ThreadSummary, VersionGraphResponse, AgentCapabilities, Skill, NodeSkillsResponse } from '../types';
 import { getStoredToken } from './auth';
 
 /** API error that preserves the HTTP status code. */
@@ -341,48 +341,4 @@ export async function forgetAgentSkill(
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Forget skill failed: ${res.status}`);
   }
-}
-
-export async function forgetAgentMemory(
-  threadId: string,
-  nodeId: string,
-  memoryId: string,
-): Promise<void> {
-  const res = await fetch(
-    `${BASE}/threads/${threadId}/nodes/${nodeId}/agent/memory/${memoryId}/forget`,
-    { method: 'POST', headers: authHeaders() },
-  );
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Forget memory failed: ${res.status}`);
-  }
-}
-
-export async function compactAgentMemory(
-  threadId: string,
-  nodeId: string,
-  memoryIds: string[],
-  summary: string,
-): Promise<{ memory_id: string; status: string }> {
-  const res = await fetch(`${BASE}/threads/${threadId}/nodes/${nodeId}/agent/memory/compact`, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ memory_ids: memoryIds, summary }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Compact memory failed: ${res.status}`);
-  }
-  return res.json();
-}
-
-export async function getAgentStepStates(
-  threadId: string,
-  nodeId: string,
-): Promise<AgentStepStatesResponse> {
-  const res = await fetch(`${BASE}/threads/${threadId}/nodes/${nodeId}/agent/step-states`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(`Get agent step states failed: ${res.status}`);
-  return res.json();
 }

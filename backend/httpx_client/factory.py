@@ -163,6 +163,42 @@ def make_internal_async_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=3.0)
 
 
+def make_ark_sync_client(
+    proxy: str | None = None,
+    timeout_seconds: float = 120.0,
+) -> httpx.Client:
+    """Create a synchronous httpx client for the ARK (Volcano Engine / Doubao) API.
+
+    ARK is a remote endpoint so proxy is always honoured (no loopback bypass).
+
+    Args:
+        proxy:           Optional HTTP proxy URL.  Pass ``settings.HTTP_PROXY``.
+        timeout_seconds: Total request timeout in seconds.
+
+    Returns:
+        Configured :class:`httpx.Client` — use as a context manager.
+    """
+    return httpx.Client(proxy=proxy, timeout=httpx.Timeout(timeout_seconds))
+
+
+def make_ark_async_client(
+    proxy: str | None = None,
+    timeout_seconds: float = 120.0,
+) -> httpx.AsyncClient:
+    """Create an asynchronous httpx client for the ARK (Volcano Engine / Doubao) API.
+
+    ARK is a remote endpoint so proxy is always honoured (no loopback bypass).
+
+    Args:
+        proxy:           Optional HTTP proxy URL.  Pass ``settings.HTTP_PROXY``.
+        timeout_seconds: Total request timeout in seconds.
+
+    Returns:
+        Configured :class:`httpx.AsyncClient` — use as a context manager.
+    """
+    return httpx.AsyncClient(proxy=proxy, timeout=httpx.Timeout(timeout_seconds))
+
+
 def make_mock_transport_async_client(
     base_url: str,
     transport: httpx.AsyncBaseTransport,
@@ -183,6 +219,8 @@ def make_mock_transport_async_client(
 
 
 __all__ = [
+    "make_ark_async_client",
+    "make_ark_sync_client",
     "make_centrifugo_sse_async_client",
     "make_fmp_async_client",
     "make_internal_async_client",

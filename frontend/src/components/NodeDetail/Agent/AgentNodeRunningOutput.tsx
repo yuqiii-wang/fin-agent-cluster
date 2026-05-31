@@ -5,8 +5,8 @@
  * Entries are never removed — re-runs appear as additional rows below
  * completed ones.  Click a row to expand its input / output inline.
  *
- * llm_orchestration tasks running show a special "Thinking / Judgement"
- * label with an animated indicator.
+ * llm_orchestration_on_failure tasks running show a special "Thinking /
+ * Judgement" label with an animated indicator.
  */
 
 import React, { useState } from 'react';
@@ -83,7 +83,7 @@ const AgentNodeRunningOutput: React.FC<Props> = ({ entries, tokenStreams = {}, s
       )}
 
       {[...entries].reverse().map((entry) => {
-        const isOrch = entry.task_name === 'llm_orchestration';
+        const isOrch = entry.task_name === 'llm_orchestration_on_failure';
         const isRunning = entry.status === 'running';
         const isExpanded = expandedIds.has(entry.task_id);
         const liveStream = tokenStreams[entry.task_id];

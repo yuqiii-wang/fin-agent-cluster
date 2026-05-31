@@ -2,10 +2,12 @@
 
 Orchestration
 -------------
-1. ``get_news``              — fetch news (FMP) + info (DDGS), cache in ``news_raw``.
+1. ``get_news``              — fetch by requesting url/news provider, e.g., 
+    FinancialModelingPrep news API or DuckDuckGo Search API, or just input from the previous task.
+    Hard failure: if this step fails, the whole pipeline fails and raises.
 2. ``do_summary`` ┐ parallel — LLM-classify each article (soft failure).
    ``do_emb``     ┘           embed title+content of each article (soft failure).
-3. ``digest_news``           — read from ``news_raw``, combine summaries+embeddings,
+3. ``digest_news``           — read from ``input_raw``, combine summaries+embeddings,
                                upsert to ``news_stats``, render Markdown.
 """
 
@@ -81,8 +83,6 @@ async def _pipeline(
             from_dt=seq_input.from_dt,
             to_dt=seq_input.to_dt,
             news_limit=seq_input.news_limit,
-            bypass_threshold_minutes=seq_input.bypass_threshold_minutes,
-            thread_id=ctx.thread_id,
         ),
     )
     gn_output: GetNewsOutput = gn_result.content
@@ -93,7 +93,7 @@ async def _pipeline(
         do_summary,
         ctx,
         DoSummaryInput(
-            news_raw_id=gn_output.news_raw_id,
+            input_raw_id=gn_output.input_raw_id,
             news_articles=articles_json,
         ),
     )
@@ -101,7 +101,7 @@ async def _pipeline(
         do_emb,
         ctx,
         DoEmbInput(
-            news_raw_id=gn_output.news_raw_id,
+            input_raw_id=gn_output.input_raw_id,
             news_articles=articles_json,
         ),
     )
@@ -134,7 +134,7 @@ async def _pipeline(
         digest_news,
         ctx,
         DigestNewsInput(
-            news_raw_id=gn_output.news_raw_id,
+            input_raw_id=gn_output.input_raw_id,
             source_filter=gn_output.source,
             summaries=summary_output.summaries,
             embeddings=emb_output.embeddings,
@@ -156,7 +156,7 @@ get_and_digest_news: TaskSeq[GetAndDigestNewsInput, GetAndDigestNewsOutput] = Ta
         "Sequential pipeline: fetch news articles (FMP) and web-search info (DDGS) "
         "for a symbol/topic/datetime window (get_news), LLM-classify each article "
         "(do_summary, soft failure), embed the AI summaries (do_emb, soft failure), "
-        "then read from fin_markets.news_raw, combine enrichment, upsert to "
+        "then read from fin_markets.input_raw, combine enrichment, upsert to "
         "fin_markets.news_stats, and render a Markdown digest (digest_news)."
     ),
     tasks=[get_news, do_summary, do_emb, digest_news],

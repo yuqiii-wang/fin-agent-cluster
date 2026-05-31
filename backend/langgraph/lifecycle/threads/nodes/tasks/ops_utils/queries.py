@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from backend.db.postgres import raw_conn, pg_retry
+from backend.db.postgres.queries.fin_markets_input_raw import InputRawSQL
 from backend.langgraph.lifecycle.threads.nodes.tasks.sql import (
     _GET_EXISTING_TASK_FOR_NODE,
     _GET_LATEST_LLM_RESPONSE,
+    _GET_NODE_NAME_BY_ID,
     _GET_PAUSED_TASK_FOR_NODE,
     _GET_TASK_FULL,
     _INVALIDATE_NODE_TASK_CACHES,
@@ -107,21 +109,29 @@ async def get_latest_llm_response(task_id: str) -> dict[str, Any] | None:
 
 
 async def invalidate_node_task_caches(thread_id: str, node_id: str) -> int:
-    """Zero-out cache_ttl_seconds for all completed tasks under *node_id*.
-
-    After this call the tasks will not be matched as valid cache entries in
-    ``get_existing_task_for_node`` and will be re-executed on the next run.
+    """Zero-out cache_ttl_seconds for all completed tasks sharing the same
+    node_name as *node_id*, across all versions under *thread_id*.
+    Also expires ``input_raw`` inner-cache rows for the same thread+node so
+    ``pg_cache_fn`` short-circuits are bypassed on the next run.
 
     Args:
         thread_id: LangGraph thread UUID.
-        node_id:   Owning node UUID.
+        node_id:   Any node UUID whose ``node_name`` identifies the target set.
 
     Returns:
         Number of task rows invalidated.
     """
+    async with raw_conn(readonly=True) as rconn:
+        cur = await rconn.execute(_GET_NODE_NAME_BY_ID, (node_id,))
+        row = await cur.fetchone()
+    node_name: str | None = row["node_name"] if row else None
+
     async with raw_conn() as conn:
-        cur = await conn.execute(_INVALIDATE_NODE_TASK_CACHES, (node_id, thread_id))
-        return cur.rowcount
+        cur = await conn.execute(_INVALIDATE_NODE_TASK_CACHES, (thread_id, node_id))
+        count = cur.rowcount
+        if node_name:
+            await conn.execute(InputRawSQL.EXPIRE_BY_THREAD_NODE, (thread_id, node_name))
+    return count
 
 
 __all__ = [

@@ -60,6 +60,8 @@ ReadError = httpx.ReadError
 # ---------------------------------------------------------------------------
 
 from backend.httpx_client.factory import (  # noqa: E402
+    make_ark_async_client,
+    make_ark_sync_client,
     make_centrifugo_sse_async_client,
     make_fmp_async_client,
     make_internal_async_client,
@@ -77,6 +79,7 @@ from backend.httpx_client.browser_headers import (  # noqa: E402
     BROWSER_API_HEADERS,
     BROWSER_HEADERS,
 )
+
 
 __all__ = [
     # Client types

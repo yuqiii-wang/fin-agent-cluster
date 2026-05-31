@@ -119,44 +119,6 @@ async def forget_skill(node_id: str, skill_id: str) -> bool:
     return row is not None
 
 
-# ===========================================================================
-# Candidate search for capability selection
-# ===========================================================================
-
-
-def _matches_keywords(text: str, keywords: list[str]) -> bool:
-    """Return ``True`` if any keyword appears in *text* (case-insensitive)."""
-    lower = text.lower()
-    return any(kw in lower for kw in keywords)
-
-
-def search_skill_candidates(
-    skills: list[Skill],
-    keywords: list[str],
-    max_results: int,
-) -> list[Skill]:
-    """Return skills whose summary or instructions match any keyword.
-
-    Falls back to the most-recent *max_results* skills when no keyword match
-    is found (ensures at least some skill context is always presented).
-
-    Args:
-        skills:      All active skills for the node (ordered by creation time).
-        keywords:    Keywords extracted from the current task description.
-        max_results: Maximum candidates to return.
-
-    Returns:
-        Filtered and capped list of :class:`Skill`.
-    """
-    if not keywords:
-        return skills[:max_results]
-    matched = [
-        s for s in skills
-        if _matches_keywords(s.summary + " " + s.instructions, keywords)
-    ]
-    return (matched if matched else skills)[:max_results]
-
-
 async def copy_skills_from_node(src_node_id: str, dst_node_id: str, thread_id: str) -> int:
     """Copy active skills from *src_node_id* into *dst_node_id*.
 
@@ -207,5 +169,4 @@ __all__ = [
     "copy_skills_from_node",
     "forget_skill",
     "get_skills",
-    "search_skill_candidates",
 ]

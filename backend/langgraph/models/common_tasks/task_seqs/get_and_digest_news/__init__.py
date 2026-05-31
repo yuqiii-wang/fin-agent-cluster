@@ -2,10 +2,10 @@
 
 Orchestration
 -------------
-1. ``get_news``    — fetch news and web-search snippets via NewsClient (DDGS), cache in ``news_raw``.
+1. ``get_news``    — fetch news and web-search snippets via NewsClient (DDGS), cache in ``input_raw``.
 2. ``do_summary``  — LLM-classify each article (soft failure).
 3. ``do_emb``      — embed AI summaries (soft failure).
-4. ``digest_news`` — read from news_raw, combine enrichment, upsert to news_stats, render Markdown.
+4. ``digest_news`` — read from input_raw, combine enrichment, upsert to news_stats, render Markdown.
 """
 
 from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news.get_news import (

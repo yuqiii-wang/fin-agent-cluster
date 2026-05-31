@@ -8,33 +8,29 @@ from typing import TYPE_CHECKING, Any
 from backend.langgraph.models.node_utils.agent_step_mixin import AgentGlobalStateBase
 
 if TYPE_CHECKING:
-    from backend.langgraph.models.common_tasks.task_seqs.navigate_web.models import (
-        NavigateWebPerUrlOutput,
+    from backend.langgraph.models.common_tasks.task_seqs.navigate_web.load_markdown_from_url.models import (
+        LoadMdFromUrlOutput,
     )
 
 
 @dataclass
 class DerivativesGlobalState(AgentGlobalStateBase):
-    """Mutable state carried across prepare_derivatives agent steps.
-
-    Extends :class:`~backend.langgraph.models.node_utils.agent_step_mixin.AgentGlobalStateBase`
-    with prepare_derivatives-specific fields.
+    """Mutable cross-iteration state for the prepare_derivatives agent loop.
 
     Attributes:
-        symbol:         Uppercased equity ticker resolved from query_node.
-        json_input:     Merged structured options JSON parsed from the sandbox
-                        outputs of ``step_navigate_web``; ``None`` when the step
-                        was skipped or all URL pipelines failed.
-        load_md_output: First successful per-URL pipeline output from
-                        ``step_navigate_web``; used by ``step_get_stats`` as a
-                        fallback source of Markdown text when sandbox extraction
-                        produced no valid JSON.
+        symbol:         Uppercased equity symbol being processed.
+        md_pages:       Markdown pages loaded by ``step_load_markdown``; the
+                        ``step_study_web`` step studies each to extract options.
+        json_input:     Structured options JSON extracted by ``step_study_web``;
+                        ``None`` until extraction succeeds.
+        load_md_output: First successful loaded Markdown page, used as a
+                        markdown fallback when sandbox extraction fails.
     """
 
     symbol: str = ""
+    md_pages: "list[LoadMdFromUrlOutput]" = field(default_factory=list, repr=False)
     json_input: dict[str, Any] | None = None
-    load_md_output: "NavigateWebPerUrlOutput | None" = field(default=None, repr=False)
+    load_md_output: "LoadMdFromUrlOutput | None" = field(default=None, repr=False)
 
 
 __all__ = ["DerivativesGlobalState"]
-

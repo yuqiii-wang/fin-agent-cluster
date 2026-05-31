@@ -58,6 +58,42 @@ async def _check_instance(client: AsyncClient, url: str, kind: str) -> InstanceH
     return InstanceHealth(url=url, kind=kind, healthy=healthy)
 
 
+class LlmProviderSettings(BaseModel):
+    """Current LLM provider configuration."""
+
+    provider: str
+    model: str
+
+
+class ServerSettingsResponse(BaseModel):
+    """Current server-side settings exposed to the UI."""
+
+    llm: LlmProviderSettings
+
+
+@router.get("/settings", response_model=ServerSettingsResponse)
+async def server_settings() -> ServerSettingsResponse:
+    """Return current server settings (read-only, no auth required).
+
+    Returns:
+        :class:`ServerSettingsResponse` with the active LLM provider and model.
+    """
+    settings = get_settings()
+    provider = (settings.LLM_PROVIDER or "mock").strip().lower()
+
+    model_map: dict[str, str] = {
+        "ollama": settings.OLLAMA_LLM_MODEL,
+        "ark": settings.ARK_MODEL,
+        "gemini": settings.GOOGLE_GEMINI_MODEL,
+        "mock": "mock",
+    }
+    model = model_map.get(provider, "unknown")
+
+    return ServerSettingsResponse(
+        llm=LlmProviderSettings(provider=provider, model=model),
+    )
+
+
 @router.get("/health", response_model=SystemHealthResponse)
 async def system_health() -> SystemHealthResponse:
     """Probe all configured FastAPI runner instances.

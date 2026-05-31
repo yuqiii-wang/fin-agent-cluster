@@ -1,106 +1,107 @@
-"""get_news — NodeTask to fetch news articles and web-search info, cache to news_raw.
+"""get_news — NodeTask to fetch raw news articles for a symbol/topic window.
 
-Fetches news via :class:`~backend.resources.news.client.NewsClient` (FMP primary,
-DDGS fallback) and web-search snippets via DDGS text search
-for a given symbol, topic list, and datetime window.  The combined raw output is
-cached in ``fin_markets.news_raw`` with a 4-hour TTL; subsequent calls within the
-TTL return the cached result.
+Resolves a list of :class:`~backend.resources.news.models.NewsArticle` for the
+requested window via one of two paths:
+
+* injection      — ``json_input`` (list of article dicts) or ``text_content``
+  handed down from a previous task; stored in ``fin_markets.input_raw`` and
+  returned without any external call.
+* external fetch  — request a news provider (FMP → DDGS fallback inside
+  :class:`NewsClient`); raw articles are cached in ``input_raw``.
 
 Execution layers
 ----------------
 LangGraph layer (``_get_news_task`` decorated with ``@task``):
-    Calls ``create_task(..., view_type="News")``, delegates to the Celery
+    Calls ``create_task(..., view_type="Json")``, delegates to the Celery
     completion worker, and returns a ``TaskOutput``.
 
 Celery layer (``_handler``):
-    1. Computes a deterministic SHA-256 cache_key.
-    2. Checks ``news_raw`` for a fresh entry within the 4-hour TTL.
-    3. On cache miss: fetches from NewsClient (news + web-search), inserts to ``news_raw``.
-    4. Returns serialised ``GetNewsOutput``.
+    Dispatches to the injection or external-fetch path and caches the raw
+    payload in ``fin_markets.input_raw``.  Empty external results raise.
 
 Public exports
 --------------
-``get_news``   — ``NodeTask`` instance.
-``HANDLERS``   — dict slice for registration in ``backend.langgraph.nodes.HANDLERS``.
+``get_news``       — ``NodeTask`` instance.
+``GetNewsInput``   — Pydantic input model.
+``GetNewsOutput``  — Pydantic output model.
+``HANDLERS``       — dict slice for Celery handler registration.
 """
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.db.postgres import raw_conn
-from backend.db.postgres.queries.fin_markets_news import NewsRawSQL
+from backend.db.postgres.queries.fin_markets_input_raw import InputRawSQL
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import (
     NEWS_TASK_ALL_PROVIDERS_EMPTY,
     NEWS_TASK_FETCH_ERROR,
 )
-from backend.langgraph.models.models import NodeContext, TaskInput, TaskOutput
-from backend.langgraph.models.task import NodeTask
+from backend.langgraph.models.models import TaskInput, TaskOutput
+from backend.langgraph.models.task import NodeTask, get_task_cache_ttl
 from backend.resources.news.client import NewsClient
 from backend.resources.news.models import NewsArticle
 
 logger = logging.getLogger(__name__)
 
 _TASK_NAME = "get_news"
-_CACHE_TTL_HOURS = 4
 _NODE_NAME = "common_tasks/get_news"
 _METHOD = "list_news"
-_RETRY_WAIT_SECONDS = 60
 
 
-def _floor_to_4h_block(dt: datetime) -> datetime:
-    """Truncate a datetime to the nearest 4-hour UTC block (0, 4, 8, 12, 16, 20).
+def _date_bucket(dt: datetime | None) -> str:
+    """Return a stable day-granularity bucket string for cache keying.
+
+    Using day granularity keeps the cache key stable for repeated runs within
+    the cache TTL even though the precise ``from_dt`` / ``to_dt`` shift slightly
+    on every invocation.
 
     Args:
-        dt: Datetime to floor (may be timezone-aware).
+        dt: A datetime, or ``None``.
 
     Returns:
-        Datetime with hour floored to the 4-hour boundary, minutes/seconds/microseconds zeroed.
+        ``YYYY-MM-DD`` string, or ``""`` when *dt* is ``None``.
     """
-    block_hour = (dt.hour // 4) * 4
-    return dt.replace(hour=block_hour, minute=0, second=0, microsecond=0)
+    return dt.strftime("%Y-%m-%d") if dt is not None else ""
 
 
 def _make_cache_key(
     symbol: str | None,
-    topics: list[str] | None,
+    topics: list[str],
     from_dt: datetime | None,
     to_dt: datetime | None,
 ) -> str:
-    """Build a deterministic SHA-256 cache key from the fetch parameters.
-
-    ``from_dt`` and ``to_dt`` are floored to 4-hour UTC blocks so that
-    requests made within the same 4-hour window produce the same cache key
-    regardless of sub-block timestamp differences.
+    """Compute a deterministic SHA-256 cache key for ``input_raw`` lookup.
 
     Args:
-        symbol:  Equity ticker or None.
-        topics:  Topic filter list or None.
-        from_dt: Start of the date window or None.
-        to_dt:   End of the date window or None.
+        symbol:  Ticker symbol or ``None``.
+        topics:  Topic keywords.
+        from_dt: Start of the date window.
+        to_dt:   End of the date window.
 
     Returns:
-        Hex SHA-256 string.
+        Hex-encoded 64-character SHA-256 digest.
     """
     payload = json.dumps(
         {
-            "symbol": symbol,
-            "topics": sorted(topics) if topics else [],
-            "from_dt": _floor_to_4h_block(from_dt).isoformat() if from_dt else None,
-            "to_dt": _floor_to_4h_block(to_dt).isoformat() if to_dt else None,
+            "source": "news",
+            "method": _METHOD,
+            "symbol": (symbol or "").upper(),
+            "topics": sorted(topics),
+            "from": _date_bucket(from_dt),
+            "to": _date_bucket(to_dt),
         },
         sort_keys=True,
     )
-    return hashlib.sha256(f"get_news:{payload}".encode()).hexdigest()
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -112,16 +113,13 @@ class GetNewsInput(BaseModel):
     """Input for the get_news task.
 
     Attributes:
-        symbol:      Primary equity ticker, e.g. ``'AAPL'``.  ``None`` for
-                     topic-only news.
-        topics:      Topic keyword list to narrow the search, e.g.
-                     ``["earnings", "guidance"]``.
-        from_dt:     Earliest article datetime (UTC).  ``None`` to let the
-                     provider default.
-        to_dt:       Latest article datetime (UTC).  ``None`` to let the
-                     provider default.
-        news_limit:  Maximum number of news articles to fetch from NewsClient.
-        bypass_threshold_minutes: Cache bypass threshold in minutes.
+        symbol:       Equity ticker, e.g. ``'AAPL'``.  ``None`` for topic-only.
+        topics:       Topic keywords to narrow/augment the search.
+        from_dt:      Start of the news date window (UTC).
+        to_dt:        End of the news date window (UTC).
+        news_limit:   Max number of articles to fetch.
+        text_content: Free-form text to inject as a single article.
+        json_input:   List of article dicts handed down from a previous task.
     """
 
     symbol: str | None = Field(default=None, description="Equity ticker, e.g. 'AAPL'.")
@@ -129,188 +127,180 @@ class GetNewsInput(BaseModel):
     from_dt: datetime | None = Field(default=None, description="Start of date window (UTC).")
     to_dt: datetime | None = Field(default=None, description="End of date window (UTC).")
     news_limit: int = Field(default=20, ge=1, le=100, description="Max news articles to fetch.")
-    bypass_threshold_minutes: int = Field(
-        default=240, ge=1, description="Minutes within which cached result is reused."
-    )
-    thread_id: str | None = Field(default=None, description="Originating LangGraph thread UUID for provenance.")
+    text_content: str | None = Field(default=None, description="Free-form text to inject as one article.")
+    json_input: list[dict] | None = Field(default=None, description="Injected NewsArticle dicts.")
 
 
 class GetNewsOutput(BaseModel):
     """Output from the get_news task.
 
     Attributes:
-        news_raw_id:    DB row ID of the inserted ``news_raw`` record.
-                        ``None`` when served from cache.
-        news_articles:  Fetched news articles (FMP provider) plus DDGS web-search
-                        results converted to :class:`NewsArticle`.
-        from_cache:     ``True`` when served from the ``news_raw`` cache.
+        input_raw_id:  PK of the ``fin_markets.input_raw`` cache row inserted/reused.
+        source:        Provider label actually used (``'fmp'``, ``'ddgs'``, ``'injected'``).
+        news_articles: Raw articles resolved for the window.
+        from_cache:    ``True`` when served from a fresh ``input_raw`` entry.
     """
 
-    news_raw_id: int | None = Field(default=None)
-    source: str = Field(default="fmp", description="Primary news provider used — 'fmp' or 'ddgs'.")
-    news_articles: list[NewsArticle]
-    from_cache: bool = Field(default=False)
+    input_raw_id: int | None = Field(default=None, description="PK of the input_raw cache row.")
+    source: str = Field(default="fmp", description="Provider label used.")
+    news_articles: list[NewsArticle] = Field(default_factory=list, description="Resolved raw articles.")
+    from_cache: bool = Field(default=False, description="True when served from cache.")
 
 
 # ---------------------------------------------------------------------------
-# Celery handler
+# Celery layer — business logic
 # ---------------------------------------------------------------------------
 
 
-async def _handler(payload: dict) -> dict:
-    """Celery-layer business logic for get_news.
-
-    The pg cache check is handled upstream by ``run_task`` via ``pg_cache_fn``.
-    This function is only reached on a cache miss.
-
-    Retry strategy
-    --------------
-    Attempt 1: ``NewsClient.list_news()`` — tries FMP first, falls back to DDGS
-    internally when FMP returns empty.
-
-    If the combined result is still empty after both providers, waits
-    ``_RETRY_WAIT_SECONDS`` (60 s) then performs Attempt 2 with a fresh client.
-
-    If Attempt 2 is also empty, raises :class:`RuntimeError` tagged with
-    ``NEWS_TASK_ALL_PROVIDERS_EMPTY`` so the LangGraph task is marked as
-    failed and downstream tasks in the same news node fail accordingly.
+async def _persist(
+    thread_id: str | None,
+    symbol: str | None,
+    source: str,
+    cache_key: str,
+    ttl_seconds: int,
+    input_payload: dict,
+    articles: list[NewsArticle],
+) -> int:
+    """Insert raw articles into ``fin_markets.input_raw`` and return the new id.
 
     Args:
-        payload: Serialised :class:`GetNewsInput` fields.
+        thread_id:     LangGraph thread id for provenance (may be ``None``).
+        symbol:        Ticker (uppercased) or ``None``.
+        source:        Provider/source label.
+        cache_key:     Deterministic cache key.
+        ttl_seconds:   Per-row cache validity in seconds.
+        input_payload: Request params (JSON-serialisable).
+        articles:      Resolved articles to store.
 
     Returns:
-        Serialised :class:`GetNewsOutput` dict.
-
-    Raises:
-        RuntimeError: When all providers return empty results after the retry wait.
+        The inserted ``input_raw.id``.
     """
-    inp = GetNewsInput.model_validate(payload)
-
-    symbol = inp.symbol.upper() if inp.symbol else None
-
-    # Skip fetch entirely when no symbol is provided — industry and macro news
-    # nodes may pass symbol=None when the stock cannot be resolved.  Rather than
-    # hammering providers and raising NEWS_TASK_ALL_PROVIDERS_EMPTY, return an
-    # empty result so the node completes gracefully.
-    if not symbol:
-        return GetNewsOutput(
-            news_raw_id=None,
-            source="none",
-            news_articles=[],
-            from_cache=False,
-        ).model_dump(mode="json")
-
-    topics = inp.topics or None
-    cache_key = _make_cache_key(symbol, inp.topics or None, inp.from_dt, inp.to_dt)
-
-    async def _try_fetch() -> tuple[list[NewsArticle], str]:
-        """One attempt: FMP → DDGS fallback via NewsClient. Returns (articles, provider)."""
-        news_client = NewsClient()
-        try:
-            news_resp = await news_client.list_news(
-                symbol=symbol,
-                topics=topics,
-                from_dt=inp.from_dt,
-                to_dt=inp.to_dt,
-                limit=inp.news_limit,
-            )
-            return news_resp.items, news_client.provider
-        except Exception as exc:
-            logger.error(
-                "[%s] get_news fetch failed symbol=%s error=%s",
-                NEWS_TASK_FETCH_ERROR, symbol, exc,
-            )
-            return [], news_client.provider
-
-    # Attempt 1: FMP → DDGS
-    news_articles, provider = await _try_fetch()
-
-    if not news_articles:
-        logger.error(
-            "[%s] get_news all providers returned empty symbol=%s; retrying after %ds",
-            NEWS_TASK_ALL_PROVIDERS_EMPTY, symbol, _RETRY_WAIT_SECONDS,
-        )
-        await asyncio.sleep(_RETRY_WAIT_SECONDS)
-        # Attempt 2: fresh client, same FMP → DDGS order
-        news_articles, provider = await _try_fetch()
-
-    if not news_articles:
-        raise RuntimeError(
-            f"[{NEWS_TASK_ALL_PROVIDERS_EMPTY}] get_news all providers returned empty "
-            f"after retry — symbol={symbol!r}"
-        )
-
-    # --- persist to news_raw ---
-    output_payload = {
-        "news_articles": [a.model_dump(mode="json") for a in news_articles],
-    }
-    input_payload = {
-        "symbol": symbol,
-        "topics": inp.topics,
-        "from_dt": inp.from_dt.isoformat() if inp.from_dt else None,
-        "to_dt": inp.to_dt.isoformat() if inp.to_dt else None,
-    }
+    output_payload = {"news_articles": [a.model_dump(mode="json") for a in articles]}
     async with raw_conn() as conn:
         cur = await conn.execute(
-            NewsRawSQL.INSERT_RETURNING,
+            InputRawSQL.INSERT_RETURNING,
             (
-                inp.thread_id,
+                thread_id,
                 _NODE_NAME,
-                provider,
+                (symbol or "").upper(),
+                source,
                 _METHOD,
                 cache_key,
+                ttl_seconds,
                 json.dumps(input_payload),
                 json.dumps(output_payload),
             ),
         )
         row = await cur.fetchone()
-        news_raw_id: int | None = row["id"] if row else None
-
-    return GetNewsOutput(
-        news_raw_id=news_raw_id,
-        source=provider,
-        news_articles=news_articles,
-        from_cache=False,
-    ).model_dump(mode="json")
+    return row["id"]
 
 
-# ---------------------------------------------------------------------------
-# PG cache function
-# ---------------------------------------------------------------------------
-
-
-async def _get_news_pg_cache(
-    inp: GetNewsInput, ctx: NodeContext
-) -> GetNewsOutput | None:
-    """Check pg for a recent ``news_raw`` record matching the same input parameters.
-
-    Queries ``NewsRawSQL.GET_CACHED`` using a 4-hour TTL.
+def _build_injected_articles(inp: GetNewsInput, symbol: str | None) -> list[NewsArticle]:
+    """Build articles from injected ``json_input`` / ``text_content``.
 
     Args:
-        inp: Typed task input.
-        ctx: Current node context (unused; present for signature compatibility).
+        inp:    Typed input with injection fields set.
+        symbol: Ticker or ``None``.
 
     Returns:
-        ``GetNewsOutput`` with ``from_cache=True`` on a cache hit, or ``None``.
+        List of validated :class:`NewsArticle`.
+
+    Raises:
+        ValueError: When ``json_input`` items are not valid NewsArticle dicts.
     """
+    if inp.json_input is not None:
+        try:
+            return [NewsArticle.model_validate(a) for a in inp.json_input]
+        except Exception as exc:
+            raise ValueError(
+                f"[{NEWS_TASK_FETCH_ERROR}] invalid json_input articles: {exc}"
+            ) from exc
+    text = inp.text_content or ""
+    url_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+    return [
+        NewsArticle(
+            id=f"injected-{url_hash}",
+            symbol=symbol,
+            title=(text[:120] or "Injected content"),
+            source="injected",
+            content=text,
+        )
+    ]
+
+
+async def _handler(payload: dict) -> dict:
+    """Resolve raw news articles via injection or external fetch.
+
+    Args:
+        payload: Serialised :class:`GetNewsInput` dict.
+
+    Returns:
+        Serialised :class:`GetNewsOutput` dict.
+
+    Raises:
+        ValueError: When external providers return no articles, or injected
+                    JSON is invalid.
+    """
+    inp = GetNewsInput.model_validate(payload)
+    thread_id = payload.get("thread_id")
     symbol = inp.symbol.upper() if inp.symbol else None
-    if not symbol:
-        return None  # no symbol → handler will return empty immediately, no cache to check
-    cache_key = _make_cache_key(symbol, inp.topics or None, inp.from_dt, inp.to_dt)
-    ttl_cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=_CACHE_TTL_HOURS)
+    ttl_seconds = get_task_cache_ttl(_TASK_NAME)
+
+    # Injection path — no external call.
+    if inp.json_input is not None or inp.text_content:
+        articles = _build_injected_articles(inp, symbol)
+        cache_key = _make_cache_key(symbol, inp.topics, inp.from_dt, inp.to_dt)
+        input_raw_id = await _persist(
+            thread_id, symbol, "injected", cache_key, ttl_seconds,
+            {"symbol": symbol, "topics": inp.topics, "injected": True},
+            articles,
+        )
+        return GetNewsOutput(
+            input_raw_id=input_raw_id, source="injected", news_articles=articles, from_cache=False,
+        ).model_dump(mode="json")
+
+    # External fetch path — cache check first.
+    cache_key = _make_cache_key(symbol, inp.topics, inp.from_dt, inp.to_dt)
     async with raw_conn(readonly=True) as conn:
-        cur = await conn.execute(NewsRawSQL.GET_CACHED, (cache_key, ttl_cutoff))
-        row = await cur.fetchone()
-    if row is None:
-        return None
-    cached: dict = row["output"]
-    news_articles = [NewsArticle.model_validate(a) for a in cached.get("news_articles", [])]
-    return GetNewsOutput(
-        news_raw_id=row["id"],
-        source=row["source"],
-        news_articles=news_articles,
-        from_cache=True,
+        cur = await conn.execute(InputRawSQL.GET_CACHED, (cache_key,))
+        cached_row = await cur.fetchone()
+
+    if cached_row is not None:
+        articles = [
+            NewsArticle.model_validate(a)
+            for a in cached_row["output"].get("news_articles", [])
+        ]
+        return GetNewsOutput(
+            input_raw_id=cached_row["id"],
+            source=cached_row["source"],
+            news_articles=articles,
+            from_cache=True,
+        ).model_dump(mode="json")
+
+    client = NewsClient()
+    resp = await client.list_news(
+        symbol=symbol,
+        topics=inp.topics or None,
+        from_dt=inp.from_dt,
+        to_dt=inp.to_dt,
+        limit=inp.news_limit,
     )
+
+    if not resp.items:
+        raise ValueError(
+            f"[{NEWS_TASK_ALL_PROVIDERS_EMPTY}] No news for symbol={symbol} topics={inp.topics}"
+        )
+
+    source = client.provider
+    articles = resp.items
+    input_raw_id = await _persist(
+        thread_id, symbol, source, cache_key, ttl_seconds,
+        {"symbol": symbol, "topics": inp.topics, "from": _date_bucket(inp.from_dt), "to": _date_bucket(inp.to_dt)},
+        articles,
+    )
+    return GetNewsOutput(
+        input_raw_id=input_raw_id, source=source, news_articles=articles, from_cache=False,
+    ).model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
@@ -330,10 +320,11 @@ async def _get_news_task(
 
     Returns:
         :class:`~backend.langgraph.models.models.TaskOutput` wrapping
-        :class:`GetNewsOutput` from the Celery worker.
+        :class:`GetNewsOutput`.
     """
     ctx = task_input.ctx
     payload = task_input.content.model_dump(mode="json")
+    payload["thread_id"] = ctx.thread_id
 
     await create_task(
         ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,
@@ -349,23 +340,33 @@ async def _get_news_task(
             failed=True, error=str(exc),
         )
         raise
+
     output = GetNewsOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
 
 
+# ---------------------------------------------------------------------------
+# NodeTask registration
+# ---------------------------------------------------------------------------
+
 get_news: NodeTask[GetNewsInput, GetNewsOutput] = NodeTask(
     name=_TASK_NAME,
     description=(
-        "Fetch news articles (FMP primary, DDGS fallback) and web-search snippets (DDGS) for a symbol "
-        "and optional topic/datetime filter.  Caches raw output in fin_markets.news_raw."
+        "Resolve raw news articles for a symbol/topic/datetime window: fetch from a "
+        "news provider (FMP → DDGS fallback) or inject json_input/text_content from a "
+        "previous task. The raw payload is cached in fin_markets.input_raw."
     ),
     input_type=GetNewsInput,
     output_type=GetNewsOutput,
     task_fn=_get_news_task,
     handler=_handler,
-    pg_cache_fn=_get_news_pg_cache,
 )
 
-HANDLERS: dict[str, object] = {_TASK_NAME: _handler}
+HANDLERS: dict = {_TASK_NAME: _handler}
 
-__all__ = ["GetNewsInput", "GetNewsOutput", "get_news", "HANDLERS"]
+__all__ = [
+    "get_news",
+    "GetNewsInput",
+    "GetNewsOutput",
+    "HANDLERS",
+]

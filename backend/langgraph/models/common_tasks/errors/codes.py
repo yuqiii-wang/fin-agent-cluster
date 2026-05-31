@@ -17,11 +17,6 @@ NEWS_TASK_SUMMARY_WARN = "NEWS_TASK_SUMMARY_WARN"
 NEWS_TASK_EMB_WARN = "NEWS_TASK_EMB_WARN"
 NEWS_TASK_ALL_PROVIDERS_EMPTY = "NEWS_TASK_ALL_PROVIDERS_EMPTY"
 
-STATS_TASK_JSON_INPUT_INVALID = "STATS_TASK_JSON_INPUT_INVALID"
-STATS_TASK_JSON_INPUT_UNSUPPORTED_TYPE = "STATS_TASK_JSON_INPUT_UNSUPPORTED_TYPE"
-STATS_TASK_SRC_REF_MISSING = "STATS_TASK_SRC_REF_MISSING"
-STATS_TASK_SRC_REF_MISMATCH = "STATS_TASK_SRC_REF_MISMATCH"
-
 STATS_TASK_ERRORS: dict[str, str] = {
     STATS_TASK_NO_DATA: "No stats data returned from provider for the given symbol/period.",
     STATS_TASK_PROVIDER_ERROR: "External stats provider raised an error.",
@@ -30,10 +25,6 @@ STATS_TASK_ERRORS: dict[str, str] = {
     STATS_TASK_UNSUPPORTED_PERIOD: "Requested period is not supported for indicator calculation.",
     STATS_TASK_PERIOD_FALLBACK: "Requested period unavailable; fell back to a shorter period.",
     STATS_TASK_PROVIDER_FALLBACK: "Primary provider returned no data; fell back to an alternative provider.",
-    STATS_TASK_JSON_INPUT_INVALID: "json_input failed schema validation for the declared data_type.",
-    STATS_TASK_JSON_INPUT_UNSUPPORTED_TYPE: "json_input data_type is not yet supported.",
-    STATS_TASK_SRC_REF_MISSING: "src_task_id provided but no task_executions row found in DB for that task.",
-    STATS_TASK_SRC_REF_MISMATCH: "Injected data values could not be traced back to the source task output.",
 }
 
 DERIV_TASK_OPTIONS_FETCH_ERROR = "DERIV_TASK_OPTIONS_FETCH_ERROR"
@@ -75,12 +66,14 @@ WEB_TASK_FETCH_ERROR = "WEB_TASK_FETCH_ERROR"
 WEB_TASK_INVALID_URL = "WEB_TASK_INVALID_URL"
 WEB_TASK_CONVERT_ERROR = "WEB_TASK_CONVERT_ERROR"
 WEB_TASK_STUDY_ERROR = "WEB_TASK_STUDY_ERROR"
+WEB_TASK_PLAYWRIGHT_SCRIPT_ERROR = "WEB_TASK_PLAYWRIGHT_SCRIPT_ERROR"
 
 WEB_TASK_ERRORS: dict[str, str] = {
     WEB_TASK_FETCH_ERROR: "httpx HTTP request failed; check URL reachability and network connectivity.",
     WEB_TASK_INVALID_URL: "URL must use http or https scheme.",
     WEB_TASK_CONVERT_ERROR: "markitdown HTML conversion failed; the page may contain malformed markup.",
     WEB_TASK_STUDY_ERROR: "LLM content assessment failed or returned an unexpected structure.",
+    WEB_TASK_PLAYWRIGHT_SCRIPT_ERROR: "Playwright script generation or sandbox execution failed; page barrier may not have been cleared.",
 }
 
 WEB_KNOWLEDGE_URL_NO_SYMBOL = "WEB_KNOWLEDGE_URL_NO_SYMBOL"
@@ -104,6 +97,7 @@ FUNDAMENTALS_TASK_ERRORS: dict[str, str] = {
 }
 
 LLM_ORCH_DECIDE_ERROR = "LLM_ORCH_DECIDE_ERROR"
+LLM_ORCH_VALIDATION_ERROR = "LLM_ORCH_VALIDATION_ERROR"
 
 LLM_ORCH_ERRORS: dict[str, str] = {
     LLM_ORCH_DECIDE_ERROR: "LLM orchestration failed to produce a valid decision or returned an unexpected structure.",

@@ -2,11 +2,11 @@
 
 Tasks
 -----
-``get_stats``                   — fetch OHLCV stats + news from the resource API, cache in quant_raw.
+``get_stats``                   — fetch OHLCV stats from a stats provider, cache in input_raw.
 ``calculate_stats``             — compute technical indicators from a StatsRecord, upsert to quant_stats.
 ``calculate_corr``              — compute pairwise Pearson correlation of close prices from quant_stats.
-``propose_web_knowledge_urls``  — map a symbol to its Yahoo Finance options URL for downstream navigate_web.
-``llm_orchestration_on_failure``           — streaming LLM recovery decision for tasks with is_required_llm_orchestration=True.
+``propose_web_knowledge_urls``  — map a symbol to its Yahoo Finance options URL for downstream web navigation.
+``llm_orchestration_on_failure``           — streaming LLM recovery decision; selects an earlier LLM streaming step to regenerate after a failure.
 
 HANDLERS registry
 -----------------
@@ -68,17 +68,15 @@ from backend.langgraph.models.common_tasks.task_seqs.navigate_web import (
     html_to_markdown,
     HtmlToMarkdownInput,
     HtmlToMarkdownOutput,
+    load_md_from_url,
+    LoadMdFromUrlInput,
+    LoadMdFromUrlOutput,
     study_web_content,
     StudyWebContentInput,
     StudyWebContentOutput,
     llm_orchestration_on_failure,
     LlmOrchestrationInput,
     LlmOrchestrationOutput,
-    StepResult,
-    StepInfo,
-    navigate_web,
-    NavigateWebInput,
-    NavigateWebOutput,
     HANDLERS as _NW_HANDLERS,
     STREAM_PROMPT_BUILDERS as _NW_SPB,
 )
@@ -103,6 +101,14 @@ from backend.langgraph.models.common_tasks.task_seqs.prepare_fundamentals import
     CalculateFundamentalStatsOutput,
     HANDLERS as _PF_HANDLERS,
 )
+from backend.langgraph.models.common_tasks.llm_orchestration_for_validation import (
+    llm_orchestration_for_validation,
+    ValidationViolation,
+    LlmValidationInput,
+    LlmValidationOutput,
+    HANDLERS as _LOFV_HANDLERS,
+    STREAM_PROMPT_BUILDERS as _LOFV_SPB,
+)
 
 HANDLERS: dict = {
     **_GS_HANDLERS,
@@ -115,8 +121,9 @@ HANDLERS: dict = {
     **_PWKU_HANDLERS,
     **_SB_HANDLERS,
     **_PF_HANDLERS,
+    **_LOFV_HANDLERS,
 }
-STREAM_PROMPT_BUILDERS: dict = {**_GDN_SPB, **_NW_SPB}
+STREAM_PROMPT_BUILDERS: dict = {**_GDN_SPB, **_NW_SPB, **_LOFV_SPB}
 
 __all__ = [
     "get_stats",
@@ -156,17 +163,19 @@ __all__ = [
     "html_to_markdown",
     "HtmlToMarkdownInput",
     "HtmlToMarkdownOutput",
+    "load_md_from_url",
+    "LoadMdFromUrlInput",
+    "LoadMdFromUrlOutput",
     "study_web_content",
     "StudyWebContentInput",
     "StudyWebContentOutput",
     "llm_orchestration_on_failure",
     "LlmOrchestrationInput",
     "LlmOrchestrationOutput",
-    "StepResult",
-    "StepInfo",
-    "navigate_web",
-    "NavigateWebInput",
-    "NavigateWebOutput",
+    "llm_orchestration_for_validation",
+    "ValidationViolation",
+    "LlmValidationInput",
+    "LlmValidationOutput",
     "get_fundamentals",
     "GetFundamentalsInput",
     "GetFundamentalsOutput",

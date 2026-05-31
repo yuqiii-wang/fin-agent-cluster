@@ -46,6 +46,9 @@ langchain-google-genai==4.2.2
 pypdf==6.10.2
 markitdown[pdf]==0.1.5
 
+# Headless browser interaction (cookie-consent / pop-up dismissal)
+playwright==1.51.0
+
 # Prometheus metrics
 prometheus_client==0.25.0
 

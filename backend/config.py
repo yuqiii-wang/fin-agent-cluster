@@ -82,6 +82,16 @@ class Settings(BaseSettings):
     # Leave unset to connect directly.
     HTTP_PROXY: Optional[str] = None
 
+    # ── Playwright ────────────────────────────────────────────────────────────
+    # Absolute path to the Chromium executable used by Playwright.
+    # Leave unset to let Playwright auto-locate the browser it installed via
+    # `playwright install chromium`.
+    # Example (WSL2): PLAYWRIGHT_CHROMIUM_PATH=/root/.cache/ms-playwright/chromium-1169/chrome-linux/chrome
+    PLAYWRIGHT_CHROMIUM_PATH: Optional[str] = None
+    # Set True (default) when running in WSL2 / Docker / as root where Chrome
+    # requires --no-sandbox and --disable-dev-shm-usage to start.
+    PLAYWRIGHT_NO_SANDBOX: bool = True
+
     # ── Ollama LLM ────────────────────────────────────────────────────────────
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_LLM_MODEL: str = "qwen3.5-27b-instruct"

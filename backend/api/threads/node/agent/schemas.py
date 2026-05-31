@@ -6,9 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from backend.langgraph.agent.memory.models import MemoryEntry
+from backend.langgraph.agent.memory.models import TaskMemory
 from backend.langgraph.agent.skills.models import Skill
-from backend.langgraph.agent.step_state.models import StepStateEntry
 
 
 class AddSkillRequest(BaseModel):
@@ -21,29 +20,10 @@ class AddSkillRequest(BaseModel):
     """Full instruction text; appended to the agent's system prompt."""
 
 
-class CompactMemoryRequest(BaseModel):
-    """Request body for compacting a set of memory entries into a summary."""
-
-    memory_ids: list[str]
-    """UUIDs of the active memory entries to compact (minimum 2)."""
-
-    summary: str
-    """Human-readable text that replaces the compacted entries."""
-
-
 class SkillResponse(BaseModel):
-    """Response after creating a new skill."""
+    """Response after creating or forgetting a skill."""
 
     skill_id: str
-    status: str
-
-
-class MemoryOperationResponse(BaseModel):
-    """Response after a memory forget or compact operation."""
-
-    memory_id: str
-    """ID of the affected (forgotten) or newly created (compacted_summary) entry."""
-
     status: str
 
 
@@ -56,22 +36,12 @@ class AgentCapabilitiesResponse(BaseModel):
     skills: list[Skill]
     """User-defined active skills attached to this node execution."""
 
-    memory: list[MemoryEntry]
-    """Chronological active memory entries from this node execution."""
-
-
-class AgentStepStatesResponse(BaseModel):
-    """Response for GET .../agent/step-states."""
-
-    iterations: list[StepStateEntry]
-    """All persisted iteration snapshots ordered by iteration number."""
+    memory: list[TaskMemory]
+    """Completed task outputs from this node execution, used as memory."""
 
 
 __all__ = [
     "AddSkillRequest",
     "AgentCapabilitiesResponse",
-    "AgentStepStatesResponse",
-    "CompactMemoryRequest",
-    "MemoryOperationResponse",
     "SkillResponse",
 ]

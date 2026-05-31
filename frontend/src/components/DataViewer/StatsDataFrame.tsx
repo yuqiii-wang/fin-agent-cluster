@@ -35,7 +35,7 @@ function fmtNumber(col: string, value: number): string {
 }
 
 const StatsDataFrame: React.FC<Props> = ({ dfSplit, maxHeight = 320 }) => {
-  const { index, columns, data } = dfSplit;
+  const { index = [], columns = [], data = [] } = dfSplit;
   const indexKey = dfSplit.index_label ?? DATE_KEY;
   const indexTitle = dfSplit.index_label ?? 'Date';
 

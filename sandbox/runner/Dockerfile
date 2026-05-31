@@ -8,6 +8,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends bash postgresql
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+# Install Playwright's Chromium browser with system dependencies.
+# Must run as root (before USER runner) so apt-get can install OS packages.
+RUN playwright install chromium --with-deps
+
 COPY . .
 
 RUN mkdir -p /sandbox

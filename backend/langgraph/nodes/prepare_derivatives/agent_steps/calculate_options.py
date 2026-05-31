@@ -15,6 +15,7 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.cal
     calculate_option_stats,
 )
 from backend.langgraph.nodes.prepare_derivatives.models.state import DerivativesStepContext
+from backend.quant.field_name_conversion import normalize_keys
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,14 @@ async def step_calculate_options(sctx: DerivativesStepContext) -> None:
     Skips immediately when ``sctx.g.json_input`` is absent, is not an options
     payload, or carries no call/put contracts.
 
-    Fail-open: errors are logged but do not raise so the node output is still
-    produced.
+    Raises on ``calculate_option_stats`` failure so the agent loop can trigger
+    orchestration-driven recovery of an earlier step.
 
     Args:
         sctx: Step context.
+
+    Raises:
+        Exception: Propagated from ``calculate_option_stats``.
     """
     g = sctx.g
     json_input = g.json_input
@@ -41,27 +45,26 @@ async def step_calculate_options(sctx: DerivativesStepContext) -> None:
         )
         return
 
-    options = json_input.get("options") or []
+    calls_raw = json_input.get("calls") or []
+    puts_raw = json_input.get("puts") or []
+    calls_norm = [{**normalize_keys(c), "options_type": "call"} for c in calls_raw if isinstance(c, dict)]
+    puts_norm = [{**normalize_keys(p), "options_type": "put"} for p in puts_raw if isinstance(p, dict)]
+    options = calls_norm + puts_norm
     if not options:
         logger.error(
             "[PD-005] no contracts to aggregate symbol=%r", g.symbol
         )
         return
 
-    try:
-        await sctx.run_task(
-            calculate_option_stats,
-            sctx.ctx,
-            CalculateOptionStatsInput(
-                symbol=g.symbol,
-                source="web_content",
-                options=options,
-            ),
-        )
-    except Exception as exc:
-        logger.error(
-            "[PD-005] calculate_option_stats failed symbol=%r: %s", g.symbol, exc
-        )
+    await sctx.run_task(
+        calculate_option_stats,
+        sctx.ctx,
+        CalculateOptionStatsInput(
+            symbol=g.symbol,
+            source="web_content",
+            options=options,
+        ),
+    )
 
 
 __all__ = ["step_calculate_options"]

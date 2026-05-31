@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.langgraph.lifecycle import complete_task, create_task
-from backend.langgraph.models.models import TaskInput, TaskOutput
+from backend.langgraph.models.models import BaseTaskInput, TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
 
 logger = logging.getLogger(__name__)
@@ -50,15 +50,18 @@ _TASK_NAME = "run_sandbox"
 # ---------------------------------------------------------------------------
 
 
-class RunSandboxInput(BaseModel):
+class RunSandboxInput(BaseTaskInput):
     """Input for the run_sandbox task.
 
     Attributes:
-        script:   Source code to execute.  Must be a self-contained script;
-                  all required data should arrive via *stdin* or be written
-                  inline.
-        language: Interpreter: ``"python"`` (default) or ``"bash"``.
-        stdin:    Text piped to the process stdin (default: empty string).
+        script:           Source code to execute.  Must be a self-contained script;
+                          all required data should arrive via *stdin* or be written
+                          inline.
+        language:         Interpreter: ``"python"`` (default) or ``"bash"``.
+        stdin:            Text piped to the process stdin (default: empty string).
+        from_maybe_cache: Inherited from :class:`~backend.langgraph.models.models.BaseTaskInput`.
+                          When ``False`` the task-runner skips all DB/PG cache reads
+                          and forces a fresh execution.
     """
 
     script: str = Field(description="Source code (Python or bash) to execute inside the sandbox.")
@@ -116,8 +119,8 @@ async def _handler(payload: dict) -> dict:
     """
     from backend.config import get_settings  # noqa: PLC0415 — deferred for Celery worker import order
     from backend.sandbox.client import execute_in_runner  # noqa: PLC0415
-    from backend.sandbox.errors import SandboxUnsupportedLanguageError  # noqa: PLC0415
-    from backend.sandbox.errors.codes import SANDBOX_UNSUPPORTED_LANGUAGE  # noqa: PLC0415
+    from backend.sandbox.errors import SandboxUnsupportedLanguageError, SandboxNoStdoutError  # noqa: PLC0415
+    from backend.sandbox.errors.codes import SANDBOX_UNSUPPORTED_LANGUAGE, SANDBOX_NO_STDOUT  # noqa: PLC0415
     from backend.sandbox.security import validate_script  # noqa: PLC0415
 
     node_id: str = payload.pop("_node_id", "")
@@ -144,6 +147,12 @@ async def _handler(payload: dict) -> dict:
         nodes=settings.SANDBOX_RUNNER_NODES,
         timeout=settings.SANDBOX_RUNNER_TIMEOUT_SECONDS,
     )
+
+    if not result_dict.get("stdout") and result_dict.get("stderr"):
+        raise SandboxNoStdoutError(
+            f"[{SANDBOX_NO_STDOUT}] Script produced no stdout but stderr contains: "
+            f"{result_dict['stderr'][:500]}"
+        )
 
     return RunSandboxOutput.model_validate(result_dict).model_dump()
 
@@ -220,6 +229,12 @@ run_sandbox = NodeTask(
     handler=_handler,
 )
 
+
 HANDLERS: dict = {_TASK_NAME: _handler}
 
-__all__ = ["run_sandbox", "RunSandboxInput", "RunSandboxOutput", "HANDLERS"]
+__all__ = [
+    "run_sandbox",
+    "RunSandboxInput",
+    "RunSandboxOutput",
+    "HANDLERS",
+]

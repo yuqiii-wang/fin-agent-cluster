@@ -15,40 +15,33 @@ LLMProvider = Literal["mock", "ollama", "ark"]
 EmbeddingProvider = Literal["mock", "google", "ollama"]
 
 
-def get_llm(provider: LLMProvider = "mock") -> BaseChatModel:
-    """Return the configured streaming LLM instance.
+def get_llm(
+    provider: LLMProvider | None = None,
+    streaming: bool = True,
+) -> BaseChatModel:
+    """Return a chat model for the given provider.
+
+    When ``provider`` is ``None`` the value of ``Settings.LLM_PROVIDER`` is
+    used, falling back to ``"mock"``.
 
     Args:
-        provider: Which LLM backend to use. Defaults to ``"mock"``.
-    """
-    if provider == "ollama":
-        return get_ollama_llm()
-    if provider == "ark":
-        from backend.llm.providers.ark import get_ark_llm
-        return get_ark_llm()
-    return get_mock_llm()
-
-
-def get_completion_llm(provider: LLMProvider | None = None) -> BaseChatModel:
-    """Return a non-streaming completion LLM for structured output tasks.
-
-    Thinking / chain-of-thought is disabled; response is a single completion.
-    Provider defaults to ``Settings.LLM_PROVIDER``.
-
-    Args:
-        provider: Override the provider; falls back to settings when ``None``.
+        provider: Which LLM backend to use.  ``None`` defers to settings.
+        streaming: Whether to enable SSE token streaming (ARK only at
+            construction time).  Set ``False`` for structured-output / completion
+            calls that use ``.invoke()``; Ollama and Mock handle this per-call
+            via ``_generate`` / ``_astream`` regardless of this flag.
 
     Returns:
-        :class:`~langchain_core.language_models.BaseChatModel` in completion mode.
+        :class:`~langchain_core.language_models.BaseChatModel`
     """
     settings = get_settings()
     resolved = (provider or settings.LLM_PROVIDER or "mock").strip().lower()
 
-    if resolved == "ark":
-        from backend.llm.providers.ark import get_ark_llm
-        return get_ark_llm(temperature=0.1)
     if resolved == "ollama":
         return get_ollama_llm()
+    if resolved == "ark":
+        from backend.llm.providers.ark import get_ark_llm
+        return get_ark_llm(temperature=0.1, streaming=streaming)
     return get_mock_llm()
 
 

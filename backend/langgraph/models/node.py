@@ -70,11 +70,10 @@ A missing both will raise ``TypeError`` at class-definition time via
 
 Hook methods for the generic loop (implement in the concrete node):
 - ``_create_agent_global_state(node_input)``
-- ``_create_agent_step_state(iteration, global_state, input_overrides)``
+- ``_create_agent_step_state(iteration, global_state, failure_context)``
 - ``_create_step_context(ctx, global_state, step_state, results, node_input)``
-- ``_build_orchestration_input(global_state, step_state, failed_step, results, iteration)``
-- ``_build_final_output(global_state, results, node_input)``
-- ``_post_iteration_hook(ctx, global_state, step_state, results)``  (optional; no-op default)
+- ``_build_orchestration_input(global_state, step_state, failed_step, failure_reason, results, iteration, retry_candidates)``
+- ``_build_final_output(global_state, results, node_input, ctx)``
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 Fetches fundamental data for a single endpoint type (income_statement,
 balance_sheet, cash_flow, or key_metrics) from FMP or yfinance, caches
-the raw response in ``fin_markets.quant_raw`` with a 24-hour TTL, and
+the raw response in ``fin_markets.input_raw`` with a 24-hour TTL, and
 returns the raw JSON dict.
 
 Execution layers
@@ -13,9 +13,9 @@ LangGraph layer (``_get_fundamentals_task`` decorated with ``@task``):
 
 Celery layer (``_handler``):
     1. Computes a deterministic SHA-256 cache key.
-    2. Checks ``fin_markets.quant_raw`` for a fresh entry (24-hour TTL).
+    2. Checks ``fin_markets.input_raw`` for a fresh entry (24-hour TTL).
     3. On cache miss: calls the appropriate provider fetcher.
-    4. Inserts raw result into ``quant_raw`` and returns ``GetFundamentalsOutput``.
+    4. Inserts raw result into ``input_raw`` and returns ``GetFundamentalsOutput``.
 
 Public exports
 --------------
@@ -31,7 +31,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta, timezone
 
 from langgraph.func import task
 from pydantic import BaseModel, Field
@@ -39,7 +38,7 @@ from pydantic import BaseModel, Field
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.config import get_settings
 from backend.db.postgres import raw_conn
-from backend.db.postgres.queries.fin_markets_quant import QuantRawSQL
+from backend.db.postgres.queries.fin_markets_input_raw import InputRawSQL
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import (
     FUNDAMENTALS_TASK_FETCH_ERROR,
@@ -54,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 _TASK_NAME = "get_fundamentals"
 _CACHE_TTL_HOURS = 24
+_CACHE_TTL_SECONDS = _CACHE_TTL_HOURS * 3600
 
 VALID_ENDPOINT_TYPES = frozenset({
     "income_statement",
@@ -89,7 +89,7 @@ def _build_provider_chain(symbol: str) -> list[str]:
 
 
 def _make_cache_key(source: str, symbol: str, endpoint_type: str) -> str:
-    """Compute a deterministic SHA-256 cache key for ``quant_raw`` lookup.
+    """Compute a deterministic SHA-256 cache key for ``input_raw`` lookup.
 
     Args:
         source:        Provider label, e.g. ``'fmp'``, ``'yfinance'``.
@@ -118,6 +118,8 @@ class GetFundamentalsInput(BaseModel):
         symbol:        Equity ticker symbol, e.g. ``'AAPL'``.
         endpoint_type: One of ``income_statement``, ``balance_sheet``,
                        ``cash_flow``, ``key_metrics``.
+        thread_id:     LangGraph thread id; forwarded to ``input_raw`` for
+                       provenance (injected by the @task layer, not set by callers).
     """
 
     symbol: str = Field(description="Equity ticker symbol, e.g. 'AAPL'.")
@@ -127,6 +129,7 @@ class GetFundamentalsInput(BaseModel):
             "'cash_flow', or 'key_metrics'."
         )
     )
+    thread_id: str | None = Field(default=None, description="Thread id for input_raw provenance.")
 
 
 class GetFundamentalsOutput(BaseModel):
@@ -135,7 +138,7 @@ class GetFundamentalsOutput(BaseModel):
     Attributes:
         endpoint_type: Endpoint that was fetched.
         json_data:     Raw provider dict for this endpoint.
-        from_cache:    ``True`` when the result was served from ``quant_raw`` cache.
+        from_cache:    ``True`` when the result was served from ``input_raw`` cache.
     """
 
     endpoint_type: str
@@ -149,7 +152,7 @@ class GetFundamentalsOutput(BaseModel):
 
 
 async def _handler(payload: dict) -> dict:
-    """Fetch one fundamental endpoint, caching the raw result in ``quant_raw``.
+    """Fetch one fundamental endpoint, caching the raw result in ``input_raw``.
 
     Args:
         payload: Serialised :class:`GetFundamentalsInput` dict.
@@ -169,7 +172,6 @@ async def _handler(payload: dict) -> dict:
             f"[{FUNDAMENTALS_TASK_FETCH_ERROR}] Unknown endpoint_type='{endpoint_type}'"
         )
 
-    ttl_cutoff = datetime.now(timezone.utc) - timedelta(hours=_CACHE_TTL_HOURS)
     providers = _build_provider_chain(symbol)
     last_error: str | None = None
 
@@ -177,7 +179,7 @@ async def _handler(payload: dict) -> dict:
         cache_key = _make_cache_key(provider, symbol, endpoint_type)
 
         async with raw_conn(readonly=True) as conn:
-            cur = await conn.execute(QuantRawSQL.GET_CACHED, (cache_key, ttl_cutoff))
+            cur = await conn.execute(InputRawSQL.GET_CACHED, (cache_key,))
             cached_row = await cur.fetchone()
 
         if cached_row is not None:
@@ -209,14 +211,15 @@ async def _handler(payload: dict) -> dict:
 
         async with raw_conn() as conn:
             await conn.execute(
-                QuantRawSQL.INSERT,
+                InputRawSQL.INSERT,
                 (
-                    None,
+                    inp.thread_id,
                     "common_tasks/get_fundamentals",
+                    symbol,
                     provider,
                     "fundamentals",
-                    symbol,
                     cache_key,
+                    _CACHE_TTL_SECONDS,
                     json.dumps({"symbol": symbol, "endpoint_type": endpoint_type}),
                     json.dumps(json_data),
                 ),
@@ -255,6 +258,7 @@ async def _get_fundamentals_task(
     """
     ctx = task_input.ctx
     payload = task_input.content.model_dump(mode="json")
+    payload["thread_id"] = ctx.thread_id
 
     await create_task(
         ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,
@@ -285,7 +289,7 @@ get_fundamentals = NodeTask(
     description=(
         "Fetch one fundamental data endpoint (income_statement, balance_sheet, cash_flow, "
         "or key_metrics) for a symbol from FMP or yfinance. Results are cached in "
-        "fin_markets.quant_raw with a 24-hour TTL."
+        "fin_markets.input_raw with a 24-hour TTL."
     ),
     input_type=GetFundamentalsInput,
     output_type=GetFundamentalsOutput,

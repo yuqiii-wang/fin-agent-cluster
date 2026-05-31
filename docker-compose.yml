@@ -271,28 +271,30 @@ services:
     restart: unless-stopped
     networks:
       - sandbox-net
+      # default network gives Playwright-driven Chromium outbound internet access.
+      - default
     volumes:
       - sandbox_runner_0_data:/sandbox
     environment:
-      SANDBOX_TIMEOUT_SECONDS: "60"
-      SANDBOX_MAX_MEMORY_MB: "256"
-      SANDBOX_MAX_CPU_SECONDS: "30"
-      SANDBOX_MAX_PROCS: "64"
-      SANDBOX_MAX_OPEN_FILES: "64"
-      SANDBOX_MAX_OUTPUT_BYTES: "1048576"
+      SANDBOX_TIMEOUT_SECONDS: "120"
+      SANDBOX_MAX_MEMORY_MB: "768"
+      SANDBOX_MAX_CPU_SECONDS: "90"
+      SANDBOX_MAX_PROCS: "128"
+      SANDBOX_MAX_OPEN_FILES: "256"
+      SANDBOX_MAX_OUTPUT_BYTES: "4194304"
       # Read-only DSN for sandboxed scripts — sandbox-read role, fin_markets schema only.
       SANDBOX_PG_DSN: "postgresql://sandbox-read:${SANDBOX_PG_READ_PASSWORD:-SandboxRd@2026}@postgres-replica:5432/fin_trading"
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1024M
           cpus: "1.0"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 30s
 
   sandbox-runner-1:
     build:
@@ -302,28 +304,30 @@ services:
     restart: unless-stopped
     networks:
       - sandbox-net
+      # default network gives Playwright-driven Chromium outbound internet access.
+      - default
     volumes:
       - sandbox_runner_1_data:/sandbox
     environment:
-      SANDBOX_TIMEOUT_SECONDS: "60"
-      SANDBOX_MAX_MEMORY_MB: "256"
-      SANDBOX_MAX_CPU_SECONDS: "30"
-      SANDBOX_MAX_PROCS: "64"
-      SANDBOX_MAX_OPEN_FILES: "64"
-      SANDBOX_MAX_OUTPUT_BYTES: "1048576"
+      SANDBOX_TIMEOUT_SECONDS: "120"
+      SANDBOX_MAX_MEMORY_MB: "768"
+      SANDBOX_MAX_CPU_SECONDS: "90"
+      SANDBOX_MAX_PROCS: "128"
+      SANDBOX_MAX_OPEN_FILES: "256"
+      SANDBOX_MAX_OUTPUT_BYTES: "4194304"
       # Read-only DSN for sandboxed scripts — sandbox-read role, fin_markets schema only.
       SANDBOX_PG_DSN: "postgresql://sandbox-read:${SANDBOX_PG_READ_PASSWORD:-SandboxRd@2026}@postgres-replica:5432/fin_trading"
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1024M
           cpus: "1.0"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 30s
 
 volumes:
   postgres_primary_data:

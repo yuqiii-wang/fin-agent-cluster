@@ -92,7 +92,7 @@ const UserProfile: React.FC<Props> = ({ open, onClose }) => {
     <Drawer
       title="Profile & Agent Preferences"
       placement="right"
-      width={420}
+      size={420}
       open={open}
       onClose={onClose}
       styles={{ body: { padding: '16px 16px 24px' } }}

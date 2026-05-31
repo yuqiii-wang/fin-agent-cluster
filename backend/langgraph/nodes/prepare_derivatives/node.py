@@ -5,20 +5,23 @@ Hierarchy
 ---------
 Thread
   └── prepare_derivatives  (Agent)
-        ├── navigate_web  (TaskSeq → propose_web_knowledge_urls + parallel per-URL:
-        │                   crawl_url + html_to_markdown + study_web_content + run_sandbox)
+        ├── load_markdown  (propose_web_knowledge_urls + load_md_from_url:
+        │                   crawl_url + html_to_markdown)
+        ├── study_web      (study_web_content + run_sandbox — LLM streaming step)
         └── get_and_calculate_stats  (TaskSeq → get_stats + calculate_stats)
 
 Node design
 -----------
-The node reads the stock symbol from ``query_node`` output and runs two sequential
+The node reads the stock symbol from ``query_node`` output and runs sequential
 steps for that symbol:
 
-1. ``navigate_web`` — proposes one or more financial data URLs for the equity symbol
-   via ``web_search`` (DDGS), then crawls each URL in parallel, generates a Python
-   transform script via LLM, and executes it in a sandbox to produce structured
-   options JSON.  Calls/puts from all parallel runs are merged and deduplicated.
-2. ``get_and_calculate_stats`` — ingests the merged options JSON and computes
+1. ``load_markdown`` — proposes one or more financial data URLs for the equity
+   symbol, then crawls each URL and converts the HTML to Markdown.
+2. ``study_web`` — the LLM *streaming* step: generates a Python transform script
+   per page and executes it in a sandbox to produce structured options JSON.
+   Calls/puts from all pages are merged and deduplicated.  On a later-step
+   failure the agent loop regenerates this step with failure-context guidance.
+3. ``get_and_calculate_stats`` — ingests the merged options JSON and computes
    technical indicators for the underlying equity symbol; persists rows to
    ``fin_markets.quant_stats``.
 3. ``calculate_options`` — upserts each call/put contract into
@@ -46,8 +49,19 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats imp
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_option_stats import (
     calculate_option_stats,
 )
-from backend.langgraph.models.common_tasks.task_seqs.navigate_web.seq import (
-    navigate_web,
+from backend.langgraph.models.common_tasks.run_sandbox import run_sandbox
+from backend.langgraph.models.common_tasks.task_seqs.navigate_web.load_markdown_from_url.seq import (
+    load_md_from_url,
+)
+from backend.langgraph.models.common_tasks.task_seqs.navigate_web.propose_web_knowledge_urls import (
+    propose_web_knowledge_urls,
+)
+from backend.langgraph.models.common_tasks.task_seqs.navigate_web.study_web_content import (
+    study_web_content,
+)
+from backend.langgraph.models.common_tasks.llm_orchestration_on_failure import (
+    LlmOrchestrationInput,
+    llm_orchestration_on_failure,
 )
 from backend.langgraph.models.models import NodeContext, TaskContext, TaskOutput
 from backend.langgraph.models.node import BaseNode
@@ -55,6 +69,7 @@ from backend.langgraph.models.task import NodeTask
 from backend.langgraph.nodes.prepare_derivatives.agent_steps import (
     AGENT_STEPS,
     STEP_ORDER,
+    STEP_STUDY_WEB,
     DerivativesStepContext,
 )
 from backend.langgraph.nodes.prepare_derivatives.models import (
@@ -89,7 +104,6 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
             "label": "Stats period",
             "type": "select",
             "options": [
-                {"value": "1y", "label": "1 year"},
                 {"value": "2y", "label": "2 years"},
             ],
             "description": "Lookback period for OHLCV stats calculation.",
@@ -98,7 +112,10 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
     view_type = "Stats"
     stats_views = ["DerivativesFlow"]
     tasks: ClassVar[list[NodeTask]] = [
-        *navigate_web.tasks,
+        propose_web_knowledge_urls,
+        *load_md_from_url.tasks,
+        study_web_content,
+        run_sandbox,
         *get_and_calculate_stats.tasks,
         calculate_option_stats,
     ]
@@ -108,8 +125,9 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
     agent_global_state_class: ClassVar[type] = DerivativesGlobalState
     agent_steps: ClassVar[dict] = AGENT_STEPS
     agent_step_order: ClassVar[list[str]] = STEP_ORDER
-    agent_orchestration_task: ClassVar = None  # single-iteration; no LLM loop
-    _agent_max_iterations: ClassVar[int] = 1
+    agent_streaming_steps: ClassVar[set[str]] = {STEP_STUDY_WEB}
+    agent_orchestration_task: ClassVar = llm_orchestration_on_failure
+    _agent_max_iterations: ClassVar[int] = 2
 
     async def build_input(self, state: GraphState) -> PrepareDerivativesInput:
         """Construct node input — reads stock_symbol from query_node output.
@@ -147,25 +165,26 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
         self,
         iteration: int,
         global_state: DerivativesGlobalState,
-        input_overrides: dict,
-    ) -> None:
-        """No per-iteration step state required for prepare_derivatives.
+        failure_context: str,
+    ) -> str:
+        """Return the per-iteration failure-context guidance for the step loop.
 
         Args:
-            iteration:       Outer iteration counter (always 1).
+            iteration:       Outer iteration counter (1-based).
             global_state:    Cross-iteration global state.
-            input_overrides: Not used (no orchestration).
+            failure_context: Guidance string from ``llm_orchestration_on_failure``
+                             (empty on the first iteration).
 
         Returns:
-            ``None``.
+            The ``failure_context`` string, passed through to the step context.
         """
-        return None
+        return failure_context
 
     def _create_step_context(
         self,
         ctx: NodeContext,
         global_state: DerivativesGlobalState,
-        step_state: None,
+        step_state: str,
         results: dict[str, TaskOutput],
         node_input: PrepareDerivativesInput,
     ) -> DerivativesStepContext:
@@ -174,7 +193,7 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
         Args:
             ctx:          Current node context.
             global_state: Cross-iteration global state.
-            step_state:   ``None`` (unused for prepare_derivatives).
+            step_state:   Failure-context guidance (empty on first run).
             results:      Accumulated ``TaskOutput`` dict.
             node_input:   Typed node input.
 
@@ -187,6 +206,49 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
             g=global_state,
             results=results,
             stats_period=node_input.stats_period,
+            failure_context=step_state or "",
+        )
+
+    def _build_orchestration_input(
+        self,
+        global_state: DerivativesGlobalState,
+        step_state: str,
+        failed_step: str,
+        failure_reason: str,
+        results: dict[str, TaskOutput],
+        iteration: int,
+        retry_candidates: list[str],
+    ) -> LlmOrchestrationInput:
+        """Build the recovery-decision input after a step failure.
+
+        Args:
+            global_state:     Cross-iteration global state.
+            step_state:       Current iteration failure-context guidance.
+            failed_step:      Name of the step that raised.
+            failure_reason:   Exception message from the failed step.
+            results:          Accumulated ``TaskOutput`` dict.
+            iteration:        Current iteration number (1-based).
+            retry_candidates: Earlier LLM streaming step names eligible for
+                              regeneration.
+
+        Returns:
+            Populated :class:`LlmOrchestrationInput`.
+        """
+        return LlmOrchestrationInput(
+            failed_step=failed_step,
+            failure_reason=failure_reason,
+            objective=(
+                "Fetch derivatives market knowledge and compute OHLCV/options "
+                "stats for the equity symbol."
+            ),
+            target=global_state.symbol,
+            step_order=list(STEP_ORDER),
+            retry_candidates=retry_candidates,
+            finish_condition=(
+                "Each step produces usable structured output for the symbol "
+                "with no unhandled errors."
+            ),
+            context_summary={"symbol": global_state.symbol, "iteration": iteration},
         )
 
     async def _build_final_output(

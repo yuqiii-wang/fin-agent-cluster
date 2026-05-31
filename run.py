@@ -445,11 +445,19 @@ if __name__ == "__main__":
         # a subsequent "node already terminal" race on recovery.
         _wait_for_ondemand_workers()
 
-    # Preload the Ollama model into GPU memory in the background; startup
-    # continues immediately without waiting for warmup to finish.
-    import threading
-    from backend.llm.providers.ollama.warmup import warmup_ollama
-    threading.Thread(target=warmup_ollama, daemon=True, name="ollama-warmup").start()
+    # LLM startup health check / warmup.
+    # - ollama: fire warmup in a background thread (loads GPU memory; slow).
+    # - other providers: synchronous ping before accepting traffic so failures
+    #   are visible immediately in the console.
+    # - mock: no network endpoint — skip entirely.
+    _llm_provider = settings.LLM_PROVIDER.strip().lower()
+    if _llm_provider == "ollama":
+        import threading
+        from backend.llm.providers.ollama.warmup import warmup_ollama
+        threading.Thread(target=warmup_ollama, daemon=True, name="ollama-warmup").start()
+    elif _llm_provider != "mock":
+        from backend.llm.validate import ping_llm
+        ping_llm()
 
     log_config_path = _write_log_config(get_logging_config())
     atexit.register(lambda: os.unlink(log_config_path) if os.path.exists(log_config_path) else None)

@@ -1,16 +1,16 @@
 """digest_news — NodeTask: upsert enriched news rows to news_stats and render Markdown digest.
 
-Reads raw articles from ``fin_markets.news_raw`` by ``news_raw_id`` and ``source_filter``
+Reads raw articles from ``fin_markets.input_raw`` by ``input_raw_id`` and ``source_filter``
 (default ``"fmp"``), combines each article with pre-computed LLM summaries from
 ``do_summary`` and vector embeddings from ``do_emb``, upserts rows to
-``fin_markets.news_stats``, then queries the same ``news_raw_id`` from
+``fin_markets.news_stats``, then queries the same ``input_raw_id`` from
 ``news_stats`` to build a Markdown-formatted digest list.
 
 One-to-many relationship
 ------------------------
-One ``news_raw`` row (the get_news cache entry) → many ``news_stats`` rows
+One ``input_raw`` row (the get_news cache entry) → many ``news_stats`` rows
 (one per article).  The Markdown output renders all ``news_stats`` rows that
-share the same ``news_raw_id``.
+share the same ``input_raw_id``.
 
 Execution layers
 ----------------
@@ -18,10 +18,10 @@ LangGraph layer (``_digest_news_task`` decorated with ``@task``):
     Delegates to the Celery completion worker.
 
 Celery layer (``_handler``):
-    1. Read articles from ``news_raw`` by ``news_raw_id``.
+    1. Read articles from ``input_raw`` by ``input_raw_id``.
     2. Filter by ``source_filter`` (``"fmp"`` → ``news_articles`` list).
     3. For each article: upsert to ``news_stats`` using available enrichment.
-    4. Query ``news_stats WHERE news_raw_id = ?`` and render Markdown.
+    4. Query ``news_stats WHERE input_raw_id = ?`` and render Markdown.
 
 Public exports
 --------------
@@ -44,7 +44,8 @@ from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.db.postgres import raw_conn
-from backend.db.postgres.queries.fin_markets_news import NewsRawSQL, NewsStatsSQL
+from backend.db.postgres.queries.fin_markets_input_raw import InputRawSQL
+from backend.db.postgres.queries.fin_markets_news import NewsStatsSQL
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import NEWS_TASK_DIGEST_ERROR
 from backend.langgraph.models.models import TaskInput, TaskOutput
@@ -135,7 +136,7 @@ class DigestNewsInput(BaseModel):
     """Input for the digest_news task.
 
     Attributes:
-        news_raw_id:   PK of the ``news_raw`` row to read articles from.
+        input_raw_id:  PK of the ``input_raw`` row to read articles from.
         source_filter: Provider type to process (``"fmp"`` or ``"ddgs"`` →
                        ``news_articles`` list from the raw output).  Future
                        providers can be added here.
@@ -149,7 +150,7 @@ class DigestNewsInput(BaseModel):
                        read of existing ``news_stats`` rows without re-upserting.
     """
 
-    news_raw_id: int | None = Field(default=None, description="PK of the news_raw row.")
+    input_raw_id: int | None = Field(default=None, description="PK of the input_raw row.")
     source_filter: str = Field(default="fmp", description="Provider type to process.")
     summaries: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
@@ -172,7 +173,7 @@ class DigestNewsOutput(BaseModel):
         upserted_ids:  ``news_stats`` row IDs that were inserted or updated.
         skipped_count: Number of articles skipped due to DB errors.
         markdown:      Markdown-formatted list of all ``news_stats`` rows that
-                       share the same ``news_raw_id`` (one-to-many render).
+                       share the same ``input_raw_id`` (one-to-many render).
         from_cache:    ``True`` when existing ``news_stats`` rows were reused
                        without re-upserting (all upstream tasks were from cache).
     """
@@ -199,24 +200,24 @@ async def _handler(payload: dict) -> dict:
     """
     inp = DigestNewsInput.model_validate(payload)
 
-    if inp.news_raw_id is None:
+    if inp.input_raw_id is None:
         return DigestNewsOutput().model_dump(mode="json")
 
-    # 1. Read articles from news_raw by news_raw_id
+    # 1. Read articles from input_raw by input_raw_id
     async with raw_conn(readonly=True) as conn:
-        cur = await conn.execute(NewsRawSQL.GET_BY_ID, (inp.news_raw_id,))
+        cur = await conn.execute(InputRawSQL.GET_BY_ID, (inp.input_raw_id,))
         raw_row = await cur.fetchone()
 
     if not raw_row:
         logger.error(
-            "[%s] digest_news: news_raw id=%s not found",
-            NEWS_TASK_DIGEST_ERROR, inp.news_raw_id,
+            "[%s] digest_news: input_raw id=%s not found",
+            NEWS_TASK_DIGEST_ERROR, inp.input_raw_id,
         )
         return DigestNewsOutput().model_dump(mode="json")
 
     raw_output: dict = raw_row["output"]
 
-    # 2. Extract articles from news_raw output.
+    # 2. Extract articles from input_raw output.
     # All news providers (fmp, ddgs, mock, …) store articles under "news_articles".
     _KNOWN_NEWS_SOURCES = {"fmp", "ddgs", "mock"}
     if inp.source_filter not in _KNOWN_NEWS_SOURCES:
@@ -254,7 +255,7 @@ async def _handler(payload: dict) -> dict:
                 await conn.execute(
                     NewsStatsSQL.UPSERT,
                     (
-                        inp.news_raw_id,
+                        inp.input_raw_id,
                         article.source,
                         article.symbol,
                         article.url,
@@ -284,17 +285,17 @@ async def _handler(payload: dict) -> dict:
             )
             skipped_count += 1
 
-    # 4. Query news_stats by news_raw_id and render Markdown (one-to-many)
+    # 4. Query news_stats by input_raw_id and render Markdown (one-to-many)
     markdown = ""
     try:
         async with raw_conn(readonly=True) as conn:
-            cur = await conn.execute(NewsStatsSQL.GET_BY_NEWS_RAW_ID, (inp.news_raw_id,))
+            cur = await conn.execute(NewsStatsSQL.GET_BY_INPUT_RAW_ID, (inp.input_raw_id,))
             stats_rows = await cur.fetchall()
         markdown = _build_markdown(stats_rows, symbol)
     except Exception as exc:
         logger.error(
-            "[%s] digest_news Markdown render failed news_raw_id=%s: %s",
-            NEWS_TASK_DIGEST_ERROR, inp.news_raw_id, exc,
+            "[%s] digest_news Markdown render failed input_raw_id=%s: %s",
+            NEWS_TASK_DIGEST_ERROR, inp.input_raw_id, exc,
         )
 
     return DigestNewsOutput(
@@ -317,7 +318,7 @@ async def _digest_news_task(
     """LangGraph @task: delegates digest_news to the Celery completion worker.
 
     Fast path (from_cache=True): if all upstream tasks were from cache and
-    ``news_stats`` rows already exist for this ``news_raw_id``, reuses existing
+    ``news_stats`` rows already exist for this ``input_raw_id``, reuses existing
     rows to build the Markdown without re-upserting (ToolCall task record).
 
     Normal path: creates a Markdown task, delegates to the Celery completion
@@ -336,9 +337,9 @@ async def _digest_news_task(
     payload = inp.model_dump(mode="json")
 
     # Fast path — all upstream tasks from cache; reuse existing news_stats rows.
-    if inp.from_cache and inp.news_raw_id is not None:
+    if inp.from_cache and inp.input_raw_id is not None:
         async with raw_conn(readonly=True) as conn:
-            cur = await conn.execute(NewsStatsSQL.GET_BY_NEWS_RAW_ID, (inp.news_raw_id,))
+            cur = await conn.execute(NewsStatsSQL.GET_BY_INPUT_RAW_ID, (inp.input_raw_id,))
             stats_rows = await cur.fetchall()
         if stats_rows:
             symbol: str | None = next((r["symbol"] for r in stats_rows if r["symbol"]), None)
@@ -381,7 +382,7 @@ async def _digest_news_task(
 digest_news: NodeTask[DigestNewsInput, DigestNewsOutput] = NodeTask(
     name=_TASK_NAME,
     description=(
-        "Read raw articles from fin_markets.news_raw by news_raw_id, combine with "
+        "Read raw articles from fin_markets.input_raw by input_raw_id, combine with "
         "pre-computed LLM summaries (do_summary) and embeddings (do_emb), upsert to "
         "fin_markets.news_stats, and render a Markdown digest of all stored rows."
     ),

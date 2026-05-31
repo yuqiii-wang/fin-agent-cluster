@@ -14,7 +14,7 @@ class PrepareMacroNewsOutput(BaseModel):
 
     Attributes:
         symbol:              Optional equity ticker provided for context (usually ``None``).
-        news_raw_id:         PK of the ``news_raw`` cache row inserted/reused.
+        input_raw_id:         PK of the ``input_raw`` cache row inserted/reused.
         upserted_ids:        List of ``news_stats.id`` rows written by ``digest_news``.
         news_articles_count: Number of raw news articles fetched.
         from_cache:          Whether ``get_news`` returned a cached result.
@@ -22,7 +22,7 @@ class PrepareMacroNewsOutput(BaseModel):
     """
 
     symbol: str | None = Field(default=None, description="Optional equity ticker for context.")
-    news_raw_id: int | None = Field(default=None, description="PK of the news_raw cache row.")
+    input_raw_id: int | None = Field(default=None, description="PK of the input_raw cache row.")
     upserted_ids: list[int] = Field(
         default_factory=list,
         description="IDs of news_stats rows upserted by digest_news.",

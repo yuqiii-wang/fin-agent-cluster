@@ -100,14 +100,18 @@ class CalculateStockStatsInput(BaseModel):
 
     Attributes:
         stats_record:  OHLCV stats record from :class:`GetStatsOutput.stats_record`.
-        bypass:        When ``True``, skip pandas_ta recomputation and instead return the
+        from_cache:    When ``True``, skip pandas_ta recomputation and instead return the
                        count of already-existing rows in ``quant_stats``.
                        Set by the calling node when :attr:`GetStatsOutput.bypass_calculate`
                        is ``True``.
+        data_type:     Payload category passed down from :attr:`GetStatsOutput.data_type`.
+                       Used by the dispatcher to select the correct handler; the stock-stats
+                       handler only processes ``'ohlcv'`` records.
     """
 
     stats_record: StatsRecord
-    bypass: bool = Field(default=False, description="Skip recomputation; read row count from DB.")
+    from_cache: bool = Field(default=False, description="Skip recomputation; read row count from DB.")
+    data_type: str = Field(default="ohlcv", description="Payload category: 'ohlcv', 'options', 'futures', etc.")
 
 
 class CalculateStockStatsOutput(BaseModel):
@@ -294,7 +298,7 @@ async def calculate_stock_stats_handler(payload: dict) -> dict:
     _stats_sql = _STATS_SQL_MAP.get(_instrument_type, OhlcvStatsSQL)
 
     # --- bypass path: return existing row count without recomputing indicators ---
-    if inp.bypass:
+    if inp.from_cache:
         async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
                 _stats_sql.COUNT_BY_SYMBOL_GRANULARITY, (symbol, granularity)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from backend.langgraph.agent.skills.models import Skill, SkillStatus
-from backend.langgraph.agent.skills.ops import add_skill, copy_skills_from_node, forget_skill, get_skills, search_skill_candidates
+from backend.langgraph.agent.skills.ops import add_skill, copy_skills_from_node, forget_skill, get_skills
 
 __all__ = [
     "Skill",
@@ -12,5 +12,4 @@ __all__ = [
     "copy_skills_from_node",
     "forget_skill",
     "get_skills",
-    "search_skill_candidates",
 ]

@@ -10,6 +10,7 @@ from backend.sandbox.errors.codes import (
     SANDBOX_ENV_ERROR,
     SANDBOX_UNSUPPORTED_LANGUAGE,
     SANDBOX_RUNNER_ERROR,
+    SANDBOX_NO_STDOUT,
 )
 
 __all__ = [
@@ -20,6 +21,7 @@ __all__ = [
     "SandboxEnvError",
     "SandboxUnsupportedLanguageError",
     "SandboxRunnerError",
+    "SandboxNoStdoutError",
 ]
 
 
@@ -63,3 +65,9 @@ class SandboxRunnerError(Exception):
     """Raised when the sandbox runner container is unreachable or returns an unexpected error (SB007)."""
 
     code = SANDBOX_RUNNER_ERROR
+
+
+class SandboxNoStdoutError(Exception):
+    """Raised when the script produced no stdout but wrote to stderr (SB008)."""
+
+    code = SANDBOX_NO_STDOUT

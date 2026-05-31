@@ -175,16 +175,30 @@ _GET_EXISTING_TASK_FOR_NODE = """
     LIMIT 1
 """
 
-# Zero-out cache_ttl_seconds for all completed tasks under a node so they
-# will not be served from cache on the next run.  Called by the
-# invalidate-cache API endpoint.
-# Params: (node_id, thread_id)
+# Return the node_name for a given node_id.
+# Params: (node_id,)
+_GET_NODE_NAME_BY_ID = """
+    SELECT node_name
+    FROM fin_agents.nodes
+    WHERE node_id = %s
+    LIMIT 1
+"""
+
+# Zero-out cache_ttl_seconds for all completed tasks that share the same
+# node_name as the given node_id, across all versions under the thread.
+# Called by the invalidate-cache API endpoint.
+# Params: (thread_id, node_id)
 _INVALIDATE_NODE_TASK_CACHES = """
     UPDATE fin_agents.tasks
     SET cache_ttl_seconds = 0,
         updated_at        = NOW()
-    WHERE node_id   = %s
-      AND thread_id = %s
+    WHERE thread_id = %s
+      AND node_name = (
+          SELECT node_name
+          FROM fin_agents.nodes
+          WHERE node_id = %s
+          LIMIT 1
+      )
       AND status    = 'completed'
 """
 
@@ -212,6 +226,7 @@ __all__ = [
     "_GET_LATEST_LLM_RESPONSE",
     "_GET_PAUSED_TASK_FOR_NODE",
     "_GET_EXISTING_TASK_FOR_NODE",
+    "_GET_NODE_NAME_BY_ID",
     "_INVALIDATE_NODE_TASK_CACHES",
     "_BULK_PAUSE_RUNNING_TASKS",
 ]

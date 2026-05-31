@@ -63,14 +63,14 @@ class DoEmbInput(BaseModel):
     """Input for the do_emb task.
 
     Attributes:
-        news_raw_id:    FK to the ``news_raw`` row (for provenance tracking).
+        input_raw_id:   FK to the ``input_raw`` row (for provenance tracking).
         news_articles:  Raw article dicts from ``get_news`` output.  Each dict
                         must contain at minimum a ``title`` field; ``url`` and
                         ``content`` are used when present.  When empty the
                         handler returns immediately with empty embeddings.
     """
 
-    news_raw_id: int | None = Field(default=None, description="FK to news_raw row.")
+    input_raw_id: int | None = Field(default=None, description="FK to input_raw row.")
     news_articles: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Raw article dicts from get_news output.",
@@ -243,22 +243,22 @@ async def _handler(payload: dict) -> dict:
 async def _do_emb_pg_cache(
     inp: DoEmbInput, ctx: NodeContext
 ) -> DoEmbOutput | None:
-    """Check pg for existing embeddings in news_stats for the given news_raw_id.
+    """Check pg for existing embeddings in news_stats for the given input_raw_id.
 
-    Returns cached embeddings when the linked ``news_raw`` row is within the
+    Returns cached embeddings when the linked ``input_raw`` row is within the
     4-hour TTL (implicitly guaranteed by ``get_news.pg_cache_fn``).
 
     Args:
-        inp: Typed task input containing the ``news_raw_id``.
+        inp: Typed task input containing the ``input_raw_id``.
         ctx: Current node context (unused; present for signature compatibility).
 
     Returns:
         ``DoEmbOutput`` with ``from_cache=True`` on a cache hit, or ``None``.
     """
-    if inp.news_raw_id is None:
+    if inp.input_raw_id is None:
         return None
     async with raw_conn(readonly=True) as conn:
-        cur = await conn.execute(NewsStatsSQL.GET_EMBEDDINGS_BY_NEWS_RAW_ID, (inp.news_raw_id,))
+        cur = await conn.execute(NewsStatsSQL.GET_EMBEDDINGS_BY_INPUT_RAW_ID, (inp.input_raw_id,))
         cached_rows = await cur.fetchall()
     if not cached_rows:
         return None

@@ -4,7 +4,7 @@ Orchestration
 -------------
 1. ``get_fundamentals`` (×N, parallel) — fetch each requested endpoint type in parallel
    (income_statement, balance_sheet, cash_flow, key_metrics).  Each call stores its raw
-   JSON response in ``fin_markets.quant_raw`` with a 24-hour TTL.
+   JSON response in ``fin_markets.input_raw`` with a 24-hour TTL.
 2. ``calculate_fundamental_stats`` (×1) — aggregate all JSON payloads, normalise field
    names from FMP / yfinance conventions, and insert a row into
    ``fin_markets.quant_static_stats``.

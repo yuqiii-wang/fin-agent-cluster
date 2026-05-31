@@ -23,6 +23,9 @@ SANDBOX_UNSUPPORTED_LANGUAGE = "SB006"
 # SB007 — cannot reach the sandbox runner container (connectivity or config error)
 SANDBOX_RUNNER_ERROR = "SB007"
 
+# SB008 — stdout is empty but stderr contains data (script produced no output, likely failed)
+SANDBOX_NO_STDOUT = "SB008"
+
 SANDBOX_ERROR_DESCRIPTIONS: dict[str, str] = {
     SANDBOX_TIMEOUT: "Sandbox execution exceeded the wall-clock time limit.",
     SANDBOX_SECURITY_VIOLATION: "Script was rejected by pre-execution security validation.",
@@ -31,4 +34,5 @@ SANDBOX_ERROR_DESCRIPTIONS: dict[str, str] = {
     SANDBOX_ENV_ERROR: "Failed to create or clean up the sandbox working directory.",
     SANDBOX_UNSUPPORTED_LANGUAGE: "Requested execution language is not supported.",
     SANDBOX_RUNNER_ERROR: "Cannot reach the sandbox runner container.",
+    SANDBOX_NO_STDOUT: "Script produced no stdout but wrote to stderr.",
 }

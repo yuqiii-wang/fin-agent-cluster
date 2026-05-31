@@ -3,50 +3,28 @@ CREATE SCHEMA IF NOT EXISTS fin_markets;
 -- Enable pgvector extension for vector similarity search on embeddings.
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- news_raw: logs every call to a news/search API (yfinance news, alpha vantage news & sentiment, web search)
--- 4-hour cache — same cache_key within the TTL returns the stored output
--- thread_id is nullable so the same cached record can be reused across different threads
-CREATE TABLE IF NOT EXISTS fin_markets.news_raw (
+-- input_raw
+CREATE TABLE IF NOT EXISTS fin_markets.input_raw (
     id BIGSERIAL PRIMARY KEY,
     thread_id TEXT REFERENCES fin_agents.user_queries (thread_id) ON DELETE SET NULL,
     node_name TEXT NOT NULL DEFAULT 'unknown',
-    source TEXT NOT NULL,          -- provider/client name: 'fmp', 'yfinance', 'web_search', etc.
-    method TEXT NOT NULL,          -- method/endpoint name: 'get_company_profile', etc.
-    cache_key TEXT NOT NULL,       -- sha256(source + method + serialised input) for cache lookup
-    input JSONB NOT NULL DEFAULT '{}',
-    output JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS fin_markets_news_raw_cache_key_idx
-    ON fin_markets.news_raw (cache_key, created_at DESC);
-CREATE INDEX IF NOT EXISTS fin_markets_news_raw_thread_id_idx
-    ON fin_markets.news_raw (thread_id);
-CREATE INDEX IF NOT EXISTS fin_markets_news_raw_source_method_idx
-    ON fin_markets.news_raw (source, method);
-
--- quant_raw: logs every call to a market-data API (yfinance, alpha_vantage)
--- 1-day cache — same cache_key on the same calendar day (UTC) returns the stored output
--- thread_id is nullable so the same cached record can be reused across different threads
-CREATE TABLE IF NOT EXISTS fin_markets.quant_raw (
-    id BIGSERIAL PRIMARY KEY,
-    thread_id TEXT REFERENCES fin_agents.user_queries (thread_id) ON DELETE SET NULL,
-    node_name TEXT NOT NULL DEFAULT 'unknown',
-    source TEXT NOT NULL,          -- provider: 'yfinance', 'alpha_vantage'
-    method TEXT NOT NULL,          -- 'daily_ohlcv', 'intraday_ohlcv', 'quote', 'overview'
     symbol TEXT NOT NULL,          -- ticker symbol, e.g. 'AAPL'
-    cache_key TEXT NOT NULL,       -- sha256(source + method + symbol + serialised params)
-    input JSONB NOT NULL DEFAULT '{}',
-    output JSONB NOT NULL DEFAULT '{}',
+    source TEXT NOT NULL,          -- provider/client name/url: 'yfinance', 'https://example.com/', etc.
+    method TEXT,                   -- method/endpoint name: 'get_company_profile', etc.
+    cache_key TEXT NOT NULL,       -- sha256(source + method + serialised input) for cache lookup
+    cache_ttl_seconds INTEGER NOT NULL DEFAULT 14400, -- how long the cache is valid (e.g. 4 hours = 14400 seconds)
+    input JSONB NOT NULL DEFAULT '{}',                         -- data params/payload for request; empty if data is directly injected into output
+    output JSONB NOT NULL DEFAULT '{}',                        -- response/output from the API; data injection
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS fin_markets_quant_raw_cache_key_idx
-    ON fin_markets.quant_raw (cache_key, created_at DESC);
-CREATE INDEX IF NOT EXISTS fin_markets_quant_raw_thread_id_idx
-    ON fin_markets.quant_raw (thread_id);
-CREATE INDEX IF NOT EXISTS fin_markets_quant_raw_symbol_method_idx
-    ON fin_markets.quant_raw (symbol, method, created_at DESC);
+CREATE INDEX IF NOT EXISTS fin_markets_input_raw_cache_key_idx
+    ON fin_markets.input_raw (cache_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS fin_markets_input_raw_thread_id_idx
+    ON fin_markets.input_raw (thread_id);
+CREATE INDEX IF NOT EXISTS fin_markets_input_raw_source_method_idx
+    ON fin_markets.input_raw (source, method);
+
 
 -- quant_stats: unified market data for non-derivative instrument types — equity, crypto, commodity, precious_metal, index
 -- one row per (instrument_type, symbol, source, granularity, bar_time)
@@ -209,7 +187,7 @@ CREATE INDEX IF NOT EXISTS fin_markets_quant_derivative_stats_expiry_idx
 CREATE TABLE IF NOT EXISTS fin_markets.news_stats (
     id              BIGSERIAL PRIMARY KEY,
     -- provenance
-    news_raw_id     BIGINT        REFERENCES fin_markets.news_raw (id) ON DELETE SET NULL,
+    input_raw_id    BIGINT        REFERENCES fin_markets.input_raw (id) ON DELETE SET NULL,
     source          TEXT          NOT NULL,                     -- 'yfinance', 'alpha_vantage', 'web_search'
     -- article identity
     symbol          TEXT,                                       -- primary ticker; NULL for topic news

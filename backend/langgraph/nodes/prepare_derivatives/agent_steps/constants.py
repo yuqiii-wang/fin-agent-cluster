@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-STEP_NAVIGATE_WEB: str = "navigate_web"
+STEP_LOAD_MARKDOWN: str = "load_markdown"
+STEP_STUDY_WEB: str = "study_web"
 STEP_GET_STATS: str = "get_stats"
 STEP_CALCULATE_OPTIONS: str = "calculate_options"
 
 # Canonical execution order.
 STEP_ORDER: list[str] = [
-    STEP_NAVIGATE_WEB,
+    STEP_LOAD_MARKDOWN,
+    STEP_STUDY_WEB,
     STEP_GET_STATS,
     STEP_CALCULATE_OPTIONS,
 ]
 
 __all__ = [
-    "STEP_NAVIGATE_WEB",
+    "STEP_LOAD_MARKDOWN",
+    "STEP_STUDY_WEB",
     "STEP_GET_STATS",
     "STEP_CALCULATE_OPTIONS",
     "STEP_ORDER",

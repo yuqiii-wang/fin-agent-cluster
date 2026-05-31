@@ -18,7 +18,7 @@ Flow
    b. ``analyze_stock_from_web_if_not_seen`` re-analyses using the web content
       (Streaming).  If still unrecognised it fails the node.
 3. ``get_and_calculate_stats`` fetches 2 years of daily OHLCV bars for the
-   confirmed stock, caches the raw record in ``quant_raw``, computes technical
+   confirmed stock, caches the raw record in ``input_raw``, computes technical
    indicators and upserts rows to ``quant_stats``, or bypasses recomputation
    when the cache is fresh.
 

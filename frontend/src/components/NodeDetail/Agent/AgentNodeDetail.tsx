@@ -28,11 +28,8 @@ import { isWorkActive, isWorkTerminal, TERMINAL_WORK_STATUSES } from '../../../c
 import { COLOR_SURFACE_RAISED, COLOR_TEXT_SECONDARY } from '../../../constants/styleColors';
 import {
   addAgentSkill,
-  compactAgentMemory,
-  forgetAgentMemory,
   forgetAgentSkill,
   getAgentCapabilities,
-  getAgentStepStates,
   invalidateNodeCache,
   fetchNodeSkills,
 } from '../../../api/threads';
@@ -42,7 +39,7 @@ import AgentSkillsPanel from './AgentSkillsPanel';
 import TaskDetail from '../TaskDetail';
 import { viewTypeToMode } from '../../DataViewer/index';
 
-import type { AgentCapabilities, NodeInfo, NodeSkillFile, StepStateEntry, TaskInfo, TaskRunEntry } from '../../../types';
+import type { AgentCapabilities, NodeInfo, NodeSkillFile, TaskInfo, TaskRunEntry } from '../../../types';
 import type { DataViewerMode } from '../../DataViewer/index';
 
 const { Title, Text } = Typography;
@@ -82,7 +79,6 @@ const AgentNodeDetail: React.FC<Props> = ({
   taskRunLog = [],
 }) => {
   const [caps, setCaps] = useState<AgentCapabilities | null>(null);
-  const [stepStates, setStepStates] = useState<StepStateEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [nodeSkillFiles, setNodeSkillFiles] = useState<NodeSkillFile[]>([]);
   const [activeTab, setActiveTab] = useState('tasks');
@@ -103,29 +99,18 @@ const AgentNodeDetail: React.FC<Props> = ({
     }
   }, [threadId, node.node_id]);
 
-  const fetchStepStates = useCallback(async () => {
-    try {
-      const data = await getAgentStepStates(threadId, node.node_id);
-      setStepStates(data.iterations);
-    } catch {
-      // non-fatal; no step state yet for this node
-    }
-  }, [threadId, node.node_id]);
-
   // Poll while node is active; single fetch otherwise.
   useEffect(() => {
     fetchCaps();
-    fetchStepStates();
     if (isWorkActive(node.status)) {
       pollRef.current = setInterval(() => {
         fetchCaps();
-        fetchStepStates();
       }, POLL_INTERVAL_MS);
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [fetchCaps, fetchStepStates, node.status]);
+  }, [fetchCaps, node.status]);
 
   // Fetch static built-in skills files for this node (keyed on node_name).
   useEffect(() => {
@@ -158,27 +143,6 @@ const AgentNodeDetail: React.FC<Props> = ({
       await fetchCaps();
       if (isWorkActive(node.status)) {
         message.info('Skill removed — agent will pause and restart without it.');
-      }
-    } catch (err) {
-      message.error(String(err));
-    }
-  };
-
-  const handleForgetMemory = async (memoryId: string) => {
-    try {
-      await forgetAgentMemory(threadId, node.node_id, memoryId);
-      await fetchCaps();
-    } catch (err) {
-      message.error(String(err));
-    }
-  };
-
-  const handleCompactMemory = async (memoryIds: string[], summary: string) => {
-    try {
-      await compactAgentMemory(threadId, node.node_id, memoryIds, summary);
-      await fetchCaps();
-      if (isWorkActive(node.status)) {
-        message.info('Memory compacted — agent will pause and restart with the compacted context.');
       }
     } catch (err) {
       message.error(String(err));
@@ -394,16 +358,11 @@ const AgentNodeDetail: React.FC<Props> = ({
             },
             {
               key: 'memory',
-              label: `Memory${caps ? ` (${caps.memory.filter((m) => m.status === 'active').length}${stepStates.length > 0 ? ` · ${stepStates.length}s` : ''})` : ''}`,
+              label: `Memory${caps ? ` (${caps.memory.length})` : ''}`,
               children: caps ? (
                 <AgentMemoryPanel
                   memory={caps.memory}
-                  nodeRunning={nodeRunning}
-                  readonly={nodeTerminal}
-                  onForget={handleForgetMemory}
-                  onCompact={handleCompactMemory}
                   onViewData={onViewData ? (label, data) => onViewData(label, data) : undefined}
-                  stepStates={stepStates}
                 />
               ) : null,
             },

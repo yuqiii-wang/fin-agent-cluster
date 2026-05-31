@@ -35,6 +35,31 @@ from pydantic import BaseModel, ConfigDict, Field
 T = TypeVar("T")
 
 
+class BaseTaskInput(BaseModel):
+    """Base input model for all task inputs.
+
+    Provides infrastructure-level control fields that ``run_task`` reads before
+    dispatching to the ``@task`` function.  Business-specific input models should
+    inherit from this class instead of ``BaseModel`` directly.
+
+    Attributes:
+        from_maybe_cache: When ``True`` (default) ``run_task`` checks existing
+                          completed task rows and ``pg_cache_fn`` before
+                          delegating to Celery.  When ``False`` all DB/PG cache
+                          reads are bypassed and a fresh execution is forced.
+                          Retries driven by ``llm_orchestration_on_failure``
+                          propose new inputs, which change the task input hash
+                          and naturally bypass the cache without toggling this.
+    """
+
+    from_maybe_cache: bool = Field(
+        default=True,
+        description=(
+            "When False, bypass all DB/PG cache reads and force fresh execution."
+        ),
+    )
+
+
 class NodeContext(BaseModel):
     """Thread → Node identity.  Passed to all lifecycle calls and run_task()."""
 
@@ -97,4 +122,4 @@ class TaskOutput(BaseModel, Generic[T]):
     thinking: str | None = None
 
 
-__all__ = ["NodeContext", "TaskContext", "TaskInput", "TaskOutput"]
+__all__ = ["NodeContext", "TaskContext", "TaskInput", "TaskOutput", "BaseTaskInput"]

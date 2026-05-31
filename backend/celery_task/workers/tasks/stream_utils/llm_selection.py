@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 
-def select_llm(query: str, llm: str = "ollama") -> Any:
+def select_llm(query: str) -> Any:
     """Select LLM based on query prefix.
 
     Returns a ``MockLLM`` (with optional rate/duration overrides) when the
     query starts with ``"semantic test"`` or ``"concurrency test"``, so
-    load-testing flows never reach the real Ollama endpoint.  All other
-    queries use ``OllamaLLM``.
+    load-testing flows never reach the configured LLM endpoint.  All other
+    queries use the LLM provider from ``Settings.LLM_PROVIDER``.
 
     Args:
         query: Raw user query string from the task payload.
@@ -31,4 +31,4 @@ def select_llm(query: str, llm: str = "ollama") -> Any:
         _tps = float(_tps_m.group(1)) if _tps_m else SEMANTIC_TOKENS_PER_SEC
         _dur = float(_dur_m.group(1)) if _dur_m else float(SEMANTIC_DURATION_SECS)
         return get_mock_llm(tokens_per_sec=_tps, duration_secs=_dur)
-    return get_llm(llm)
+    return get_llm()

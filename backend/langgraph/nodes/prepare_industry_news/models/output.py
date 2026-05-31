@@ -14,7 +14,7 @@ class PrepareIndustryNewsOutput(BaseModel):
 
     Attributes:
         symbol:              Equity ticker used as industry context (or ``None`` for topic-only).
-        news_raw_id:         PK of the ``news_raw`` cache row inserted/reused.
+        input_raw_id:         PK of the ``input_raw`` cache row inserted/reused.
         upserted_ids:        List of ``news_stats.id`` rows written by ``digest_news``.
         news_articles_count: Number of raw news articles fetched.
         from_cache:          Whether ``get_news`` returned a cached result.
@@ -22,7 +22,7 @@ class PrepareIndustryNewsOutput(BaseModel):
     """
 
     symbol: str | None = Field(default=None, description="Equity ticker used as industry context.")
-    news_raw_id: int | None = Field(default=None, description="PK of the news_raw cache row.")
+    input_raw_id: int | None = Field(default=None, description="PK of the input_raw cache row.")
     upserted_ids: list[int] = Field(
         default_factory=list,
         description="IDs of news_stats rows upserted by digest_news.",

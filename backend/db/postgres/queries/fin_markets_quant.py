@@ -1,7 +1,7 @@
 """Quant market-data SQL templates for the ``fin_markets`` schema.
 
-Covers ``fin_markets.quant_raw`` (API cache), ``fin_markets.quant_stats``
-(OHLCV + technicals for equity/crypto/commodity/precious_metal/index), and
+Covers ``fin_markets.quant_stats`` (OHLCV + technicals for
+equity/crypto/commodity/precious_metal/index) and
 ``fin_markets.quant_derivative_stats`` (options and futures contracts).
 
 All constants are raw SQL strings ready for use with psycopg3 ``%s`` /
@@ -10,15 +10,7 @@ All constants are raw SQL strings ready for use with psycopg3 ``%s`` /
 
 from __future__ import annotations
 
-import logging
-
-from backend.db.postgres.connection import raw_conn
-from backend.db.postgres.errors import PG_QUERY_FAILED
-
-logger = logging.getLogger(__name__)
-
 __all__ = [
-    "QuantRawSQL",
     "OhlcvStatsSQL",
     "CryptoStatsSQL",
     "CommodityStatsSQL",
@@ -26,74 +18,7 @@ __all__ = [
     "IndexStatsSQL",
     "OptionsStatsSQL",
     "DerivativeStatsSQL",
-    "get_yf_exchange_for_symbol",
 ]
-
-_GET_YF_EXCHANGE_SQL = """
-    SELECT output->'stats_record'->>'yf_exchange' AS yf_exchange
-    FROM fin_markets.quant_raw
-    WHERE symbol = %s
-      AND source = 'yfinance'
-    ORDER BY created_at DESC
-    LIMIT 1
-"""
-
-
-async def get_yf_exchange_for_symbol(symbol: str) -> str | None:
-    """Return the yfinance exchange code for *symbol* from the most recent quant_raw entry.
-
-    The ``yf_exchange`` field is written to ``quant_raw.output`` when OHLCV data
-    is fetched via yfinance (e.g. during :func:`get_and_calculate_stats`).
-
-    Args:
-        symbol: Equity ticker symbol, e.g. ``'AAPL'``.
-
-    Returns:
-        yfinance exchange code string (e.g. ``'NMS'``, ``'NYQ'``, ``'HKG'``),
-        or ``None`` when no yfinance entry exists yet or on DB error.
-    """
-    try:
-        async with raw_conn(readonly=True) as conn:
-            cur = await conn.execute(_GET_YF_EXCHANGE_SQL, (symbol.upper(),))
-            row = await cur.fetchone()
-        return row["yf_exchange"] if row and row["yf_exchange"] else None
-    except Exception as exc:
-        logger.error(
-            "[%s] get_yf_exchange_for_symbol failed symbol=%r: %s", PG_QUERY_FAILED, symbol, exc
-        )
-        return None
-
-
-class QuantRawSQL:
-    """Queries against ``fin_markets.quant_raw`` (market-data API cache)."""
-
-    GET_CACHED = """
-        SELECT output, created_at
-        FROM fin_markets.quant_raw
-        WHERE cache_key = %s
-          AND created_at > %s
-        ORDER BY created_at DESC
-        LIMIT 1
-    """
-
-    INSERT = """
-        INSERT INTO fin_markets.quant_raw
-            (thread_id, node_name, source, method, symbol, cache_key, input, output)
-        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
-    """
-
-    LIST_BY_SYMBOL = """
-        SELECT id, source, method, symbol, created_at
-        FROM fin_markets.quant_raw
-        WHERE symbol = %s
-        ORDER BY created_at DESC
-        LIMIT %s
-    """
-
-    PURGE_EXPIRED = """
-        DELETE FROM fin_markets.quant_raw
-        WHERE created_at < DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
-    """
 
 
 class OhlcvStatsSQL:

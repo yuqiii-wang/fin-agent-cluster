@@ -13,7 +13,7 @@ search to a relevant industry/sector context, then runs the
 ``get_and_digest_news`` pipeline to:
 
 1. ``get_news``    — fetch latest industry/sector news via FMP and web-search
-                     snippets via DDGS, cache result in ``fin_markets.news_raw``.
+                     snippets via DDGS, cache result in ``fin_markets.input_raw``.
 2. ``digest_news`` — enrich each article with LLM completion (ARK/Doubao),
                      embed the AI summary, and upsert to ``fin_markets.news_stats``.
 
@@ -188,7 +188,7 @@ class PrepareIndustryNewsNode(BaseNode[PrepareIndustryNewsInput, PrepareIndustry
 
         return PrepareIndustryNewsOutput(
             symbol=symbol,
-            news_raw_id=seq_out.get_news.news_raw_id,
+            input_raw_id=seq_out.get_news.input_raw_id,
             upserted_ids=seq_out.digest_news.upserted_ids,
             news_articles_count=len(seq_out.get_news.news_articles),
             from_cache=seq_out.get_news.from_cache,

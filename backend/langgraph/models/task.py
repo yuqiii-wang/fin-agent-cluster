@@ -90,7 +90,6 @@ class NodeTask(Generic[I, O]):
     handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
     pg_cache_fn: Callable[..., Awaitable[Any]] | None = field(default=None, repr=False)
     cache_ttl_seconds: int = field(default=14400)
-    is_required_llm_orchestration: bool = field(default=False)
 
     def __post_init__(self) -> None:
         """Validate types and register the description in the global registry."""

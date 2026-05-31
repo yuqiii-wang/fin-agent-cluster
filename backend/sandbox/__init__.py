@@ -6,8 +6,9 @@ container so files written by earlier tasks are visible to later tasks.
 
 Isolation stack (container-side)
 ---------------------------------
-1. **Docker network** — containers run on an ``internal: true`` network with
-   no egress route to the internet.
+1. **Docker network** — containers run on both an ``internal: true`` network
+   (for postgres-replica access) and the ``default`` network (for outbound
+   internet access required by Playwright-driven Chromium).
 2. **CWD confinement** — subprocess CWD is ``/sandbox/{node_id}/`` inside the
    container; the security validator blocks ``../`` escapes.
 3. **Resource limits** — ``setrlimit`` caps RAM, CPU, processes, and FDs.
@@ -15,6 +16,12 @@ Isolation stack (container-side)
 5. **Output cap** — stdout/stderr truncated to ``SANDBOX_MAX_OUTPUT_BYTES``.
 6. **Pre-execution validation** — blocks obvious escape patterns on both the
    backend (early rejection) and inside the container (belt-and-suspenders).
+
+Playwright support
+------------------
+Playwright (Chromium) is installed in the sandbox image.  LLM-generated
+scripts produced by ``propose_playwright_script`` can use
+``playwright.sync_api`` to navigate pages and return clean HTML to stdout.
 
 Public API
 ----------

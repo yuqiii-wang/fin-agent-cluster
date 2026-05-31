@@ -49,14 +49,22 @@ class TaskRunnerMixin:
         )
         from backend.langgraph.lifecycle.pause_flag import clear_task_pause_flag
 
-        input_json = json.dumps(content.model_dump(mode="json"))
+        # Exclude infrastructure-only fields from the cache key so that changing
+        # from_maybe_cache does not produce a distinct hash and invalidate existing
+        # completed rows.
+        from_maybe_cache: bool = getattr(content, "from_maybe_cache", True)
+        cache_dict = {
+            k: v for k, v in content.model_dump(mode="json").items()
+            if k != "from_maybe_cache"
+        }
+        input_json = json.dumps(cache_dict)
         existing = await get_existing_task_for_node(ctx.thread_id, ctx.node_id, node_task.name, input_json)
         # Guard against returning a cached result from a *different* parallel invocation of the
         # same task within this node (e.g. prepare_index running get_and_calculate_stats for N
         # symbols concurrently).  ctx.task_ids is appended to before the @task fn is awaited, so
         # if task_id is already present another coroutine has claimed it; create a fresh one.
         existing_claimed = existing is not None and existing["task_id"] in ctx.task_ids
-        if existing and not existing_claimed and existing["status"] == "completed":
+        if from_maybe_cache and existing and not existing_claimed and existing["status"] == "completed":
             # SQL already verified input_hash matches and TTL is live — serve from cache.
             task_id = existing["task_id"]
             task_row = await get_task_full(ctx.thread_id, task_id)
@@ -97,7 +105,7 @@ class TaskRunnerMixin:
         # task_fn / Celery.  On a hit the mixin emits a ToolCall lifecycle
         # record and returns immediately — no Celery dispatch needed.
         # ------------------------------------------------------------------
-        if node_task.pg_cache_fn is not None:
+        if from_maybe_cache and node_task.pg_cache_fn is not None:
             cached_content = await node_task.pg_cache_fn(content, ctx)
             if cached_content is not None:
                 payload = content.model_dump(mode="json")

@@ -1,4 +1,4 @@
-/** Agent capability types aligned to backend fin_agents.agent_skills / agent_memory. */
+/** Agent capability types aligned to backend fin_agents.agent_skills and task memory. */
 
 export interface ToolInfo {
   name: string;
@@ -6,25 +6,15 @@ export interface ToolInfo {
   input_schema: Record<string, unknown>;
 }
 
-export type MemoryEntryType =
-  | 'task_result'
-  | 'tool_call'
-  | 'skill_applied'
-  | 'reasoning'
-  | 'compacted_summary';
-
-export type MemoryStatus = 'active' | 'forgotten' | 'compacted';
-
-export interface MemoryEntry {
-  memory_id: string;
-  thread_id: string;
+export interface TaskMemory {
+  task_id: string;
   node_id: string;
-  entry_type: MemoryEntryType;
-  content: Record<string, unknown>;
-  seq_num: number;
-  status: MemoryStatus;
-  compacted_into?: string | null;
-  created_at: string;
+  node_name: string;
+  task_name: string;
+  description: string;
+  status: string;
+  output?: Record<string, unknown> | null;
+  updated_at?: string | null;
 }
 
 export type SkillStatus = 'active' | 'forgotten';
@@ -42,19 +32,7 @@ export interface Skill {
 export interface AgentCapabilities {
   tools: ToolInfo[];
   skills: Skill[];
-  memory: MemoryEntry[];
-}
-
-export interface StepStateEntry {
-  node_id: string;
-  iteration: number;
-  global_state: Record<string, unknown>;
-  step_state: Record<string, unknown>;
-  updated_at: string;
-}
-
-export interface AgentStepStatesResponse {
-  iterations: StepStateEntry[];
+  memory: TaskMemory[];
 }
 
 export interface NodeSkillFile {

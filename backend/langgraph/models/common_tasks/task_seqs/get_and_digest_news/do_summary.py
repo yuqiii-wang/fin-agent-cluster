@@ -62,7 +62,7 @@ from backend.resources.news.models import NewsArticle
 logger = logging.getLogger(__name__)
 
 _TASK_NAME = "do_summary"
-_MIN_CONTENT_LEN = 200   # articles shorter than this are skipped entirely
+_MIN_CONTENT_LEN = 50   # articles shorter than this are skipped entirely; DDGS snippets are 100-200 chars
 
 # ---------------------------------------------------------------------------
 # Valid reference values for structured output validation
@@ -276,12 +276,12 @@ class DoSummaryInput(BaseModel):
     """Input for the do_summary task.
 
     Attributes:
-        news_raw_id:   FK to the ``news_raw`` row (for cache look-up and provenance).
+        input_raw_id:  FK to the ``input_raw`` row (for cache look-up and provenance).
         news_articles: Serialised :class:`~backend.resources.news.models.NewsArticle`
                        dicts from the ``get_news`` output.
     """
 
-    news_raw_id: int | None = Field(default=None, description="FK to news_raw row.")
+    input_raw_id: int | None = Field(default=None, description="FK to input_raw row.")
     news_articles: list[dict[str, Any]] = Field(
         default_factory=list, description="Serialised NewsArticle dicts."
     )
@@ -316,22 +316,22 @@ class DoSummaryOutput(BaseModel):
 async def _do_summary_pg_cache(
     inp: DoSummaryInput, ctx: NodeContext
 ) -> DoSummaryOutput | None:
-    """Check pg for existing summaries in news_stats for the given news_raw_id.
+    """Check pg for existing summaries in news_stats for the given input_raw_id.
 
-    Returns cached summaries when the linked ``news_raw`` row is within the
+    Returns cached summaries when the linked ``input_raw`` row is within the
     4-hour TTL (implicitly guaranteed by ``get_news.pg_cache_fn``).
 
     Args:
-        inp: Typed task input containing the ``news_raw_id``.
+        inp: Typed task input containing the ``input_raw_id``.
         ctx: Current node context (unused; present for signature compatibility).
 
     Returns:
         ``DoSummaryOutput`` with ``from_cache=True`` on a cache hit, or ``None``.
     """
-    if inp.news_raw_id is None:
+    if inp.input_raw_id is None:
         return None
     async with raw_conn(readonly=True) as conn:
-        cur = await conn.execute(NewsStatsSQL.GET_SUMMARIES_BY_NEWS_RAW_ID, (inp.news_raw_id,))
+        cur = await conn.execute(NewsStatsSQL.GET_SUMMARIES_BY_INPUT_RAW_ID, (inp.input_raw_id,))
         cached_rows = await cur.fetchall()
     if not cached_rows:
         return None

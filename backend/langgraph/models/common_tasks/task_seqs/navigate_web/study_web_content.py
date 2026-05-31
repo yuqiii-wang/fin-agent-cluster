@@ -17,8 +17,11 @@ Outputs
 ``reasoning``
     LLM's brief rationale for what data was found and how the script extracts it.
 
-``from_cache``
-    ``True`` when the output was served from the ``llm_responses`` prompt-hash cache.
+``has_popup``
+    ``True`` when the LLM determined the page cannot yield financial data — blocked by a
+    pop-up/consent/GDPR overlay, contains only privacy/cookie/ads content, is empty or very
+    short, or is any other access barrier.  When ``True`` the pipeline triggers the barrier-clear
+    flow (``propose_playwright_script`` → sandbox execution) and retries.
 
 Failure behaviour
 -----------------
@@ -78,10 +81,23 @@ that:
 2. Parses and extracts the relevant structured financial data that addresses the objective.
 3. Writes exactly one JSON object to stdout via print(json.dumps(...)).
 
+Additionally, inspect the page content BEFORE writing the script:
+- Set "has_popup" to true in ANY of the following cases:
+  1. A pop-up overlay, cookie consent banner, GDPR dialog, or advertisement wall dominates the
+     page and prevents access to actual content.
+  2. The page contains no meaningful financial data relevant to the objective — only privacy
+     notices, cookie policies, terms-of-service, or advertisements with no financial content.
+  3. The page is entirely empty or has very short content (<300 chars after stripping whitespace)
+     that contains no financial data.
+  4. The page is an age-gate, login wall, paywall, or any other access-barrier form.
+- Set "has_popup" to false ONLY if the page contains real financial content relevant to the
+  objective.
+
 Respond ONLY with a valid JSON object — no preamble, no explanation outside the JSON.
 
 Schema:
 {{{{
+  "has_popup":      true | false,
   "transform_script": "<complete, self-contained Python script>",
   "reasoning":        "<1-3 sentences: what data was found and how the script extracts it>"
 }}}}
@@ -143,6 +159,15 @@ class StudyWebContentInput(BaseModel):
             "Use to inject caller-specific extraction rules without polluting the base prompt."
         ),
     )
+    failure_context: str = Field(
+        default="",
+        description=(
+            "Guidance from a prior failed attempt (failure reason + recovery reasoning) "
+            "carried by the agent step loop on a regeneration retry.  When set, it is "
+            "injected into the prompt so the LLM rewrites the script to fix the issue. "
+            "Contains no concrete values — the LLM must still extract correct data itself."
+        ),
+    )
 
 
 class StudyWebContentOutput(BaseModel):
@@ -155,6 +180,10 @@ class StudyWebContentOutput(BaseModel):
                           stdin and prints a single JSON object to stdout.
         reasoning:        LLM's brief rationale for what data was found and how
                           the script extracts it.
+        has_popup:        ``True`` when the LLM determined the page is dominated by a
+                          cookie-consent / GDPR / advertisement overlay rather than
+                          real financial content.  When ``True`` the pipeline triggers
+                          ``propose_playwright_script`` → sandbox execution → retry.
         from_cache:       ``True`` when served from the ``llm_responses`` prompt-hash cache.
     """
 
@@ -166,6 +195,14 @@ class StudyWebContentOutput(BaseModel):
         description="Python script (stdlib only) that reads Markdown from stdin and prints JSON.",
     )
     reasoning: str = Field(default="", description="LLM reasoning for the extraction approach.")
+    has_popup: bool = Field(
+        default=False,
+        description=(
+            "True when the page cannot yield financial data: blocked by a pop-up/consent/GDPR overlay, "
+            "contains only privacy/cookie/ads content, is empty/very short, or is any other access barrier. "
+            "When True the pipeline triggers propose_playwright_script → sandbox execution → retry."
+        ),
+    )
     from_cache: bool = Field(default=False, description="True when served from llm_responses prompt-hash cache.")
 
 
@@ -201,6 +238,15 @@ def _build_study_prompt(payload: dict) -> list[BaseMessage]:
     if inp.additional_context:
         snippets = "\n\n".join(inp.additional_context)
         additional_context_text = f"\n\n{snippets}"
+
+    # On a regeneration retry, prepend the failure guidance so the LLM fixes the
+    # prior mistake.  Contains no concrete values — only the failure reason and
+    # recovery reasoning.
+    if inp.failure_context:
+        additional_context_text += (
+            "\n\nPREVIOUS ATTEMPT FAILED — you MUST address this when rewriting the "
+            f"script:\n{inp.failure_context}"
+        )
 
     return _STUDY_PROMPT.format_messages(
         output_json_schema=schema_text,
@@ -278,6 +324,7 @@ async def _study_web_content_pg_cache(
         source_markdown=inp.markdown,
         transform_script=transform_script,
         reasoning=str(answer_dict.get("reasoning", "")),
+        has_popup=bool(answer_dict.get("has_popup", False)),
         from_cache=True,
     )
 
@@ -304,6 +351,7 @@ def _parse_study_answer(
         source_markdown=source_markdown,
         transform_script=str(answer_dict.get("transform_script", "")),
         reasoning=str(answer_dict.get("reasoning", "")),
+        has_popup=bool(answer_dict.get("has_popup", False)),
     )
 
 

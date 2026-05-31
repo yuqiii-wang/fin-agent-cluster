@@ -7,11 +7,12 @@
 
 import React, { useState } from 'react';
 import { Avatar, Button, Dropdown, Space, Spin, Typography } from 'antd';
-import { LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons';
+import { CloudServerOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useAuth } from '../contexts/AuthContext';
 import LoginModal from './LoginModal';
 import UserProfile from './UserProfile';
+import ServerSettings from './ServerSettings';
 import type { GuestAuthResponse } from '../types';
 
 const { Text } = Typography;
@@ -20,6 +21,7 @@ const UserButton: React.FC = () => {
   const { user, loading, refresh, logout } = useAuth();
   const [modalOpen, setModalOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [serverSettingsOpen, setServerSettingsOpen] = useState(false);
 
   function handleSuccess(data: GuestAuthResponse) {
     // AuthContext refresh will re-read the stored token.
@@ -66,6 +68,12 @@ const UserButton: React.FC = () => {
       label: 'Profile & Preferences',
       onClick: () => setProfileOpen(true),
     },
+    {
+      key: 'server-settings',
+      icon: <CloudServerOutlined />,
+      label: 'Server Settings',
+      onClick: () => setServerSettingsOpen(true),
+    },
     { type: 'divider' },
     {
       key: 'logout',
@@ -87,6 +95,7 @@ const UserButton: React.FC = () => {
         />
       </Dropdown>
       <UserProfile open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <ServerSettings open={serverSettingsOpen} onClose={() => setServerSettingsOpen(false)} />
     </>
   );
 };

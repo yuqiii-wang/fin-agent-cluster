@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from backend.langgraph.agent.errors.codes import (
-    AGENT_COMPACT_TOO_FEW_ENTRIES,
-    AGENT_MAX_ITERATIONS,
-    AGENT_MEMORY_NOT_FOUND,
     AGENT_NOT_RUNNING,
     AGENT_PAUSE_ALREADY_SET,
     AGENT_SKILL_NOT_FOUND,
@@ -37,9 +34,6 @@ class AgentPausedError(TaskPausedError):
 
 
 __all__ = [
-    "AGENT_COMPACT_TOO_FEW_ENTRIES",
-    "AGENT_MAX_ITERATIONS",
-    "AGENT_MEMORY_NOT_FOUND",
     "AGENT_NOT_RUNNING",
     "AGENT_PAUSE_ALREADY_SET",
     "AGENT_SKILL_NOT_FOUND",
