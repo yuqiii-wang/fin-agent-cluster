@@ -1,7 +1,7 @@
 """OHLCV technical indicator computation using ``pandas_ta``.
 
 Provides :func:`build_ohlcv_dataframe` to reconstruct a DatetimeIndex
-DataFrame from a :class:`~backend.resources.stats.models.StatsMatrix`, and
+DataFrame from a :class:`~backend.resources.stats.models.OhlcvStatsMatrix`, and
 :func:`build_indicator_df` to append the full suite of technical indicators
 supported by ``fin_markets.quant_stats``.
 
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 if TYPE_CHECKING:
-    from backend.resources.stats.models import StatsMatrix
+    from backend.resources.stats.models import OhlcvStatsMatrix
 
 __all__ = ["safe_float", "build_ohlcv_dataframe", "build_indicator_df"]
 
@@ -71,8 +71,8 @@ def _parse_bar_time(ts: str) -> datetime:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
-def build_ohlcv_dataframe(matrix: "StatsMatrix") -> pd.DataFrame:
-    """Build a DatetimeIndex OHLCV DataFrame from a :class:`StatsMatrix`.
+def build_ohlcv_dataframe(matrix: "OhlcvStatsMatrix") -> pd.DataFrame:
+    """Build a DatetimeIndex OHLCV DataFrame from a :class:`OhlcvStatsMatrix`.
 
     Args:
         matrix: Time-series matrix with ``timestamps`` (x-axis) and

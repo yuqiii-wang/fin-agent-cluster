@@ -5,7 +5,7 @@ get_stats — fetch by requesting a stats provider (yfinance/FMP/mock) with
     handed down from a previous task.  Hard failure: if this step fails, the
     whole pipeline fails and raises.
 calculate_stats — dispatch by ``data_type`` to the appropriate handler:
-    - ``ohlcv``   → calculate_stock_stats (compute indicators, upsert quant_stats)
+    - ``ohlcv``   → calculate_ohlcv_stats (compute indicators, upsert quant_stats)
     - ``options`` / ``futures`` / ``text`` / ``fundamentals`` → short-circuit with
       empty output since these have dedicated handlers elsewhere.
 """
@@ -29,6 +29,7 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.mod
 )
 from backend.langgraph.models.models import NodeContext
 from backend.langgraph.models.task_seq import TaskSeq
+from backend.quant.stats import STATS_DATA_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ async def _pipeline(
         ctx,
         CalculateStatsInput(
             stats_record=gs_output.stats_record,
-            from_cache=gs_output.from_cache or gs_output.bypass_calculate,
+            from_cache=gs_output.from_cache or gs_output.data_type != STATS_DATA_TYPE.OHLCV.value,
             data_type=gs_output.data_type,
         ),
     )

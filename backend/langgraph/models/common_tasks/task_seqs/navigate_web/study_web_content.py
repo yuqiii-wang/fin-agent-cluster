@@ -61,6 +61,7 @@ from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
+from backend.config import get_settings
 from backend.db.postgres.connection import raw_conn
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.models import NodeContext, TaskInput, TaskOutput
@@ -228,9 +229,11 @@ def _build_study_prompt(payload: dict) -> list[BaseMessage]:
 
     schema_text = _json.dumps(inp.output_json_schema, indent=2)
 
-    # Truncate very long pages to keep within LLM context limits (~48k chars).
-    markdown_excerpt = inp.markdown[:48_000]
-    if len(inp.markdown) > 48_000:
+    # Truncate very long pages to keep the request within the model's max message
+    # tokens (dense/CJK pages tokenize ~1 token per char).  Configurable cap.
+    max_chars = get_settings().STUDY_MARKDOWN_MAX_CHARS
+    markdown_excerpt = inp.markdown[:max_chars]
+    if len(inp.markdown) > max_chars:
         markdown_excerpt += "\n\n[... content truncated for length ...]"
 
     # Append caller-supplied additional_context snippets to the system prompt.

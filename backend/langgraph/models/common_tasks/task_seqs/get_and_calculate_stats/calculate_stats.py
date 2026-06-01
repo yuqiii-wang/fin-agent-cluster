@@ -5,7 +5,7 @@ in :mod:`calculation_utils` based on the ``StatsRecord.id`` prefix:
 
 - ``json-options-*``  → no-op (options stats are computed by ``calculate_option_stats``)
 - ``json-futures-*``  → no-op (futures stats calculation not yet implemented)
-- all other records   → :func:`~calculation_utils.calculate_stock_stats.calculate_stock_stats_handler`
+- all other records   → :func:`~calculation_utils.calculate_ohlcv_stats.calculate_ohlcv_stats_handler`
   (equity, index, crypto, precious_metal, commodity — any OHLCV-based record)
 
 Execution layers
@@ -21,8 +21,8 @@ Celery layer (``_handler``):
 Public exports
 --------------
 ``calculate_stats``      — ``NodeTask`` instance.
-``CalculateStatsInput``  — Pydantic input model (alias for ``CalculateStockStatsInput``).
-``CalculateStatsOutput`` — Pydantic output model (alias for ``CalculateStockStatsOutput``).
+``CalculateStatsInput``  — Pydantic input model (alias for ``CalculateOhlcvStatsInput``).
+``CalculateStatsOutput`` — Pydantic output model (alias for ``CalculateOhlcvStatsOutput``).
 ``HANDLERS``             — dict slice for ``backend.langgraph.nodes.HANDLERS``.
 """
 
@@ -32,28 +32,25 @@ from langgraph.func import task
 
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.langgraph.lifecycle import complete_task, create_task
-from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_stock_stats import (
-    CalculateStockStatsInput,
-    CalculateStockStatsOutput,
-    calculate_stock_stats_handler,
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_ohlcv_stats import (
+    CalculateOhlcvStatsInput,
+    CalculateOhlcvStatsOutput,
+    calculate_ohlcv_stats_handler,
+)
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_option_stats import (
+    CalculateOptionStatsInput,
+    CalculateOptionStatsOutput,
+    calculate_option_stats_handler,
 )
 from backend.langgraph.models.models import TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
+from backend.quant.stats import STATS_DATA_TYPE, STATS_VIEW_TYPE
 
 _TASK_NAME = "calculate_stats"
 
-# data_type values that belong to non-OHLCV paths and must be short-circuited
-# before reaching calculate_stock_stats_handler.
-_NON_OHLCV_DATA_TYPES: frozenset[str] = frozenset({
-    "options",
-    "futures",
-    "text",
-    "fundamentals",
-})
-
 # Public aliases so existing importers of CalculateStatsInput/Output continue to work.
-CalculateStatsInput = CalculateStockStatsInput
-CalculateStatsOutput = CalculateStockStatsOutput
+CalculateStatsInput = CalculateOhlcvStatsInput
+CalculateStatsOutput = CalculateOhlcvStatsOutput
 
 
 # ---------------------------------------------------------------------------
@@ -64,28 +61,35 @@ CalculateStatsOutput = CalculateStockStatsOutput
 async def _handler(payload: dict) -> dict:
     """Dispatch the calculate_stats payload to the appropriate instrument handler.
 
-    Routes by ``data_type`` from :class:`CalculateStatsInput`:
-    - Non-OHLCV types (``options``, ``futures``, ``text``, ``fundamentals``) →
-      return a zero-row stub; these have dedicated handlers elsewhere.
-    - ``ohlcv`` (default) → :func:`calculate_stock_stats_handler`.
+    Routes by ``data_type`` from the payload:
+    - ``ohlcv`` (default) → :func:`calculate_ohlcv_stats_handler`.
+    - ``options`` → :func:`calculate_option_stats_handler`.
+    - Other types → return a zero-row stub; these may have dedicated handlers elsewhere.
 
     Args:
-        payload: Serialised :class:`CalculateStatsInput` dict.
+        payload: Serialised input dict containing ``data_type`` field.
 
     Returns:
-        Serialised :class:`CalculateStatsOutput` dict.
+        Serialised output dict from the appropriate handler.
     """
-    inp = CalculateStockStatsInput.model_validate(payload)
-    if inp.data_type in _NON_OHLCV_DATA_TYPES:
-        return CalculateStockStatsOutput(
+    data_type = payload.get("data_type", STATS_DATA_TYPE.OHLCV.value)
+
+    if data_type == STATS_DATA_TYPE.OHLCV.value:
+        inp = CalculateOhlcvStatsInput.model_validate(payload)
+        return await calculate_ohlcv_stats_handler(payload)
+    elif data_type == STATS_DATA_TYPE.OPTIONS.value:
+        inp = CalculateOptionStatsInput.model_validate(payload)
+        return await calculate_option_stats_handler(payload)
+    else:
+        # For other data types, return a zero-row stub
+        return CalculateOhlcvStatsOutput(
             rows_upserted=0,
-            symbol=inp.stats_record.symbol.upper(),
+            symbol="",
             granularity="",
             source="",
             df_split={},
-            stats_views=[],
+            stats_views=[STATS_VIEW_TYPE.DATA_FRAME.value],
         ).model_dump()
-    return await calculate_stock_stats_handler(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +117,7 @@ async def _calculate_stats_task(
     await create_task(
         ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,
         view_type="Stats",
-        stats_views=["CandleStick"],
+        stats_views=[STATS_VIEW_TYPE.CANDLE_STICK.value],
     )
     try:
         result = await delegate_completion(
@@ -126,7 +130,15 @@ async def _calculate_stats_task(
         )
         raise
 
-    output = CalculateStatsOutput.model_validate(result)
+    # Validate against the correct output model based on data_type
+    data_type = payload.get("data_type", STATS_DATA_TYPE.OHLCV.value)
+    if data_type == STATS_DATA_TYPE.OPTIONS.value:
+        from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_option_stats import (
+            CalculateOptionStatsOutput,
+        )
+        output = CalculateOptionStatsOutput.model_validate(result)
+    else:
+        output = CalculateStatsOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
 
 

@@ -9,7 +9,6 @@ within the same node execution.  These helpers project ``fin_agents.tasks`` rows
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from backend.db.postgres import raw_conn
 from backend.langgraph.agent.memory.models import COMPLETED_STATUSES, TaskMemory
@@ -80,38 +79,4 @@ async def get_task_memory(
     ]
 
 
-async def get_task_outputs(task_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Return the latest-retry output payload for each task in *task_ids*.
-
-    Args:
-        task_ids: Task UUIDs whose outputs should be loaded.
-
-    Returns:
-        Mapping ``task_id -> output dict`` for tasks that exist.  Missing or
-        empty outputs are returned as empty dicts.
-    """
-    if not task_ids:
-        return {}
-
-    async with raw_conn(readonly=True) as conn:
-        cur = await conn.execute(
-            """
-            SELECT t.task_id, te.output
-            FROM fin_agents.tasks t
-            LEFT JOIN LATERAL (
-                SELECT output
-                FROM fin_agents.task_executions
-                WHERE task_id = t.task_id
-                ORDER BY retry_num DESC
-                LIMIT 1
-            ) te ON TRUE
-            WHERE t.task_id = ANY(%s)
-            """,
-            (task_ids,),
-        )
-        rows = await cur.fetchall()
-
-    return {str(r["task_id"]): (r["output"] or {}) for r in rows}
-
-
-__all__ = ["get_task_memory", "get_task_outputs"]
+__all__ = ["get_task_memory"]

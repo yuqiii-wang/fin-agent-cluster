@@ -12,7 +12,7 @@ from __future__ import annotations
 from backend.resources.news.client import NewsClient
 from backend.resources.news.models import InfoResult, NewsArticle, NewsListResponse
 from backend.resources.stats.client import StatsClient
-from backend.resources.stats.models import StatsListResponse, StatsMatrix, StatsRecord
+from backend.resources.stats.models import OhlcvStatsMatrix, StatsListResponse, StatsRecord
 from backend.resources.web_knowledge.client import WebKnowledgeClient
 from backend.resources.web_knowledge.models import WebPageResponse, WebPageType
 
@@ -23,7 +23,7 @@ __all__ = [
     "NewsListResponse",
     "StatsClient",
     "StatsListResponse",
-    "StatsMatrix",
+    "OhlcvStatsMatrix",
     "StatsRecord",
     "WebKnowledgeClient",
     "WebPageResponse",

@@ -12,10 +12,10 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.cal
     calculate_option_stats,
     HANDLERS as _OPT_HANDLERS,
 )
-from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_stock_stats import (
-    CalculateStockStatsInput,
-    CalculateStockStatsOutput,
-    calculate_stock_stats_handler,
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_ohlcv_stats import (
+    CalculateOhlcvStatsInput,
+    CalculateOhlcvStatsOutput,
+    calculate_ohlcv_stats_handler,
     PERIOD_TO_GRANULARITY,
 )
 
@@ -29,9 +29,9 @@ __all__ = [
     "CalculateOptionStatsInput",
     "CalculateOptionStatsOutput",
     "calculate_option_stats",
-    "CalculateStockStatsInput",
-    "CalculateStockStatsOutput",
-    "calculate_stock_stats_handler",
+    "CalculateOhlcvStatsInput",
+    "CalculateOhlcvStatsOutput",
+    "calculate_ohlcv_stats_handler",
     "PERIOD_TO_GRANULARITY",
     "HANDLERS",
 ]

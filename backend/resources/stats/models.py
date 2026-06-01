@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
-class StatsMatrix(BaseModel):
-    """Time-series matrix where the x-axis is timestamps and y-axis categories are series.
+class OhlcvStatsMatrix(BaseModel):
+    """OHLCV time-series matrix where the x-axis is timestamps and y-axis categories are series.
+
+    Used exclusively by the OHLCV calculation path (``calculate_ohlcv_stats``) and the
+    OHLCV provider transformers (yfinance / fmp / akshare / mock).  Non-OHLCV payloads
+    (options, futures, fundamentals, text) are carried as raw dicts in
+    :attr:`StatsRecord.content` and validated by their own calculation handlers.
 
     Example::
 
@@ -35,14 +42,19 @@ class StatsMatrix(BaseModel):
 
 
 class StatsRecord(BaseModel):
-    """A statistics record for a single symbol and period."""
+    """A statistics record for a single symbol and period.
+
+    ``content`` is an unvalidated raw JSON payload. Its shape depends on the
+    ``data_type`` of the producing step — OHLCV matrices, options chains,
+    futures, fundamentals, or free-form text. Validation/transformation into a
+    concrete schema (e.g. :class:`OhlcvStatsMatrix`) happens in the downstream
+    calculation handler, not here.
+    """
 
     id: str = Field(..., description="Unique record identifier.")
     symbol: str = Field(..., description="Equity symbol, e.g. 'AAPL'.")
     period: str = Field(..., description="Aggregation period, e.g. '1d', '1w', '1mo'.")
-    content: StatsMatrix = Field(..., description="Time-series matrix payload.")
-    yf_exchange: str | None = Field(None, description="yfinance exchange code, e.g. 'NMS', 'HKG'.")
-    currency: str | None = Field(None, description="ISO 4217 currency code from yfinance, e.g. 'USD', 'HKD'.")
+    content: dict[str, Any] = Field(default_factory=dict, description="Raw, unvalidated JSON payload.")
 
 
 class StatsListResponse(BaseModel):

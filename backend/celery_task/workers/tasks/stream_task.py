@@ -77,6 +77,9 @@ def run_stream(
     Returns:
         ``{"thinking": str | None, "answer": dict, "total_tokens": int, "latency_ms": int}``
     """
+    from backend.langgraph.agent.error_log import bind_log_thread_id
+
+    bind_log_thread_id(thread_id)
     builders = get_stream_prompt_builders()
     if task_name in builders:
         messages = builders[task_name](payload)
@@ -120,6 +123,9 @@ def run_stream_compact_continue(
     Returns:
         ``{"thinking": str | None, "answer": dict, "total_tokens": int, "latency_ms": int}``
     """
+    from backend.langgraph.agent.error_log import bind_log_thread_id
+
+    bind_log_thread_id(thread_id)
     return asyncio.run(
         run_stream_compact_continue_async(
             thread_id, task_id, task_name, node_name, payload,

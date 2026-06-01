@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     ARK_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
     ARK_MODEL: str = "doubao-seed-2-0-mini-260215"
 
+    # Max characters of page Markdown injected into the study_web_content LLM prompt.
+    # Caps the request size so it stays within the model's max message tokens
+    # (dense/CJK pages tokenize ~1 token per char, so keep this conservative).
+    STUDY_MARKDOWN_MAX_CHARS: int = 24000
+
     # ── Google Gemini ─────────────────────────────────────────────────────────
     GOOGLE_GEMINI_API_KEY: Optional[str] = None
     GOOGLE_GEMINI_MODEL: str = "gemini-2.5-flash"
@@ -135,6 +140,21 @@ class Settings(BaseSettings):
     GRAPH_QUEUE_GROUP: str = "graph-runners"
     # How long (ms) the runner blocks on XREADGROUP before re-checking shutdown.
     GRAPH_QUEUE_BLOCK_MS: int = 1000
+
+    # ── Per-thread error/warning log capture (agent recovery context) ─────────
+    # Redis key prefix for the per-thread error/warning log store.  The thread_id
+    # is appended; the store is a Redis hash of normalized-signature → entry JSON
+    # used by llm_orchestration_on_failure to enrich recovery decisions.
+    AGENT_ERRLOG_KEY_PREFIX: str = "fin:thread:errlog:"
+    # TTL (seconds) for a thread's error-log store — must exceed the longest run.
+    AGENT_ERRLOG_TTL_SECONDS: int = 1800
+    # Max number of distinct (deduplicated) log signatures retained per thread.
+    AGENT_ERRLOG_MAX_ENTRIES: int = 50
+    # Per-entry character cap applied when storing and when reading log messages.
+    AGENT_ERRLOG_CHAR_CAP: int = 1000
+    # Bounded in-process queue size feeding the background Redis-writer thread;
+    # records beyond this cap are dropped (never blocks the logging call site).
+    AGENT_ERRLOG_QUEUE_MAX: int = 10000
 
     # ── Centrifugo real-time messaging ────────────────────────────────────────
     # Internal HTTP API URLs of the two Centrifugo nodes (WSL2 → Docker via mapped ports).

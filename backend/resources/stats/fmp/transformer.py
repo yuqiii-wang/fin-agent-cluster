@@ -54,7 +54,7 @@ For intraday data FMP returns a flat array (no ``"historical"`` wrapper)::
 
 from __future__ import annotations
 
-from backend.resources.stats.models import StatsMatrix, StatsRecord
+from backend.resources.stats.models import OhlcvStatsMatrix, StatsRecord
 
 # FMP field name → StatsMatrix series key
 _FIELD_MAP: dict[str, str] = {
@@ -120,7 +120,7 @@ def transform(
         id=_record_id(symbol, period),
         symbol=symbol.upper(),
         period=period,
-        content=StatsMatrix(timestamps=timestamps, series=series),
+        content=OhlcvStatsMatrix(timestamps=timestamps, series=series).model_dump(),
     )
 
 

@@ -51,8 +51,9 @@ from backend.langgraph.models.common_tasks.errors.codes import (
 from backend.langgraph.models.models import TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask, get_task_cache_ttl
 from backend.resources.stats.client import StatsClient
-from backend.resources.stats.models import StatsMatrix, StatsRecord
+from backend.resources.stats.models import StatsRecord
 from backend.resources.stats.routing import provider_for_symbol
+from backend.quant.stats import STATS_DATA_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -145,17 +146,14 @@ class GetStatsOutput(BaseModel):
     """Output from the get_stats task.
 
     Attributes:
-        stats_record:     Resolved :class:`StatsRecord` (OHLCV matrix or stub).
-        from_cache:       ``True`` when served from a fresh ``input_raw`` entry.
-        data_type:        Payload category: ``'ohlcv'``, ``'text'``, ``'options'``, …
-        bypass_calculate: ``True`` when downstream ``calculate_stats`` should be
-                          short-circuited (non-OHLCV stub records).
+        stats_record: Resolved :class:`StatsRecord` (OHLCV matrix or stub).
+        from_cache:   ``True`` when served from a fresh ``input_raw`` entry.
+        data_type:    Payload category: ``'ohlcv'``, ``'text'``, ``'options'``, …
     """
 
     stats_record: StatsRecord
     from_cache: bool = Field(default=False)
-    data_type: str = Field(default="ohlcv")
-    bypass_calculate: bool = Field(default=False)
+    data_type: str = Field(default=STATS_DATA_TYPE.OHLCV.value)
 
 
 # ---------------------------------------------------------------------------
@@ -203,36 +201,38 @@ async def _persist(
 
 
 def _build_stats_record(symbol: str, period: str, json_input: dict) -> StatsRecord:
-    """Build a :class:`StatsRecord` from injected JSON.
+    """Build a :class:`StatsRecord` from injected JSON without validating its shape.
 
-    Accepts either a full ``StatsRecord`` dict (contains ``content``) or a bare
-    :class:`StatsMatrix` dict (``timestamps`` + ``series``).
+    ``get_stats`` performs no schema validation: it only loads the raw JSON into
+    ``StatsRecord.content``. The downstream calculation handler (e.g.
+    ``calculate_ohlcv_stats`` for OHLCV) is the actual transformation step that
+    validates the payload against a concrete schema and fails there if incompatible.
+
+    Accepts either a full ``StatsRecord`` dict (contains a ``content`` key, whose
+    value is taken verbatim) or a bare payload dict (used as ``content`` directly).
 
     Args:
         symbol:     Normalised ticker.
         period:     Aggregation period.
-        json_input: Injected dict payload.
+        json_input: Injected raw dict payload.
 
     Returns:
-        A validated :class:`StatsRecord`.
-
-    Raises:
-        ValueError: When *json_input* is not a valid StatsRecord/StatsMatrix.
+        A :class:`StatsRecord` wrapping the raw payload.
     """
-    if "content" in json_input:
-        try:
-            return StatsRecord.model_validate(json_input)
-        except Exception as exc:
-            raise ValueError(
-                f"[{STATS_TASK_PROVIDER_ERROR}] invalid StatsRecord json_input: {exc}"
-            ) from exc
-    try:
-        matrix = StatsMatrix.model_validate(json_input)
-    except Exception as exc:
-        raise ValueError(
-            f"[{STATS_TASK_PROVIDER_ERROR}] invalid stats matrix json_input: {exc}"
-        ) from exc
-    return StatsRecord(id=f"json-{symbol.lower()}-{period}", symbol=symbol, period=period, content=matrix)
+    data_type = str(json_input.get("data_type", STATS_DATA_TYPE.OHLCV.value)) if isinstance(json_input, dict) else STATS_DATA_TYPE.OHLCV.value
+    if "content" in json_input and isinstance(json_input["content"], dict):
+        return StatsRecord(
+            id=str(json_input.get("id") or f"json-{symbol.lower()}-{data_type}-{period}"),
+            symbol=str(json_input.get("symbol") or symbol),
+            period=str(json_input.get("period") or period),
+            content=json_input["content"],
+        )
+    return StatsRecord(
+        id=f"json-{symbol.lower()}-{data_type}-{period}",
+        symbol=symbol,
+        period=period,
+        content=json_input,
+    )
 
 
 async def _handle_json_input(inp: GetStatsInput, symbol: str) -> dict:
@@ -246,7 +246,7 @@ async def _handle_json_input(inp: GetStatsInput, symbol: str) -> dict:
         Serialised :class:`GetStatsOutput` dict.
     """
     assert inp.json_input is not None
-    data_type = str(inp.json_input.get("data_type", "ohlcv")) if isinstance(inp.json_input, dict) else "ohlcv"
+    data_type = str(inp.json_input.get("data_type", STATS_DATA_TYPE.OHLCV.value)) if isinstance(inp.json_input, dict) else STATS_DATA_TYPE.OHLCV.value
     record = _build_stats_record(symbol, inp.period, inp.json_input)
     cache_key = _make_cache_key("injected", "json_input", symbol, inp.period)
     await _persist(
@@ -259,7 +259,6 @@ async def _handle_json_input(inp: GetStatsInput, symbol: str) -> dict:
         stats_record=record,
         from_cache=False,
         data_type=data_type,
-        bypass_calculate=data_type != "ohlcv",
     ).model_dump(mode="json")
 
 
@@ -277,20 +276,19 @@ async def _handle_text_input(inp: GetStatsInput, symbol: str) -> dict:
         id=f"text-{symbol.lower()}-{inp.period}",
         symbol=symbol,
         period=inp.period,
-        content=StatsMatrix(timestamps=[], series={}),
+        content={},
     )
     cache_key = _make_cache_key("injected", "text_input", symbol, inp.period)
     await _persist(
         inp.thread_id, symbol, "injected", "text_input", cache_key,
         get_task_cache_ttl(_TASK_NAME),
         {"symbol": symbol, "period": inp.period, "src_task_id": inp.src_task_id},
-        {"stats_record": record.model_dump(mode="json"), "text_content": inp.text_content, "data_type": "text"},
+        {"stats_record": record.model_dump(mode="json"), "text_content": inp.text_content, "data_type": STATS_DATA_TYPE.TEXT.value},
     )
     return GetStatsOutput(
         stats_record=record,
         from_cache=False,
-        data_type="text",
-        bypass_calculate=True,
+        data_type=STATS_DATA_TYPE.TEXT.value,
     ).model_dump(mode="json")
 
 
@@ -321,7 +319,7 @@ async def _handle_external_fetch(inp: GetStatsInput, symbol: str) -> dict:
         if cached_row is not None:
             record = StatsRecord.model_validate(cached_row["output"]["stats_record"])
             return GetStatsOutput(
-                stats_record=record, from_cache=True, data_type="ohlcv", bypass_calculate=False,
+                stats_record=record, from_cache=True, data_type=STATS_DATA_TYPE.OHLCV.value,
             ).model_dump(mode="json")
 
         for period_try in [inp.period, *PERIOD_FALLBACKS.get(inp.period, [])]:
@@ -354,7 +352,7 @@ async def _handle_external_fetch(inp: GetStatsInput, symbol: str) -> dict:
                 {"stats_record": record.model_dump(mode="json")},
             )
             return GetStatsOutput(
-                stats_record=record, from_cache=False, data_type="ohlcv", bypass_calculate=False,
+                stats_record=record, from_cache=False, data_type=STATS_DATA_TYPE.OHLCV.value,
             ).model_dump(mode="json")
 
     raise ValueError(

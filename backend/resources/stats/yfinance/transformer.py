@@ -8,7 +8,7 @@ Columns present (may vary by interval):
 The transformer:
   * Drops the tz-offset from the DatetimeIndex and converts to ISO-8601 date strings.
   * Maps standard OHLCV columns to lower-case series keys.
-  * Drops ``Dividends`` and ``Stock Splits`` (not part of StatsMatrix convention).
+  * Drops ``Dividends`` and ``Stock Splits`` (not part of OhlcvStatsMatrix convention).
   * Skips any column that is entirely NaN.
 
 Period / interval mapping
@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import hashlib
 
-from backend.resources.stats.models import StatsMatrix, StatsRecord
+from backend.resources.stats.models import OhlcvStatsMatrix, StatsRecord
 
 # Maps our period labels to (yfinance_period, yfinance_interval)
 _PERIOD_MAP: dict[str, tuple[str, str]] = {
@@ -43,7 +43,7 @@ _PERIOD_MAP: dict[str, tuple[str, str]] = {
     "2y":  ("2y",  "1d"),
 }
 
-# yfinance column name → StatsMatrix series key
+# yfinance column name → OhlcvStatsMatrix series key
 _COL_MAP: dict[str, str] = {
     "Open":   "open",
     "High":   "high",
@@ -108,7 +108,7 @@ def transform(
         id=_record_id(symbol, period),
         symbol=symbol.upper(),
         period=period,
-        content=StatsMatrix(timestamps=timestamps, series=series),
+        content=OhlcvStatsMatrix(timestamps=timestamps, series=series).model_dump(),
     )
 
 

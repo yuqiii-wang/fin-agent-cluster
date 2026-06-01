@@ -9,7 +9,7 @@ akshare returns ``pandas.DataFrame`` objects from calls such as:
 
 Column mapping (daily / weekly)
 ---------------------------------
-akshare Chinese column → StatsMatrix series key
+akshare Chinese column → OhlcvStatsMatrix series key
 ``开盘``  (open)       → ``open``
 ``收盘``  (close)      → ``close``
 ``最高``  (high)       → ``high``
@@ -42,7 +42,7 @@ Period / akshare parameter mapping
 
 from __future__ import annotations
 
-from backend.resources.stats.models import StatsMatrix, StatsRecord
+from backend.resources.stats.models import OhlcvStatsMatrix, StatsRecord
 
 # Maps period labels to (akshare_period_or_"intraday", days_back)
 PERIOD_MAP: dict[str, tuple[str, int]] = {
@@ -54,7 +54,7 @@ PERIOD_MAP: dict[str, tuple[str, int]] = {
     "2y":  ("daily",    730),
 }
 
-# Column maps: akshare Chinese column names → StatsMatrix series key
+# Column maps: akshare Chinese column names → OhlcvStatsMatrix series key
 _OHLCV_COLS: dict[str, str] = {
     "开盘":  "open",
     "收盘":  "close",
@@ -128,9 +128,7 @@ def transform(
         id=_record_id(symbol, period),
         symbol=symbol,
         period=period,
-        content=StatsMatrix(timestamps=timestamps, series=series),
-        yf_exchange=None,
-        currency="CNY",
+        content=OhlcvStatsMatrix(timestamps=timestamps, series=series).model_dump(),
     )
 
 

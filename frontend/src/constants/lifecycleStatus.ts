@@ -8,7 +8,7 @@
  *
  * Thread-level (query_status):
  *   Active   : connecting | received | running
- *   Terminal : completed  | failed   | cancelled
+ *   Terminal : completed  | failed   | cancelled | wrong
  *
  * Node/task-level (work_status):
  *   Active   : pending | running | paused
@@ -31,6 +31,7 @@ export const TERMINAL_QUERY_STATUSES = new Set([
   'completed',
   'failed',
   'cancelled',
+  'wrong',
 ] as const);
 
 // ---------------------------------------------------------------------------
@@ -64,13 +65,14 @@ export type QueryStatusValue =
   | 'running'
   | 'completed'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'wrong';
 
 /**
  * Terminal thread status values only — used by the SSE drain mechanism
  * (terminalStatusRef) in useConcurrencyThread.
  */
-export type TerminalQueryStatus = 'completed' | 'failed' | 'cancelled';
+export type TerminalQueryStatus = 'completed' | 'failed' | 'cancelled' | 'wrong';
 
 /** Node/task-level work status type. */
 export type WorkStatusValue =

@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Awaitable, Callable
 
-from backend.db.postgres.queries.fin_markets_indexes import derive_yf_exchange_from_ticker
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_fundamental_stats import (
     CalculateFundamentalStatsInput,
     FundamentalsDataItem,
@@ -81,7 +80,6 @@ async def _pipeline(
         CalculateFundamentalStatsInput(
             symbol=seq_input.symbol,
             items=items,
-            yf_exchange=derive_yf_exchange_from_ticker(seq_input.symbol),
         ),
     )
 

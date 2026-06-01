@@ -16,7 +16,7 @@ Exports
 -------
 StatsClient   — Async httpx client; routes to provider by ticker suffix.
 StatsRecord   — Pydantic model for a single stats record.
-StatsMatrix   — Pydantic model for the time-series matrix content.
+OhlcvStatsMatrix — Pydantic model for the OHLCV time-series matrix content.
 StatsListResponse — Pydantic model for a paginated list.
 provider_for_symbol — Look up the designated provider for a ticker symbol.
 """
@@ -24,7 +24,7 @@ provider_for_symbol — Look up the designated provider for a ticker symbol.
 from __future__ import annotations
 
 from backend.resources.stats.client import StatsClient
-from backend.resources.stats.models import StatsListResponse, StatsMatrix, StatsRecord
+from backend.resources.stats.models import OhlcvStatsMatrix, StatsListResponse, StatsRecord
 from backend.resources.stats.routing import provider_for_symbol
 
-__all__ = ["StatsClient", "StatsRecord", "StatsMatrix", "StatsListResponse", "provider_for_symbol"]
+__all__ = ["StatsClient", "StatsRecord", "OhlcvStatsMatrix", "StatsListResponse", "provider_for_symbol"]

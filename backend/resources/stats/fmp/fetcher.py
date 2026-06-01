@@ -122,7 +122,7 @@ async def fetch(
     _check_non_empty(symbol, period, raw)
 
     record = transform(symbol, period, raw)
-    row_count = len(record.content.timestamps)
+    row_count = len(record.content.get("timestamps", []))
     logger.info("fmp.fetch ok symbol=%s period=%s rows=%d", symbol, period, row_count)
     return record
 

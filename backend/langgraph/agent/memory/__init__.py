@@ -7,12 +7,11 @@ from backend.langgraph.agent.memory.models import (
     FAILED_STATUSES,
     TaskMemory,
 )
-from backend.langgraph.agent.memory.ops import get_task_memory, get_task_outputs
+from backend.langgraph.agent.memory.ops import get_task_memory
 
 __all__ = [
     "COMPLETED_STATUSES",
     "FAILED_STATUSES",
     "TaskMemory",
     "get_task_memory",
-    "get_task_outputs",
 ]

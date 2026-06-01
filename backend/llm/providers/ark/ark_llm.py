@@ -190,8 +190,12 @@ class ArkLLM(BaseChatModel):
                 resp = client.post(url, json=request_body, headers=self._auth_headers())
                 if resp.status_code >= 400:
                     logger.error(
-                        "[ArkLLM] HTTP %d from %s — %s",
-                        resp.status_code, url, resp.text[:300],
+                        "[ArkLLM] HTTP %d from %s — Request: %s",
+                        resp.status_code, url, json.dumps(request_body, ensure_ascii=False)[:5000],
+                    )
+                    logger.error(
+                        "[ArkLLM] HTTP %d from %s — Response: %s",
+                        resp.status_code, url, resp.text[:5000],
                     )
                     resp.raise_for_status()
                 data = resp.json()
@@ -276,6 +280,8 @@ class ArkLLM(BaseChatModel):
             request_body["stop"] = stop
         if "tools" in kwargs:
             request_body["tools"] = kwargs["tools"]
+        if "tool_choice" in kwargs:
+            request_body["tool_choice"] = kwargs["tool_choice"]
 
         try:
             async with make_ark_async_client(proxy=self.http_proxy, timeout_seconds=120.0) as client:
@@ -284,9 +290,14 @@ class ArkLLM(BaseChatModel):
                 ) as resp:
                     if resp.status_code >= 400:
                         body = await resp.aread()
+                        body_str = body.decode(errors="replace")
                         logger.error(
-                            "[ArkLLM] HTTP %d from %s — %s",
-                            resp.status_code, url, body.decode(errors="replace")[:300],
+                            "[ArkLLM] HTTP %d from %s — Request: %s",
+                            resp.status_code, url, json.dumps(request_body, ensure_ascii=False)[:500],
+                        )
+                        logger.error(
+                            "[ArkLLM] HTTP %d from %s — Response: %s",
+                            resp.status_code, url, body_str[:5000],
                         )
                         resp.raise_for_status()
                     async for line in resp.aiter_lines():

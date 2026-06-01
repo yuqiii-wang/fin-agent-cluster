@@ -71,8 +71,6 @@ async def fetch(symbol: str, period: str) -> StatsRecord:
         raise ValueError(STATS_YFINANCE_EMPTY)
 
     record = transform(symbol, period, df)
-    record.yf_exchange = result.get("yf_exchange")
-    record.currency = result.get("currency")
     logger.info("yfinance.fetch ok symbol=%s period=%s rows=%d", symbol, period, len(df))
     return record
 
@@ -94,17 +92,8 @@ def _download(
         yf_interval: yfinance ``interval`` arg, e.g. ``"1h"``.
 
     Returns:
-        Dict with keys ``df`` (OHLCV DataFrame), ``yf_exchange`` (str or None),
-        and ``currency`` (str or None).
+        Dict with key ``df`` (OHLCV DataFrame).
     """
     ticker = yf.Ticker(symbol)
     df = ticker.history(period=yf_period, interval=yf_interval, auto_adjust=True)
-    yf_exchange: str | None = None
-    currency: str | None = None
-    try:
-        fi = ticker.fast_info
-        yf_exchange = getattr(fi, "exchange", None)
-        currency = getattr(fi, "currency", None)
-    except Exception:
-        pass
-    return {"df": df, "yf_exchange": yf_exchange, "currency": currency}
+    return {"df": df}

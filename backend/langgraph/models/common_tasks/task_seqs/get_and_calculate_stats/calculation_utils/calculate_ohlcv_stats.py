@@ -1,4 +1,4 @@
-"""calculate_stock_stats — business logic for computing OHLCV technical indicators.
+"""calculate_ohlcv_stats — business logic for computing OHLCV technical indicators.
 
 Accepts a structured OHLCV ``StatsRecord`` and computes a full suite of technical
 indicators using ``pandas_ta``, then upserts all bar rows into the appropriate
@@ -23,9 +23,9 @@ Volume / price-volume: VWAP, OBV, Chaikin A/D Line
 
 Public exports
 --------------
-``CalculateStockStatsInput``    — Pydantic input model.
-``CalculateStockStatsOutput``   — Pydantic output model.
-``calculate_stock_stats_handler`` — Celery-layer async handler function.
+``CalculateOhlcvStatsInput``    — Pydantic input model.
+``CalculateOhlcvStatsOutput``   — Pydantic output model.
+``calculate_ohlcv_stats_handler`` — Celery-layer async handler function.
 ``PERIOD_TO_GRANULARITY``       — Period → granularity mapping constant.
 """
 
@@ -58,8 +58,8 @@ from backend.langgraph.models.common_tasks.errors.codes import (
     STATS_TASK_UNSUPPORTED_PERIOD,
 )
 from backend.quant.instrument_types import resolve_instrument_type
-from backend.quant.stats import build_indicator_df, build_ohlcv_dataframe, safe_float
-from backend.resources.stats.models import StatsRecord
+from backend.quant.stats import build_indicator_df, build_ohlcv_dataframe, safe_float, STATS_DATA_TYPE, STATS_VIEW_TYPE
+from backend.resources.stats.models import OhlcvStatsMatrix, StatsRecord
 
 logger = logging.getLogger(__name__)
 
@@ -95,15 +95,14 @@ _STATS_SQL_MAP: dict[str, type] = {
 # ---------------------------------------------------------------------------
 
 
-class CalculateStockStatsInput(BaseModel):
-    """Input for the calculate_stock_stats handler.
+class CalculateOhlcvStatsInput(BaseModel):
+    """Input for the calculate_ohlcv_stats handler.
 
     Attributes:
         stats_record:  OHLCV stats record from :class:`GetStatsOutput.stats_record`.
         from_cache:    When ``True``, skip pandas_ta recomputation and instead return the
                        count of already-existing rows in ``quant_stats``.
-                       Set by the calling node when :attr:`GetStatsOutput.bypass_calculate`
-                       is ``True``.
+                       Set to ``True`` by the calling seq when ``data_type != 'ohlcv'``.
         data_type:     Payload category passed down from :attr:`GetStatsOutput.data_type`.
                        Used by the dispatcher to select the correct handler; the stock-stats
                        handler only processes ``'ohlcv'`` records.
@@ -111,11 +110,11 @@ class CalculateStockStatsInput(BaseModel):
 
     stats_record: StatsRecord
     from_cache: bool = Field(default=False, description="Skip recomputation; read row count from DB.")
-    data_type: str = Field(default="ohlcv", description="Payload category: 'ohlcv', 'options', 'futures', etc.")
+    data_type: str = Field(default=STATS_DATA_TYPE.OHLCV.value, description="Payload category: 'ohlcv', 'options', 'futures', etc.")
 
 
-class CalculateStockStatsOutput(BaseModel):
-    """Output from the calculate_stock_stats handler.
+class CalculateOhlcvStatsOutput(BaseModel):
+    """Output from the calculate_ohlcv_stats handler.
 
     Attributes:
         rows_upserted: Number of bar rows written to ``quant_stats``.
@@ -131,7 +130,7 @@ class CalculateStockStatsOutput(BaseModel):
     granularity: str
     source: str
     df_split: dict[str, Any] = Field(default_factory=dict)
-    stats_views: list[str] = Field(default_factory=lambda: ["CandleStick"])
+    stats_views: list[str] = Field(default_factory=lambda: [STATS_VIEW_TYPE.CANDLE_STICK.value])
 
 
 # ---------------------------------------------------------------------------
@@ -261,20 +260,20 @@ def _row_to_params(
 # ---------------------------------------------------------------------------
 
 
-async def calculate_stock_stats_handler(payload: dict) -> dict:
+async def calculate_ohlcv_stats_handler(payload: dict) -> dict:
     """Compute technical indicators for the OHLCV series and upsert to quant_stats.
 
     Args:
-        payload: Serialised :class:`CalculateStockStatsInput` dict.
+        payload: Serialised :class:`CalculateOhlcvStatsInput` dict.
 
     Returns:
-        Serialised :class:`CalculateStockStatsOutput` dict.
+        Serialised :class:`CalculateOhlcvStatsOutput` dict.
 
     Raises:
         ValueError: When the period is unsupported or the matrix is empty.
         Exception:  Propagated from pandas_ta or psycopg3 on computation/DB errors.
     """
-    inp = CalculateStockStatsInput.model_validate(payload)
+    inp = CalculateOhlcvStatsInput.model_validate(payload)
     record = inp.stats_record
     symbol = record.symbol.upper()
 
@@ -287,12 +286,20 @@ async def calculate_stock_stats_handler(payload: dict) -> dict:
 
     source = _source_from_record_id(record.id)
 
-    yf_exchange = record.yf_exchange or derive_yf_exchange_from_ticker(symbol)
+    yf_exchange = derive_yf_exchange_from_ticker(symbol)
     primary_index = get_primary_index_for_exchange(yf_exchange)
     currency_code = primary_index.currency_code if primary_index else "USD"
     index_code = primary_index.code if primary_index else None
 
-    matrix = record.content
+    # The actual transformation: validate the raw record content into an OHLCV
+    # matrix. Fails here (not in get_stats) when the payload is not OHLCV-shaped.
+    try:
+        matrix = OhlcvStatsMatrix.model_validate(record.content)
+    except Exception as exc:
+        raise ValueError(
+            f"[{STATS_TASK_CALC_ERROR}] invalid OHLCV content for symbol={symbol} "
+            f"period={record.period}: {exc}"
+        ) from exc
 
     _instrument_type = resolve_instrument_type(symbol, is_index=is_index_ticker(symbol))
     _stats_sql = _STATS_SQL_MAP.get(_instrument_type, OhlcvStatsSQL)
@@ -308,7 +315,7 @@ async def calculate_stock_stats_handler(payload: dict) -> dict:
         if matrix.timestamps:
             ohlcv_df = build_ohlcv_dataframe(matrix)
             bypass_df_split = _build_slim_df_split(ohlcv_df, with_indicators=False)
-        return CalculateStockStatsOutput(
+        return CalculateOhlcvStatsOutput(
             rows_upserted=count_row["row_count"] if count_row else 0,
             symbol=symbol,
             granularity=granularity,
@@ -318,7 +325,7 @@ async def calculate_stock_stats_handler(payload: dict) -> dict:
 
     if not matrix.timestamps:
         raise ValueError(
-            f"[{STATS_TASK_CALC_ERROR}] Empty StatsMatrix for symbol={symbol} "
+            f"[{STATS_TASK_CALC_ERROR}] Empty OHLCV matrix for symbol={symbol} "
             f"period={record.period}"
         )
 
@@ -350,18 +357,19 @@ async def calculate_stock_stats_handler(payload: dict) -> dict:
             await conn.execute(_stats_sql.UPSERT, params)
 
     df_split = _build_slim_df_split(df, with_indicators=True)
-    return CalculateStockStatsOutput(
+    return CalculateOhlcvStatsOutput(
         rows_upserted=len(params_list),
         symbol=symbol,
         granularity=granularity,
         source=source,
         df_split=df_split,
+        stats_views=[STATS_VIEW_TYPE.DATA_FRAME.value],
     ).model_dump()
 
 
 __all__ = [
-    "CalculateStockStatsInput",
-    "CalculateStockStatsOutput",
-    "calculate_stock_stats_handler",
+    "CalculateOhlcvStatsInput",
+    "CalculateOhlcvStatsOutput",
+    "calculate_ohlcv_stats_handler",
     "PERIOD_TO_GRANULARITY",
 ]

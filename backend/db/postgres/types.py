@@ -34,6 +34,7 @@ class QueryStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    WRONG = "wrong"
 
 
 # SQLAlchemy column type that maps to the *existing* Postgres enum.

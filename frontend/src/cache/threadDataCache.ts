@@ -18,7 +18,7 @@ export interface ThreadCacheEntry {
   topology: GraphTopology | null;
 }
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'wrong']);
 
 /** Module-level topology singleton — same static topology for all threads. */
 let _topology: GraphTopology | null = null;

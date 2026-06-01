@@ -53,7 +53,7 @@ from backend.langgraph.models.common_tasks.errors.codes import (
 )
 from backend.langgraph.models.models import TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
-from backend.quant.stats import compute_pearson_matrix
+from backend.quant.stats import compute_pearson_matrix, STATS_VIEW_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ class CalculateCorrOutput(BaseModel):
         description="Correlation matrix as a pandas split-orient dict for DataFrame stats view.",
     )
     stats_views: list[str] = Field(
-        default_factory=lambda: ["DataFrame"],
+        default_factory=lambda: [STATS_VIEW_TYPE.DATA_FRAME.value],
         description="Stats view types to render for this task output.",
     )
 
@@ -329,7 +329,7 @@ async def _calculate_corr_task(
 
     await create_task(
         ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,
-        view_type="Stats", stats_views=["DataFrame"],
+        view_type="Stats", stats_views=[STATS_VIEW_TYPE.DATA_FRAME.value],
     )
     try:
         result = await delegate_completion(

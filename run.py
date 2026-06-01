@@ -229,7 +229,7 @@ async def _shutdown_cancel_all() -> None:
         async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
                 "SELECT thread_id FROM fin_agents.user_queries"
-                " WHERE status NOT IN ('completed', 'failed', 'cancelled')"
+                " WHERE status NOT IN ('completed', 'failed', 'cancelled', 'wrong')"
             )
             rows = await cur.fetchall()
         thread_ids = [r["thread_id"] for r in rows]

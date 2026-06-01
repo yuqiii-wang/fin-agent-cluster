@@ -45,7 +45,7 @@ class UserQuerySQL:
     LIST_ACTIVE_THREAD_IDS = """
         SELECT thread_id
         FROM fin_agents.user_queries
-        WHERE status NOT IN ('completed', 'failed', 'cancelled')
+        WHERE status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
     """
 
 

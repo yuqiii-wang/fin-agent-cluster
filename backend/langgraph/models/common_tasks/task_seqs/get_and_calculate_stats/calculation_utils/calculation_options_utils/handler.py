@@ -34,6 +34,13 @@ from .parsers import (
     _parse_iso_datetime,
     parse_contract_name,
 )
+from .parser_utils import (
+    extract_value,
+    parse_numeric_value,
+    parse_integer_value,
+    parse_percent_value,
+    parse_contract_name_from_link,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +58,7 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
         RuntimeError: When a DB write fails (carries ``DERIV_TASK_CALC_ERROR``).
     """
     inp = CalculateOptionStatsInput.model_validate(payload)
-    symbol = inp.symbol.upper()
+    symbol = inp.resolved_symbol.upper()
     source = inp.source
 
     contracts_upserted = 0
@@ -65,10 +72,16 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
     # expiry_date -> strike -> {"call": iv | None, "put": iv | None}
     iv_by_expiry: dict[datetime, dict[float, dict[str, float | None]]] = {}
 
+    # expiry_date -> strike -> {"call": cost | None, "put": cost | None}
+    cost_by_expiry: dict[datetime, dict[float, dict[str, float | None]]] = {}
+
+    # expiry_date -> strike -> {"call": volume | None, "put": volume | None}
+    volume_by_expiry: dict[datetime, dict[float, dict[str, float | None]]] = {}
+
     try:
         async with raw_conn() as conn:
             # --- Step 1: per-contract upserts ---------------------------------
-            for contract in inp.options:
+            for contract in inp.resolved_options:
                 try:
                     root, expiry_date, options_type, strike = parse_contract_name(
                         contract.contract_name
@@ -117,6 +130,17 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
                     iv_strikes = iv_by_expiry.setdefault(expiry_date, {})
                     iv_strikes.setdefault(strike, {})[options_type] = implied_volatility
 
+                # Track costs for volatility smile (even if IV is missing)
+                if cost is not None:
+                    cost_strikes = cost_by_expiry.setdefault(expiry_date, {})
+                    cost_strikes.setdefault(strike, {})[options_type] = cost
+
+                # Track volume for volatility smile bar chart
+                volume = safe_float(contract.volume)
+                if volume is not None and volume > 0:
+                    vol_strikes = volume_by_expiry.setdefault(expiry_date, {})
+                    vol_strikes.setdefault(strike, {})[options_type] = volume
+
             # --- Step 2: per-expiry aggregate upserts -------------------------
             for expiry_date, legs in by_expiry.items():
                 call_costs = legs["call"]
@@ -164,6 +188,10 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
                     strike=s,
                     call_iv=iv_by_expiry[expiry_dt][s].get("call"),
                     put_iv=iv_by_expiry[expiry_dt][s].get("put"),
+                    call_cost=cost_by_expiry.get(expiry_dt, {}).get(s, {}).get("call"),
+                    put_cost=cost_by_expiry.get(expiry_dt, {}).get(s, {}).get("put"),
+                    call_volume=volume_by_expiry.get(expiry_dt, {}).get(s, {}).get("call"),
+                    put_volume=volume_by_expiry.get(expiry_dt, {}).get(s, {}).get("put"),
                 )
                 for s in sorted(iv_by_expiry[expiry_dt])
             ],
@@ -176,6 +204,7 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
     ]
 
     return CalculateOptionStatsOutput(
+        rows_upserted=contracts_upserted + expiries_aggregated,
         symbol=symbol,
         source=source,
         contracts_upserted=contracts_upserted,

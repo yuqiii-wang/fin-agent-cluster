@@ -11,7 +11,7 @@ Active (lifecycle started, work in progress):
     work_status  : pending | running
 
 Terminal (lifecycle ended, no further transitions):
-    query_status : completed | failed | cancelled
+    query_status : completed | failed | cancelled | wrong
     work_status  : completed | failed | cancelled | wrong
 
 Note: ``paused`` is treated as **active** for work_status — the node is
@@ -39,12 +39,12 @@ ACTIVE_QUERY_STATUSES: frozenset[str] = frozenset(
 
 #: Statuses meaning the thread has reached an end state.
 TERMINAL_QUERY_STATUSES: frozenset[str] = frozenset(
-    {QueryStatus.COMPLETED, QueryStatus.FAILED, QueryStatus.CANCELLED}
+    {QueryStatus.COMPLETED, QueryStatus.FAILED, QueryStatus.CANCELLED, QueryStatus.WRONG}
 )
 
 # SQL tuple literal for ``NOT IN`` / ``IN`` clauses — e.g.
 #   WHERE status NOT IN {TERMINAL_QUERY_SQL}
-TERMINAL_QUERY_SQL: str = "('completed', 'failed', 'cancelled')"
+TERMINAL_QUERY_SQL: str = "('completed', 'failed', 'cancelled', 'wrong')"
 ACTIVE_QUERY_SQL: str = "('connecting', 'received', 'running')"
 
 # ---------------------------------------------------------------------------

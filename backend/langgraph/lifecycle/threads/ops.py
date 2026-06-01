@@ -18,6 +18,7 @@ from backend.langgraph.lifecycle.threads.sql import (
     _CANCEL_ACTIVE_NODES,
     _CANCEL_ACTIVE_TASKS_BY_THREAD,
     _FAIL_ACTIVE_NODES,
+    _LATEST_TERMINAL_LEAF_STATUS,
     _LIST_ACTIVE_THREAD_IDS,
     _UPDATE_THREAD_COMPLETED,
     _UPDATE_THREAD_STATUS,
@@ -70,13 +71,27 @@ async def complete_thread(
     Persists to ``fin_agents.user_queries`` before emitting SSE.  Idempotent
     on already-terminal threads.
 
+    On normal completion (``failed=False``) the thread status is aligned to the
+    terminal status of the last end-of-lifecycle node (the leaf node with no
+    successors) in the **latest version** — so a thread whose final node ended
+    ``failed`` / ``cancelled`` / ``wrong`` is reflected accurately instead of
+    being reported as ``completed``.
+
     Args:
         thread_id: LangGraph thread UUID.
         answer:    Final answer text (for completed threads).
         failed:    ``True`` to mark as failed.
         error:     Error message stored in ``user_queries.error``.
     """
-    status = "failed" if failed else "completed"
+    if failed:
+        status = "failed"
+    else:
+        # Align thread status with the latest version's last end-of-lifecycle
+        # node.  Defaults to 'completed' when no terminal leaf node is found.
+        async with raw_conn(readonly=True) as conn:
+            cur = await conn.execute(_LATEST_TERMINAL_LEAF_STATUS, (thread_id,))
+            leaf_row = await cur.fetchone()
+        status = leaf_row["status"] if leaf_row else "completed"
 
     async with raw_conn() as conn:
         cur = await conn.execute(

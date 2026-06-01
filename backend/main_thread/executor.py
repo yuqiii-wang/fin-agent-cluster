@@ -159,6 +159,12 @@ async def _run_graph(
     # calls within graph.ainvoke inherit this value automatically.
     set_fencing_token(fencing_token)
 
+    # Bind the thread_id so all WARNING+ logs emitted during this run are
+    # captured into the per-thread error-log store used for agent recovery.
+    from backend.langgraph.agent.error_log import bind_log_thread_id
+
+    bind_log_thread_id(thread_id)
+
     lock_lost_event = asyncio.Event()
     stop_renew = asyncio.Event()
     renew_task = asyncio.create_task(

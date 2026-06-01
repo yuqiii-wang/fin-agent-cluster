@@ -51,10 +51,9 @@ async def step_calculate_options(sctx: DerivativesStepContext) -> None:
     puts_norm = [{**normalize_keys(p), "options_type": "put"} for p in puts_raw if isinstance(p, dict)]
     options = calls_norm + puts_norm
     if not options:
-        logger.error(
-            "[PD-005] no contracts to aggregate symbol=%r", g.symbol
+        raise RuntimeError(
+            f"[PD-005] no contracts to aggregate symbol={g.symbol!r} — task failed"
         )
-        return
 
     await sctx.run_task(
         calculate_option_stats,

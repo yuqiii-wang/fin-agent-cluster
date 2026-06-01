@@ -2,7 +2,7 @@ CREATE SCHEMA IF NOT EXISTS fin_agents;
 
 -- Drop and recreate ENUMs so schema changes (added/removed values) are always applied.
 DROP TYPE IF EXISTS fin_agents.query_status CASCADE;
-CREATE TYPE fin_agents.query_status AS ENUM ('connecting', 'received', 'running', 'completed', 'failed', 'cancelled');
+CREATE TYPE fin_agents.query_status AS ENUM ('connecting', 'received', 'running', 'completed', 'failed', 'cancelled', 'wrong');
 
 DROP TYPE IF EXISTS fin_agents.work_status CASCADE;
 CREATE TYPE fin_agents.work_status AS ENUM ('pending', 'running', 'paused', 'completed', 'failed', 'cancelled', 'wrong');

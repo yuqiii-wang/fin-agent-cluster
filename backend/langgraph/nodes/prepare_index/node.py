@@ -56,6 +56,7 @@ from backend.langgraph.nodes.prepare_index.tasks.propose_index import (
     IndexCandidate,
 )
 from backend.langgraph.state import GraphState
+from backend.quant.stats import STATS_VIEW_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ class AnalyzeIndexNode(BaseNode[AnalyzeIndexInput, AnalyzeIndexOutput]):
         },
     ]
     view_type = "Stats"
-    stats_views = ["StackCandleStick"]
+    stats_views = [STATS_VIEW_TYPE.STACK_CANDLE_STICK.value]
     tasks: ClassVar[list[NodeTask]] = [propose_index, *get_and_calculate_stats.tasks]
     _prev_node_names: ClassVar[list[str]] = ["query_node"]
 

@@ -1,18 +1,18 @@
 """llm_orchestration_on_failure — NodeTask: LLM-driven recovery decision after a step failure.
 
 When an AGENT node step raises, the generic step runner invokes this task to
-study the failure and decide how to recover.  The decision is produced in two
-LLM phases so the model never has to read every historical output at once:
+study the failure and decide how to recover.  Rather than reading every
+historical task output, the task assembles a small, bounded diagnostic context:
 
-Phase 1 — Task selection (lightweight, non-streaming)
-    The node's *completed* task descriptors (task_id / task_name / description)
-    plus the *failed* task output are presented to the LLM, which selects the
-    subset of completed task_ids whose full outputs are worth reading to make a
-    recovery decision.
+* Completed-task descriptors — ``task_id`` / ``task_name`` / ``description`` only
+  (no outputs), so the LLM knows what already ran.
+* The *last failed* task output, truncated to the top 1k characters.
+* This thread's recent WARNING+ logs (see
+  :mod:`backend.langgraph.agent.error_log`), deduplicated and each truncated to
+  the top 1k characters, so repeated messages and long stack traces never
+  flood the prompt.
 
-Phase 2 — Recovery decision (streaming)
-    The selected task outputs are loaded in full and streamed to the LLM, which
-    proposes either:
+That context is streamed to the LLM (single phase), which proposes either:
 
     * ``"retry_from_step"`` — regenerate an earlier LLM *streaming* step (chosen
       from ``retry_candidates``).  No concrete values are injected; instead the
@@ -25,9 +25,9 @@ Phase 2 — Recovery decision (streaming)
 Execution layers
 ----------------
 LangGraph layer (``_llm_orchestration_on_failure_task`` decorated with ``@task``):
-    Runs phase 1 selection, loads selected histories, creates a Streaming task,
-    delegates phase 2 to the Celery stream worker, parses the structured JSON
-    decision, and completes the task.
+    Gathers the descriptors, last-failed output, and thread logs, creates a
+    Streaming task, delegates the decision to the Celery stream worker, parses
+    the structured JSON decision, and completes the task.
 
 Celery layer (``STREAM_PROMPT_BUILDERS``):
     Dispatched via ``STREAM_PROMPT_BUILDERS`` to ``_build_orchestration_prompt``.
@@ -52,12 +52,12 @@ from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
-from backend.celery_task.workers.tasks.stream_utils import extract_json_from_text
+from backend.config import get_settings
+from backend.langgraph.agent.error_log import get_thread_logs
 from backend.langgraph.agent.memory import (
     COMPLETED_STATUSES,
     FAILED_STATUSES,
     get_task_memory,
-    get_task_outputs,
 )
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import LLM_ORCH_DECIDE_ERROR
@@ -65,14 +65,10 @@ from backend.langgraph.models.models import TaskInput, TaskOutput
 from backend.langgraph.models.streaming_output import StreamingTaskOutput
 from backend.langgraph.models.task import NodeTask
 from backend.langgraph.models.view_types import TASK_VIEW_STREAMING
-from backend.llm.factory import get_llm
 
 logger = logging.getLogger(__name__)
 
 _TASK_NAME = "llm_orchestration_on_failure"
-
-# Max number of completed task outputs the LLM may read in phase 2.
-_MAX_SELECTED = 5
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +128,6 @@ class LlmOrchestrationOutput(BaseModel):
                          step, or ``"fail"`` when recovery is impossible.
         retry_from_step: Streaming step to regenerate (required when action is
                          ``"retry_from_step"``; must be in ``retry_candidates``).
-        selected_task_ids: Completed task_ids whose outputs informed the decision.
         reasoning:       Rationale carried to the regenerated streaming task so it
                          can avoid repeating the failure (1-4 sentences).
     """
@@ -143,44 +138,19 @@ class LlmOrchestrationOutput(BaseModel):
     retry_from_step: str | None = Field(
         default=None, description="Streaming step to regenerate when retrying."
     )
-    selected_task_ids: list[str] = Field(
-        default_factory=list, description="Task outputs used to decide."
-    )
     reasoning: str = Field(default="", description="Rationale carried to the retried step.")
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 — task selection prompt (non-streaming)
+# Context helpers
 # ---------------------------------------------------------------------------
 
-_SELECT_SYSTEM_TEMPLATE = """\
-You are a recovery-planning agent for a financial data pipeline.
 
-A pipeline step named "{failed_step}" just failed.  Below is the list of
-COMPLETED tasks already produced by this node (each with an id, name and
-description) and the FAILED task's output.
-
-Decide which completed task outputs you need to READ IN FULL to understand the
-failure and propose a fix.  Select only the most relevant tasks (at most {max_selected}).
-
-Return ONLY a JSON object — no prose:
-{{
-  "selected_task_ids": ["<task_id>", ...]
-}}
-"""
-
-_SELECT_HUMAN_TEMPLATE = """\
-Objective: {objective}
-Target: {target}
-Failed step: {failed_step}
-Failure reason: {failure_reason}
-
-COMPLETED TASKS (id — name: description):
-{descriptors}
-
-FAILED TASK OUTPUT:
-{failed_output}\
-"""
+def _truncate(text: str, cap: int) -> str:
+    """Return *text* truncated to *cap* characters with an elision marker."""
+    if len(text) <= cap:
+        return text
+    return text[:cap] + " …[truncated]"
 
 
 def _format_descriptors(descriptors: list[dict[str, Any]]) -> str:
@@ -193,15 +163,40 @@ def _format_descriptors(descriptors: list[dict[str, Any]]) -> str:
     )
 
 
+def _format_thread_logs(thread_logs: list[dict[str, Any]], char_cap: int) -> str:
+    """Render captured thread WARNING+ logs as a bullet list for the LLM.
+
+    Each message is truncated to *char_cap* characters; the occurrence count is
+    shown so the LLM sees how often a duplicate fired without it being repeated.
+
+    Args:
+        thread_logs: Serialised :class:`ThreadLogEntry` dicts.
+        char_cap:    Per-entry character cap.
+
+    Returns:
+        A bullet list, or ``"(none)"`` when empty.
+    """
+    if not thread_logs:
+        return "(none)"
+    lines: list[str] = []
+    for entry in thread_logs:
+        count = entry.get("count", 1)
+        suffix = f" (x{count})" if count and count > 1 else ""
+        message = _truncate(str(entry.get("message", "")), char_cap)
+        lines.append(f"- [{entry.get('level')}] {entry.get('logger')}{suffix}: {message}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
-# Phase 2 — decision prompt (streaming, registered in STREAM_PROMPT_BUILDERS)
+# Decision prompt (streaming, registered in STREAM_PROMPT_BUILDERS)
 # ---------------------------------------------------------------------------
 
 _DECIDE_SYSTEM_TEMPLATE = """\
 You are a recovery-planning agent for a financial data pipeline.
 
-A pipeline step named "{failed_step}" failed.  Using the failure reason and the
-full outputs of the selected prior tasks, decide how to recover.
+A pipeline step named "{failed_step}" failed.  Using the failure reason, the
+truncated output of the failed task, and this thread's recent error/warning
+logs, decide how to recover.
 
 You may re-run ONE earlier LLM step from RETRY CANDIDATES.  Each candidate wraps
 a streaming LLM task (e.g. it generates a data-extraction script).  Re-running it
@@ -219,7 +214,6 @@ Return ONLY a JSON object — no prose:
 {{
   "action": "retry_from_step" | "fail",
   "retry_from_step": "<one of the RETRY CANDIDATES names, or null when action is fail>",
-  "selected_task_ids": [{selected_ids}],
   "reasoning": "<1-4 sentences: what went wrong and what the regenerated task must fix>"
 }}
 
@@ -242,29 +236,38 @@ RETRY CANDIDATES: {retry_candidates}
 CONTEXT:
 {context_summary}
 
-SELECTED TASK OUTPUTS:
-{histories}\
+COMPLETED TASKS (id — name: description):
+{descriptors}
+
+LAST FAILED TASK OUTPUT (truncated):
+{failed_output}
+
+THREAD ERROR/WARNING LOGS (deduplicated, truncated):
+{thread_logs}\
 """
 
 
 def _build_orchestration_prompt(payload: dict) -> list:
-    """Build LangChain messages for the phase-2 streaming decision.
+    """Build LangChain messages for the streaming recovery decision.
 
     Args:
         payload: Serialised :class:`LlmOrchestrationInput` augmented with
-                 ``histories`` (task_id -> output) and ``selected_task_ids``.
+                 ``descriptors`` (completed-task id/name/description),
+                 ``failed_output`` (truncated last-failed output string), and
+                 ``thread_logs`` (serialised :class:`ThreadLogEntry` dicts).
 
     Returns:
         ``[SystemMessage, HumanMessage]`` for the Celery stream worker.
     """
     inp = LlmOrchestrationInput.model_validate(payload)
-    histories: dict[str, Any] = payload.get("histories", {})
-    selected_ids: list[str] = payload.get("selected_task_ids", [])
+    descriptors: list[dict[str, Any]] = payload.get("descriptors", [])
+    failed_output: str = payload.get("failed_output", "") or "(empty)"
+    thread_logs: list[dict[str, Any]] = payload.get("thread_logs", [])
+    char_cap = get_settings().AGENT_ERRLOG_CHAR_CAP
 
     system_content = _DECIDE_SYSTEM_TEMPLATE.format(
         failed_step=inp.failed_step,
         retry_candidates=", ".join(inp.retry_candidates),
-        selected_ids=", ".join(f'"{tid}"' for tid in selected_ids),
     )
     human_content = _DECIDE_HUMAN_TEMPLATE.format(
         objective=inp.objective or "(unspecified)",
@@ -275,7 +278,9 @@ def _build_orchestration_prompt(payload: dict) -> list:
         step_order=", ".join(inp.step_order),
         retry_candidates=", ".join(inp.retry_candidates),
         context_summary=json.dumps(inp.context_summary, indent=2),
-        histories=json.dumps(histories, indent=2, default=str),
+        descriptors=_format_descriptors(descriptors),
+        failed_output=failed_output,
+        thread_logs=_format_thread_logs(thread_logs, char_cap),
     )
     return [SystemMessage(content=system_content), HumanMessage(content=human_content)]
 
@@ -308,7 +313,6 @@ def _parse_decision(answer_dict: dict[str, Any], retry_candidates: list[str]) ->
         return LlmOrchestrationOutput(
             action="retry_from_step",
             retry_from_step=retry_from_step,
-            selected_task_ids=[str(t) for t in (answer_dict.get("selected_task_ids") or [])],
             reasoning=str(answer_dict.get("reasoning", "")),
         )
 
@@ -321,55 +325,8 @@ def _parse_decision(answer_dict: dict[str, Any], retry_candidates: list[str]) ->
         )
     return LlmOrchestrationOutput(
         action="fail",
-        selected_task_ids=[str(t) for t in (answer_dict.get("selected_task_ids") or [])],
         reasoning=str(answer_dict.get("reasoning", "")),
     )
-
-
-# ---------------------------------------------------------------------------
-# Phase 1 — task selection (non-streaming LLM call)
-# ---------------------------------------------------------------------------
-
-
-async def _select_task_ids(
-    inp: LlmOrchestrationInput,
-    descriptors: list[dict[str, Any]],
-    failed_output: dict[str, Any],
-) -> list[str]:
-    """Ask the LLM which completed task outputs to read in full.
-
-    Args:
-        inp:           Orchestration input.
-        descriptors:   Completed-task descriptor dicts (no outputs).
-        failed_output: Output payload of the failed task (may be empty).
-
-    Returns:
-        Selected task_ids, capped at ``_MAX_SELECTED`` and restricted to known
-        completed task_ids.  Empty when nothing is relevant.
-    """
-    valid_ids = {d["task_id"] for d in descriptors}
-    if not valid_ids:
-        return []
-
-    system_content = _SELECT_SYSTEM_TEMPLATE.format(
-        failed_step=inp.failed_step, max_selected=_MAX_SELECTED
-    )
-    human_content = _SELECT_HUMAN_TEMPLATE.format(
-        objective=inp.objective or "(unspecified)",
-        target=inp.target or "(unspecified)",
-        failed_step=inp.failed_step,
-        failure_reason=inp.failure_reason,
-        descriptors=_format_descriptors(descriptors),
-        failed_output=json.dumps(failed_output, indent=2, default=str),
-    )
-
-    llm = get_llm(streaming=False)
-    response = await llm.ainvoke(
-        [SystemMessage(content=system_content), HumanMessage(content=human_content)]
-    )
-    parsed = extract_json_from_text(str(getattr(response, "content", response)))
-    selected = [str(t) for t in (parsed.get("selected_task_ids") or []) if str(t) in valid_ids]
-    return selected[:_MAX_SELECTED]
 
 
 # ---------------------------------------------------------------------------
@@ -383,8 +340,9 @@ async def _llm_orchestration_on_failure_task(
 ) -> TaskOutput[LlmOrchestrationOutput]:
     """LangGraph @task: decide how to recover from a failed agent step.
 
-    Phase 1 selects which completed task outputs to read; phase 2 streams the
-    full selected outputs to the LLM and parses a structured recovery decision.
+    Assembles a bounded diagnostic context — completed-task descriptors, the
+    truncated last-failed output, and the thread's deduplicated WARNING+ logs —
+    then streams it to the LLM and parses a structured recovery decision.
 
     Args:
         task_input: Typed envelope with node context and
@@ -396,8 +354,9 @@ async def _llm_orchestration_on_failure_task(
     """
     ctx = task_input.ctx
     inp = task_input.content
+    char_cap = get_settings().AGENT_ERRLOG_CHAR_CAP
 
-    # Phase 1 — gather descriptors + failed output, then select task_ids.
+    # Completed-task descriptors (task_id / task_name / description, no outputs).
     completed = await get_task_memory(
         ctx.node_id, statuses=COMPLETED_STATUSES, with_output=False
     )
@@ -409,19 +368,28 @@ async def _llm_orchestration_on_failure_task(
         }
         for m in completed
     ]
+
+    # Top 1k chars of the last failed task's output.
     failed = await get_task_memory(
         ctx.node_id, statuses=FAILED_STATUSES, with_output=True
     )
-    failed_output: dict[str, Any] = next(
-        (m.output for m in failed if m.task_name == inp.failed_step and m.output), {}
+    failed_output_payload: dict[str, Any] = next(
+        (m.output for m in reversed(failed) if m.task_name == inp.failed_step and m.output),
+        {},
+    )
+    failed_output = _truncate(
+        json.dumps(failed_output_payload, indent=2, default=str), char_cap
     )
 
-    selected_ids = await _select_task_ids(inp, descriptors, failed_output)
-    histories = await get_task_outputs(selected_ids) if selected_ids else {}
+    # This thread's deduplicated WARNING+ logs (each already ≤ char_cap).
+    thread_logs = [
+        e.model_dump(mode="json") for e in await get_thread_logs(ctx.thread_id)
+    ]
 
     payload = inp.model_dump(mode="json")
-    payload["histories"] = histories
-    payload["selected_task_ids"] = selected_ids
+    payload["descriptors"] = descriptors
+    payload["failed_output"] = failed_output
+    payload["thread_logs"] = thread_logs
 
     await create_task(
         ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,
@@ -460,9 +428,9 @@ async def _llm_orchestration_on_failure_task(
 llm_orchestration_on_failure: NodeTask[LlmOrchestrationInput, LlmOrchestrationOutput] = NodeTask(
     name=_TASK_NAME,
     description=(
-        "Streaming LLM task: study a failed agent step, dynamically select which prior "
-        "task outputs to read, and decide whether to retry an earlier step with new inputs "
-        "or fail."
+        "Streaming LLM task: study a failed agent step using completed-task descriptors, "
+        "the truncated last-failed output, and the thread's deduplicated error/warning logs, "
+        "then decide whether to retry an earlier streaming step or fail."
     ),
     input_type=LlmOrchestrationInput,
     output_type=LlmOrchestrationOutput,

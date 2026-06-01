@@ -147,16 +147,12 @@ class CalculateFundamentalStatsInput(BaseModel):
     """Input for the calculate_fundamental_stats handler.
 
     Attributes:
-        symbol:      Equity ticker symbol, e.g. ``'AAPL'``.
-        items:       List of :class:`FundamentalsDataItem`, one per fetched endpoint.
-        yf_exchange: Optional yfinance exchange code (e.g. ``'NMS'``, ``'HKG'``) used to
-                     populate index membership columns.  Derived from the ticker suffix
-                     when not provided.
+        symbol:  Equity ticker symbol, e.g. ``'AAPL'``.
+        items:   List of :class:`FundamentalsDataItem`, one per fetched endpoint.
     """
 
     symbol: str
     items: list[FundamentalsDataItem] = Field(default_factory=list)
-    yf_exchange: str | None = Field(default=None)
 
 
 class CalculateFundamentalStatsOutput(BaseModel):
@@ -205,7 +201,7 @@ async def calculate_fundamental_stats_handler(payload: dict) -> dict:
     canonical = _extract_canonical(merged)
     fin_report_date = _extract_fin_report_date(merged)
 
-    exchange = inp.yf_exchange or derive_yf_exchange_from_ticker(symbol)
+    exchange = derive_yf_exchange_from_ticker(symbol)
     indexes = get_indexes_for_exchange(exchange)
     # primary + up to 3 others
     primary_index_name:      str | None = indexes[0].code if len(indexes) > 0 else None

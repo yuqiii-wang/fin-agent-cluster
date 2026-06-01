@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from backend.quant.stats import STATS_VIEW_TYPE
+
 __all__ = ["AnalyzeIndexOutput", "IndexInstrumentResult", "IndexEquityResult"]
 
 
@@ -92,6 +94,6 @@ class AnalyzeIndexOutput(BaseModel):
         description="Per-symbol OHLCV df_splits for StackCandleStick rendering.",
     )
     stats_views: list[str] = Field(
-        default_factory=lambda: ["StackCandleStick"],
+        default_factory=lambda: [STATS_VIEW_TYPE.STACK_CANDLE_STICK.value],
         description="Node-level stats view types.",
     )

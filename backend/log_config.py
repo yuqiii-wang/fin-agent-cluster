@@ -340,6 +340,13 @@ def get_logging_config() -> dict[str, Any]:
                 **_file("app.log"),
                 "level": "WARNING",  # catch-all for unexpected warnings
             },
+            # Per-thread WARNING+ capture feeding the agent recovery context.
+            # Non-blocking: enqueues to a background Redis writer (see
+            # backend.langgraph.agent.error_log.handler).
+            "thread_errlog": {
+                "class": "backend.langgraph.agent.error_log.handler.ThreadErrorLogHandler",
+                "level": "WARNING",
+            },
             "api_file":                {**_file("api.log"),                "level": "INFO"},
             "centrifugo_file":          {**_file("centrifugo.log"),          "level": "INFO"},
             "db_file":                 {**_file("db.log"),                 "level": "INFO"},
@@ -394,27 +401,27 @@ def get_logging_config() -> dict[str, Any]:
                 "propagate": False,
             },
             "backend.main_thread": {
-                "handlers": ["console", "graph_file", "app_file"],
+                "handlers": ["console", "graph_file", "app_file", "thread_errlog"],
                 "level": "INFO",
                 "propagate": False,
             },
             "backend.langgraph": {
-                "handlers": ["console", "graph_file", "app_file"],
+                "handlers": ["console", "graph_file", "app_file", "thread_errlog"],
                 "level": "INFO",
                 "propagate": False,
             },
             "backend.llm": {
-                "handlers": ["console", "llm_file", "app_file"],
+                "handlers": ["console", "llm_file", "app_file", "thread_errlog"],
                 "level": "INFO",
                 "propagate": False,
             },
             "backend.resources": {
-                "handlers": ["console", "resources_file", "app_file"],
+                "handlers": ["console", "resources_file", "app_file", "thread_errlog"],
                 "level": "INFO",
                 "propagate": False,
             },
             "backend.celery_task": {
-                "handlers": ["console", "streaming_file", "app_file"],
+                "handlers": ["console", "streaming_file", "app_file", "thread_errlog"],
                 "level": "INFO",
                 "propagate": False,
             },
@@ -422,7 +429,7 @@ def get_logging_config() -> dict[str, Any]:
                 # Explicit entry so Celery prefork worker sub-processes route
                 # task logs directly to streaming.log
                 # without relying on propagation through backend.celery_task.
-                "handlers": ["console", "streaming_file", "app_file"],
+                "handlers": ["console", "streaming_file", "app_file", "thread_errlog"],
                 "level": "INFO",
                 "propagate": False,
             },
@@ -499,3 +506,8 @@ def configure_logging() -> None:
     start, before any code that emits log records.
     """
     logging.config.dictConfig(get_logging_config())
+    # Start the background writer for the per-thread error-log handler installed
+    # above (idempotent — safe across repeated configure_logging calls).
+    from backend.langgraph.agent.error_log.handler import start_listener
+
+    start_listener()

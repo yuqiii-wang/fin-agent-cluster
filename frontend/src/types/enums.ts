@@ -8,6 +8,7 @@ export enum QueryStatus {
   Completed = "completed",
   Failed = "failed",
   Cancelled = "cancelled",
+  Wrong = "wrong",
 }
 
 /** Node / task execution status (maps to WorkStatus). */

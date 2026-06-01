@@ -181,7 +181,9 @@ export function useConcurrencyThread({
         // the early-return paths below to cover retry and history-replay cases.
         if (ev.event === 'done') {
           wantsCloseRef.current = true;
-          terminalStatusRef.current = 'completed';
+          // 'done' carries the thread status aligned to the latest version's
+          // final end-of-lifecycle node (completed | failed | cancelled | wrong).
+          terminalStatusRef.current = (ev.status as TerminalQueryStatus | undefined) ?? 'completed';
         } else if (ev.event === 'thread_failed') {
           wantsCloseRef.current = true;
           terminalStatusRef.current = 'failed';

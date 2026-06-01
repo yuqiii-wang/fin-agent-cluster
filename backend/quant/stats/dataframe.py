@@ -1,6 +1,6 @@
 """Pandas DataFrame utilities for OHLCV stats data.
 
-Converts between the ``StatsMatrix`` wire format and pandas DataFrames,
+Converts between the ``OhlcvStatsMatrix`` wire format and pandas DataFrames,
 and serialises DataFrames to the split orient for compact HTTP transport.
 
 Split-orient format
@@ -23,13 +23,13 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import pandas as pd
-    from backend.resources.stats.models import StatsMatrix
+    from backend.resources.stats.models import OhlcvStatsMatrix
 
 __all__ = ["matrix_to_split", "split_to_dataframe"]
 
 
-def matrix_to_split(matrix: "StatsMatrix") -> dict:
-    """Convert a :class:`~backend.resources.stats.models.StatsMatrix` to a pandas split-orient dict.
+def matrix_to_split(matrix: "OhlcvStatsMatrix") -> dict:
+    """Convert a :class:`~backend.resources.stats.models.OhlcvStatsMatrix` to a pandas split-orient dict.
 
     Builds a DataFrame with a ``DatetimeIndex`` from ``matrix.timestamps``
     and one column per series in ``matrix.series``, then serialises to

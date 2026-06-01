@@ -30,7 +30,7 @@ _ACK_QUERY = """
     UPDATE fin_agents.user_queries
     SET status = 'running', is_ack = TRUE
     WHERE thread_id = %s
-      AND status NOT IN ('completed', 'failed', 'cancelled')
+      AND status NOT IN ('completed', 'failed', 'cancelled', 'wrong')
     RETURNING thread_id, status, query, answer, error, created_at, completed_at
 """
 
