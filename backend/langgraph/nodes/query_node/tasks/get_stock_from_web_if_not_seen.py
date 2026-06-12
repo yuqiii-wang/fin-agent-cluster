@@ -24,8 +24,6 @@ from __future__ import annotations
 
 import logging
 
-from langgraph.func import task
-
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.models import TaskInput, TaskOutput
@@ -37,11 +35,9 @@ logger = logging.getLogger(__name__)
 
 _TASK_NAME = "get_stock_from_web_if_not_seen"
 
-
 # ---------------------------------------------------------------------------
 # Celery layer — pure business logic
 # ---------------------------------------------------------------------------
-
 
 async def _handler(payload: dict) -> dict:
     """Fetch web summary for the given stock using DDGS.
@@ -61,13 +57,10 @@ async def _handler(payload: dict) -> dict:
             return WebStockOutput(url=r.url, title=r.title, content=r.content).model_dump()
     return WebStockOutput().model_dump()
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _get_stock_from_web_if_not_seen_task(
     task_input: TaskInput[WebStockInput],
 ) -> TaskOutput[WebStockOutput]:
@@ -98,7 +91,6 @@ async def _get_stock_from_web_if_not_seen_task(
         raise
     output = WebStockOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

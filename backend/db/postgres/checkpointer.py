@@ -19,16 +19,9 @@ from backend.db.postgres.errors import PG_CHECKPOINTER_TIMEOUT, PG_CHECKPOINTER_
 
 logger = logging.getLogger(__name__)
 
-# Explicitly allow our custom Pydantic envelope types so LangGraph does not
-# emit deserialization warnings (or block in strict mode).
-_SERDE = JsonPlusSerializer(
-    allowed_msgpack_modules=[
-        ("backend.langgraph.models.models", "TaskOutput"),
-        ("backend.langgraph.models.models", "TaskInput"),
-        ("backend.langgraph.models.models", "NodeContext"),
-        ("backend.langgraph.models.models", "TaskContext"),
-    ]
-)
+# Only serialize native types: GraphState and NodeRecord are TypedDicts that use
+# only native Python types (str, list, dict, None, etc.), so no custom modules needed
+_SERDE = JsonPlusSerializer(allowed_msgpack_modules=[])
 
 _setup_done: bool = False
 

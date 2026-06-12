@@ -39,7 +39,6 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
@@ -56,12 +55,10 @@ logger = logging.getLogger(__name__)
 
 _TASK_NAME = "digest_news"
 
-
 def _url_hash(url: str | None, title: str) -> str:
     """Compute sha256 of URL, falling back to title when url is absent."""
     key = url or title
     return hashlib.sha256(key.encode()).hexdigest()
-
 
 def _format_published(published_at: Any) -> str:
     """Format a published_at value to a YYYY-MM-DD string for Markdown display."""
@@ -70,7 +67,6 @@ def _format_published(published_at: Any) -> str:
     if isinstance(published_at, datetime):
         return published_at.strftime("%Y-%m-%d")
     return str(published_at)[:10]
-
 
 def _build_markdown(rows: list[Any], symbol: str | None) -> str:
     """Build a Markdown-formatted digest list from ``news_stats`` rows.
@@ -126,11 +122,9 @@ def _build_markdown(rows: list[Any], symbol: str | None) -> str:
 
     return "\n".join(parts)
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class DigestNewsInput(BaseModel):
     """Input for the digest_news task.
@@ -165,7 +159,6 @@ class DigestNewsInput(BaseModel):
         description="True when all upstream tasks were from cache; enables fast-path read.",
     )
 
-
 class DigestNewsOutput(BaseModel):
     """Output from the digest_news task.
 
@@ -183,11 +176,9 @@ class DigestNewsOutput(BaseModel):
     markdown: str = Field(default="", description="Markdown digest of news_stats rows.")
     from_cache: bool = Field(default=False, description="True when served from existing news_stats rows.")
 
-
 # ---------------------------------------------------------------------------
 # Celery handler
 # ---------------------------------------------------------------------------
-
 
 async def _handler(payload: dict) -> dict:
     """Celery-layer business logic for digest_news.
@@ -305,13 +296,10 @@ async def _handler(payload: dict) -> dict:
         from_cache=False,
     ).model_dump(mode="json")
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _digest_news_task(
     task_input: TaskInput[DigestNewsInput],
 ) -> TaskOutput[DigestNewsOutput]:
@@ -377,7 +365,6 @@ async def _digest_news_task(
         raise
     output = DigestNewsOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 digest_news: NodeTask[DigestNewsInput, DigestNewsOutput] = NodeTask(
     name=_TASK_NAME,

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news.digest_news import DigestNewsOutput
 from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news.do_emb import DoEmbOutput
-from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news.do_summary import DoSummaryOutput
+from backend.langgraph.models.common_tasks.do_summary import DoSummaryOutput
 from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news.get_news import GetNewsOutput
 
 
@@ -16,11 +16,12 @@ class GetAndDigestNewsInput(BaseModel):
     """Input for the get_and_digest_news task sequence.
 
     Attributes:
-        symbol:     Equity ticker, e.g. ``'AAPL'``.  ``None`` for topic-only news.
-        topics:     Topic keywords to narrow/augment the search.
-        from_dt:    Start of the news date window (UTC).
-        to_dt:      End of the news date window (UTC).
-        news_limit: Max news articles passed to ``get_news``.
+        symbol:          Equity ticker, e.g. ``'AAPL'``.  ``None`` for topic-only news.
+        topics:          Topic keywords to narrow/augment the search.
+        from_dt:         Start of the news date window (UTC).
+        to_dt:           End of the news date window (UTC).
+        news_limit:      Max news articles passed to ``get_news``.
+        detailed_prompt: Optional detailed prompt passed to do_summary.
     """
 
     symbol: str | None = Field(default=None, description="Equity ticker, e.g. 'AAPL'.")
@@ -28,6 +29,7 @@ class GetAndDigestNewsInput(BaseModel):
     from_dt: datetime | None = Field(default=None, description="Start of date window (UTC).")
     to_dt: datetime | None = Field(default=None, description="End of date window (UTC).")
     news_limit: int = Field(default=20, ge=1, le=100, description="Max news articles to fetch.")
+    detailed_prompt: str | None = Field(default=None, description="Optional detailed prompt for do_summary.")
 
 
 class GetAndDigestNewsOutput(BaseModel):

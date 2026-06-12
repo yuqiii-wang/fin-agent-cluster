@@ -48,17 +48,13 @@ import logging
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.func import task
+
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
 from backend.config import get_settings
 from backend.langgraph.agent.error_log import get_thread_logs
-from backend.langgraph.agent.memory import (
-    COMPLETED_STATUSES,
-    FAILED_STATUSES,
-    get_task_memory,
-)
+from backend.langgraph.agent.memory import list_memory
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import LLM_ORCH_DECIDE_ERROR
 from backend.langgraph.models.models import TaskInput, TaskOutput
@@ -70,11 +66,9 @@ logger = logging.getLogger(__name__)
 
 _TASK_NAME = "llm_orchestration_on_failure"
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class LlmOrchestrationInput(BaseModel):
     """Input for the llm_orchestration_on_failure task.
@@ -113,7 +107,6 @@ class LlmOrchestrationInput(BaseModel):
         default_factory=dict, description="Small extra context for the LLM."
     )
 
-
 class LlmOrchestrationOutput(BaseModel):
     """Recovery decision produced by the llm_orchestration_on_failure task.
 
@@ -140,18 +133,15 @@ class LlmOrchestrationOutput(BaseModel):
     )
     reasoning: str = Field(default="", description="Rationale carried to the retried step.")
 
-
 # ---------------------------------------------------------------------------
 # Context helpers
 # ---------------------------------------------------------------------------
-
 
 def _truncate(text: str, cap: int) -> str:
     """Return *text* truncated to *cap* characters with an elision marker."""
     if len(text) <= cap:
         return text
     return text[:cap] + " …[truncated]"
-
 
 def _format_descriptors(descriptors: list[dict[str, Any]]) -> str:
     """Render completed-task descriptors as a bullet list for the LLM."""
@@ -161,7 +151,6 @@ def _format_descriptors(descriptors: list[dict[str, Any]]) -> str:
         f"- {d['task_id']} — {d['task_name']}: {d.get('description') or ''}"
         for d in descriptors
     )
-
 
 def _format_thread_logs(thread_logs: list[dict[str, Any]], char_cap: int) -> str:
     """Render captured thread WARNING+ logs as a bullet list for the LLM.
@@ -185,7 +174,6 @@ def _format_thread_logs(thread_logs: list[dict[str, Any]], char_cap: int) -> str
         message = _truncate(str(entry.get("message", "")), char_cap)
         lines.append(f"- [{entry.get('level')}] {entry.get('logger')}{suffix}: {message}")
     return "\n".join(lines)
-
 
 # ---------------------------------------------------------------------------
 # Decision prompt (streaming, registered in STREAM_PROMPT_BUILDERS)
@@ -246,7 +234,6 @@ THREAD ERROR/WARNING LOGS (deduplicated, truncated):
 {thread_logs}\
 """
 
-
 def _build_orchestration_prompt(payload: dict) -> list:
     """Build LangChain messages for the streaming recovery decision.
 
@@ -284,14 +271,11 @@ def _build_orchestration_prompt(payload: dict) -> list:
     )
     return [SystemMessage(content=system_content), HumanMessage(content=human_content)]
 
-
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_orchestration_prompt}
-
 
 # ---------------------------------------------------------------------------
 # Answer parser
 # ---------------------------------------------------------------------------
-
 
 def _parse_decision(answer_dict: dict[str, Any], retry_candidates: list[str]) -> LlmOrchestrationOutput:
     """Parse the LLM JSON answer into a :class:`LlmOrchestrationOutput`.
@@ -328,13 +312,10 @@ def _parse_decision(answer_dict: dict[str, Any], retry_candidates: list[str]) ->
         reasoning=str(answer_dict.get("reasoning", "")),
     )
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _llm_orchestration_on_failure_task(
     task_input: TaskInput[LlmOrchestrationInput],
 ) -> TaskOutput[LlmOrchestrationOutput]:
@@ -356,25 +337,21 @@ async def _llm_orchestration_on_failure_task(
     inp = task_input.content
     char_cap = get_settings().AGENT_ERRLOG_CHAR_CAP
 
-    # Completed-task descriptors (task_id / task_name / description, no outputs).
-    completed = await get_task_memory(
-        ctx.node_id, statuses=COMPLETED_STATUSES, with_output=False
-    )
+    # Memory entry descriptors (memory_id / name / description, no payloads).
+    memory_items = await list_memory(ctx.node_id)
     descriptors = [
         {
-            "task_id": m.task_id,
-            "task_name": m.task_name,
+            "memory_id": m.memory_id,
+            "name": m.name,
             "description": m.description,
         }
-        for m in completed
+        for m in memory_items
     ]
 
-    # Top 1k chars of the last failed task's output.
-    failed = await get_task_memory(
-        ctx.node_id, statuses=FAILED_STATUSES, with_output=True
-    )
+    # Top of the last failed entry's effective content (task_name == failed_step).
     failed_output_payload: dict[str, Any] = next(
-        (m.output for m in reversed(failed) if m.task_name == inp.failed_step and m.output),
+        (m.effective_content for m in reversed(memory_items)
+        if m.task_name == inp.failed_step and m.effective_content),
         {},
     )
     failed_output = _truncate(
@@ -419,7 +396,6 @@ async def _llm_orchestration_on_failure_task(
             failed=True, error=str(exc), view_type=TASK_VIEW_STREAMING,
         )
         raise
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

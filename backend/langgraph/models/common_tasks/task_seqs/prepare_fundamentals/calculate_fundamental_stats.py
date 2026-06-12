@@ -24,8 +24,6 @@ Public exports
 
 from __future__ import annotations
 
-from langgraph.func import task
-
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_fundamental_stats import (
@@ -38,11 +36,9 @@ from backend.langgraph.models.task import NodeTask
 
 _TASK_NAME = "calculate_fundamental_stats"
 
-
 # ---------------------------------------------------------------------------
 # Celery layer — entry dispatcher
 # ---------------------------------------------------------------------------
-
 
 async def _handler(payload: dict) -> dict:
     """Dispatch the calculate_fundamental_stats payload to the aggregation handler.
@@ -55,13 +51,10 @@ async def _handler(payload: dict) -> dict:
     """
     return await calculate_fundamental_stats_handler(payload)
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _calculate_fundamental_stats_task(
     task_input: TaskInput[CalculateFundamentalStatsInput],
 ) -> TaskOutput[CalculateFundamentalStatsOutput]:
@@ -96,7 +89,6 @@ async def _calculate_fundamental_stats_task(
 
     output = CalculateFundamentalStatsOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

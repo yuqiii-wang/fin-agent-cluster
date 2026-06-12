@@ -61,6 +61,28 @@ from backend.langgraph.models.common_tasks.pdf_to_markdown import (
     PdfToMarkdownOutput,
     HANDLERS as _PTM_HANDLERS,
 )
+from backend.langgraph.models.common_tasks.do_summary import (
+    do_summary,
+    DoSummaryInput,
+    DoSummaryOutput,
+    SummaryRecord,
+    HANDLERS as _DS_HANDLERS,
+    STREAM_PROMPT_BUILDERS as _DS_SPB,
+)
+from backend.langgraph.models.common_tasks.dummy_task import (
+    dummy_task,
+    DummyTaskInput,
+    DummyTaskOutput,
+    HANDLERS as _DT_HANDLERS,
+)
+from backend.langgraph.models.common_tasks.llm_orchestration_for_validation import (
+    llm_orchestration_for_validation,
+    ValidationViolation,
+    LlmValidationInput,
+    LlmValidationOutput,
+    HANDLERS as _LOFV_HANDLERS,
+    STREAM_PROMPT_BUILDERS as _LOFV_SPB,
+)
 from backend.langgraph.models.common_tasks.task_seqs.navigate_web import (
     crawl_url,
     CrawlUrlInput,
@@ -101,14 +123,6 @@ from backend.langgraph.models.common_tasks.task_seqs.prepare_fundamentals import
     CalculateFundamentalStatsOutput,
     HANDLERS as _PF_HANDLERS,
 )
-from backend.langgraph.models.common_tasks.llm_orchestration_for_validation import (
-    llm_orchestration_for_validation,
-    ValidationViolation,
-    LlmValidationInput,
-    LlmValidationOutput,
-    HANDLERS as _LOFV_HANDLERS,
-    STREAM_PROMPT_BUILDERS as _LOFV_SPB,
-)
 
 HANDLERS: dict = {
     **_GS_HANDLERS,
@@ -117,13 +131,15 @@ HANDLERS: dict = {
     **_CC_HANDLERS,
     **_GDN_HANDLERS,
     **_PTM_HANDLERS,
+    **_DS_HANDLERS,
+    **_DT_HANDLERS,
+    **_LOFV_HANDLERS,
     **_NW_HANDLERS,
     **_PWKU_HANDLERS,
     **_SB_HANDLERS,
     **_PF_HANDLERS,
-    **_LOFV_HANDLERS,
 }
-STREAM_PROMPT_BUILDERS: dict = {**_GDN_SPB, **_NW_SPB, **_LOFV_SPB}
+STREAM_PROMPT_BUILDERS: dict = {**_GDN_SPB, **_NW_SPB, **_DS_SPB, **_LOFV_SPB}
 
 __all__ = [
     "get_stats",
@@ -182,6 +198,13 @@ __all__ = [
     "calculate_fundamental_stats",
     "CalculateFundamentalStatsInput",
     "CalculateFundamentalStatsOutput",
+    "do_summary",
+    "DoSummaryInput",
+    "DoSummaryOutput",
+    "SummaryRecord",
+    "dummy_task",
+    "DummyTaskInput",
+    "DummyTaskOutput",
     "HANDLERS",
     "STREAM_PROMPT_BUILDERS",
 ]

@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import logging
 
-from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.db.postgres.queries.fin_markets_indexes import (
@@ -52,11 +51,9 @@ _DEFAULT_INDEX_CODES: list[str] = [
     "NIKKEI_225",
 ]
 
-
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
-
 
 class IndexCandidate(BaseModel):
     """Equity market index selected for stats analysis.
@@ -75,7 +72,6 @@ class IndexCandidate(BaseModel):
     currency_code: str = Field(description="ISO 4217 currency code.")
     zone: str = Field(description="Geographic zone: 'amer', 'emea', or 'apac'.")
 
-
 class ProposeIndexInput(BaseModel):
     """Input for the propose_index task.
 
@@ -89,7 +85,6 @@ class ProposeIndexInput(BaseModel):
         default="",
         description="Ticker of the stock under analysis; used for index-coverage check.",
     )
-
 
 class ProposeIndexOutput(BaseModel):
     """Output from the propose_index task.
@@ -114,11 +109,9 @@ class ProposeIndexOutput(BaseModel):
         description="Index code added for the stock's home index when not in defaults.",
     )
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task (pure computation, DB reads only)
 # ---------------------------------------------------------------------------
-
 
 def _resolve_candidates(default_codes: list[str]) -> list[IndexCandidate]:
     """Return ``IndexCandidate`` objects for each code that is present in the cache.
@@ -148,8 +141,6 @@ def _resolve_candidates(default_codes: list[str]) -> list[IndexCandidate]:
         )
     return candidates
 
-
-@task
 async def _propose_index_task(
     task_input: TaskInput[ProposeIndexInput],
 ) -> TaskOutput[ProposeIndexOutput]:
@@ -219,7 +210,6 @@ async def _propose_index_task(
             failed=True, error=str(exc), view_type="Stats",
         )
         raise
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

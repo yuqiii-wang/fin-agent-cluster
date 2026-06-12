@@ -51,7 +51,7 @@ import logging
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.func import task
+
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
@@ -69,7 +69,6 @@ _TASK_NAME = "llm_orchestration_for_validation"
 # ---------------------------------------------------------------------------
 # Violation model
 # ---------------------------------------------------------------------------
-
 
 class ValidationViolation(BaseModel):
     """A single field-level validation violation.
@@ -97,11 +96,9 @@ class ValidationViolation(BaseModel):
     found_value: str
     expected_context: str = ""
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class LlmValidationInput(BaseModel):
     """Input for the llm_orchestration_for_validation task.
@@ -136,7 +133,6 @@ class LlmValidationInput(BaseModel):
         description="Dot-paths to treat as numeric unconditionally.",
     )
 
-
 class LlmValidationOutput(BaseModel):
     """Output from the llm_orchestration_for_validation task.
 
@@ -151,7 +147,6 @@ class LlmValidationOutput(BaseModel):
     passed: bool = Field(description="True when all verifiable fields pass.")
     violations: list[ValidationViolation] = Field(default_factory=list)
     reasoning: str = Field(default="", description="LLM reasoning for the verdict.")
-
 
 # ---------------------------------------------------------------------------
 # Prompt builder (registered in STREAM_PROMPT_BUILDERS)
@@ -214,7 +209,6 @@ JSON INPUT (to validate):
 {json_input}\
 """
 
-
 def _build_validation_prompt(payload: dict) -> list:
     """Build LangChain messages for the llm_orchestration_for_validation streaming task.
 
@@ -243,14 +237,11 @@ def _build_validation_prompt(payload: dict) -> list:
     )
     return [SystemMessage(content=system_content), HumanMessage(content=human_content)]
 
-
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_validation_prompt}
-
 
 # ---------------------------------------------------------------------------
 # Answer parser
 # ---------------------------------------------------------------------------
-
 
 def _parse_validation_answer(answer_dict: dict[str, Any]) -> LlmValidationOutput:
     """Parse and validate the LLM JSON answer into a :class:`LlmValidationOutput`.
@@ -309,13 +300,10 @@ def _parse_validation_answer(answer_dict: dict[str, Any]) -> LlmValidationOutput
         reasoning=str(answer_dict.get("reasoning", "")),
     )
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _llm_orchestration_for_validation_task(
     task_input: TaskInput[LlmValidationInput],
 ) -> TaskOutput[LlmValidationOutput]:
@@ -365,7 +353,6 @@ async def _llm_orchestration_for_validation_task(
             failed=True, error=str(exc), view_type=TASK_VIEW_STREAMING,
         )
         raise
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

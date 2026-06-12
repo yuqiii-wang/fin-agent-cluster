@@ -31,7 +31,7 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news.do_emb 
     DoEmbOutput,
     do_emb,
 )
-from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news.do_summary import (
+from backend.langgraph.models.common_tasks.do_summary import (
     DoSummaryInput,
     DoSummaryOutput,
     do_summary,
@@ -95,6 +95,7 @@ async def _pipeline(
         DoSummaryInput(
             input_raw_id=gn_output.input_raw_id,
             news_articles=articles_json,
+            detailed_prompt=seq_input.detailed_prompt,
         ),
     )
     emb_coro = run_task_fn(

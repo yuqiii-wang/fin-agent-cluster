@@ -34,7 +34,6 @@ import json
 import logging
 from datetime import datetime
 
-from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
@@ -56,7 +55,6 @@ _TASK_NAME = "get_news"
 _NODE_NAME = "common_tasks/get_news"
 _METHOD = "list_news"
 
-
 def _date_bucket(dt: datetime | None) -> str:
     """Return a stable day-granularity bucket string for cache keying.
 
@@ -71,7 +69,6 @@ def _date_bucket(dt: datetime | None) -> str:
         ``YYYY-MM-DD`` string, or ``""`` when *dt* is ``None``.
     """
     return dt.strftime("%Y-%m-%d") if dt is not None else ""
-
 
 def _make_cache_key(
     symbol: str | None,
@@ -103,11 +100,9 @@ def _make_cache_key(
     )
     return hashlib.sha256(payload.encode()).hexdigest()
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class GetNewsInput(BaseModel):
     """Input for the get_news task.
@@ -130,7 +125,6 @@ class GetNewsInput(BaseModel):
     text_content: str | None = Field(default=None, description="Free-form text to inject as one article.")
     json_input: list[dict] | None = Field(default=None, description="Injected NewsArticle dicts.")
 
-
 class GetNewsOutput(BaseModel):
     """Output from the get_news task.
 
@@ -146,11 +140,9 @@ class GetNewsOutput(BaseModel):
     news_articles: list[NewsArticle] = Field(default_factory=list, description="Resolved raw articles.")
     from_cache: bool = Field(default=False, description="True when served from cache.")
 
-
 # ---------------------------------------------------------------------------
 # Celery layer — business logic
 # ---------------------------------------------------------------------------
-
 
 async def _persist(
     thread_id: str | None,
@@ -194,7 +186,6 @@ async def _persist(
         row = await cur.fetchone()
     return row["id"]
 
-
 def _build_injected_articles(inp: GetNewsInput, symbol: str | None) -> list[NewsArticle]:
     """Build articles from injected ``json_input`` / ``text_content``.
 
@@ -226,7 +217,6 @@ def _build_injected_articles(inp: GetNewsInput, symbol: str | None) -> list[News
             content=text,
         )
     ]
-
 
 async def _handler(payload: dict) -> dict:
     """Resolve raw news articles via injection or external fetch.
@@ -302,13 +292,10 @@ async def _handler(payload: dict) -> dict:
         input_raw_id=input_raw_id, source=source, news_articles=articles, from_cache=False,
     ).model_dump(mode="json")
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _get_news_task(
     task_input: TaskInput[GetNewsInput],
 ) -> TaskOutput[GetNewsOutput]:
@@ -343,7 +330,6 @@ async def _get_news_task(
 
     output = GetNewsOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

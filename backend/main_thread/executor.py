@@ -147,7 +147,8 @@ async def _run_graph(
         fencing_token: Monotonic lock generation counter; stamped on all DB
                        writes within this run.
     """
-    from backend.db.postgres import raw_conn
+    from typing import Any
+    from backend.db.postgres import raw_conn, recover_graph_state_from_db
     from backend.langgraph.compiled import get_compiled_graph
     from backend.langgraph.lifecycle import complete_thread, register_thread
     from backend.langgraph.lifecycle.cancel_flag import clear_cancel_flag
@@ -178,10 +179,25 @@ async def _run_graph(
 
         if resume:
             config = {"configurable": {"thread_id": thread_id}}
+            # Retrieve last checkpoint state and recover nodes
+            checkpoint_state = await graph.aget_state(config)
+            if checkpoint_state.values and isinstance(checkpoint_state.values, dict):
+                current_nodes = checkpoint_state.values.get("nodes", {})
+                if current_nodes:
+                    recovered_nodes = await recover_graph_state_from_db(thread_id, current_nodes)
+                    await graph.aupdate_state(config, {"nodes": recovered_nodes})
             final_state = await graph.ainvoke(None, config=config)
 
         elif query.startswith(_FORK_PREFIX):
             fork_config = json.loads(query[len(_FORK_PREFIX):])
+            config = fork_config
+            # Retrieve last checkpoint state for fork and recover nodes
+            checkpoint_state = await graph.aget_state(config)
+            if checkpoint_state.values and isinstance(checkpoint_state.values, dict):
+                current_nodes = checkpoint_state.values.get("nodes", {})
+                if current_nodes:
+                    recovered_nodes = await recover_graph_state_from_db(thread_id, current_nodes)
+                    await graph.aupdate_state(config, {"nodes": recovered_nodes})
             final_state = await graph.ainvoke(None, config=fork_config)
 
         else:

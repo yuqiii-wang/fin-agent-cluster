@@ -1,9 +1,18 @@
-"""Pydantic model for task-output-derived agent memory.
+"""Pydantic models for agent memory entries.
 
-An agent's "memory" is the set of finished task outputs produced by the tasks
-it has already run within the same node execution.  Each :class:`TaskMemory`
-entry is a live projection of one ``fin_agents.tasks`` row joined with the
-output payload from its latest ``fin_agents.task_executions`` retry.
+Two flavours of memory entry exist per node:
+
+* **Task-backed memory** — ``task_id`` is set; ``content`` may be ``None``.
+  The effective payload is the latest ``fin_agents.task_executions.output``
+  for the referenced task.  This is how the agent remembers outputs from
+  tasks it already ran.
+* **Direct memory** — ``task_id`` is ``None``; ``content`` is a non-empty
+  JSONB payload written directly via :func:`write_memory`.  This is the
+  general-purpose scratchpad for arbitrary node-scoped state.
+
+All entries are scoped to a single ``node_id`` (i.e. a single run of a
+single node).  Each entry is addressable both by ``memory_id`` (UUID) and
+``name`` (unique human-readable label within the node).
 """
 
 from __future__ import annotations
@@ -13,36 +22,62 @@ from typing import Any
 
 from pydantic import BaseModel
 
-# Statuses that count as a completed task whose output is usable as memory.
-COMPLETED_STATUSES: tuple[str, ...] = ("completed",)
-# Statuses that indicate a task failed and should be diagnosed on recovery.
-FAILED_STATUSES: tuple[str, ...] = ("failed", "wrong")
 
-
-class TaskMemory(BaseModel):
-    """A single task-output memory entry for an agent node execution.
+class MemoryItem(BaseModel):
+    """A single memory entry for a node execution.
 
     Attributes:
-        task_id:     UUID of the task row.
-        node_id:     Owning agent node UUID.
-        node_name:   Workflow node name.
-        task_name:   Registered NodeTask name.
-        description: Human-readable task description (from the tasks row).
-        status:      Task status (e.g. ``"completed"``, ``"failed"``).
-        output:      Latest-retry output payload, or ``None`` when not loaded.
-        updated_at:  Last update timestamp of the task row.
+        memory_id:   UUID primary key of the memory row.
+        thread_id:   Owning thread (matches fin_agents.user_queries.thread_id).
+        node_id:     Owning node (matches fin_agents.nodes.node_id).
+        task_id:     Optional FK to fin_agents.tasks; when set, content may be
+                     None (the content is then the referenced task's output).
+        name:        Stable logical name; unique within (node_id).  Used for
+                     name-based lookups.
+        description: Human-readable description shown to the agent / UI when
+                     listing memory contents.
+        content:     JSONB payload.  None for task-backed entries (task_id is
+                     set); must be a non-empty JSON value for direct entries.
+        effective_content: The resolved content actually used at read-time —
+                     either the stored ``content``, or the referenced task's
+                     output (when task_id is set and content is None).
+        task_name:   Name of the referenced task (fin_agents.tasks.task_name),
+                     or None when task_id is None.
+        task_status: Status of the referenced task, or None when task_id is None.
+        created_at:  Creation timestamp of the memory row.
+        updated_at:  Last update timestamp of the memory row.
     """
 
-    task_id: str
+    memory_id: str
+    thread_id: str
     node_id: str
-    node_name: str
-    task_name: str
-    description: str
-    status: str
-    output: dict[str, Any] | None = None
+    task_id: str | None = None
+    name: str
+    description: str = ""
+    content: dict[str, Any] | None = None
+    effective_content: dict[str, Any] | None = None
+    task_name: str | None = None
+    task_status: str | None = None
+    created_at: datetime | None = None
     updated_at: datetime | None = None
 
     model_config = {"frozen": True}
 
 
-__all__ = ["TaskMemory", "COMPLETED_STATUSES", "FAILED_STATUSES"]
+class MemoryCheckItem(BaseModel):
+    """Lightweight descriptor for a memory entry (without payload).
+
+    Used by :func:`check_memory` and for UI listings where the actual content
+    is not yet needed (e.g. the agent choosing which memory entry to pull).
+    """
+
+    memory_id: str
+    name: str
+    description: str
+    task_id: str | None = None
+    created_at: datetime | None = None
+
+    model_config = {"frozen": True}
+
+
+__all__ = ["MemoryItem", "MemoryCheckItem"]

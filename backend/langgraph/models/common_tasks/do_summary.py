@@ -38,6 +38,7 @@ Public exports
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from typing import Any
@@ -46,8 +47,6 @@ from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.func import task
 from pydantic import BaseModel, Field
-
-import asyncio
 
 from backend.celery_task.workers.task_delegation import delegate_stream
 from backend.db.postgres import raw_conn
@@ -276,14 +275,18 @@ class DoSummaryInput(BaseModel):
     """Input for the do_summary task.
 
     Attributes:
-        input_raw_id:  FK to the ``input_raw`` row (for cache look-up and provenance).
-        news_articles: Serialised :class:`~backend.resources.news.models.NewsArticle`
-                       dicts from the ``get_news`` output.
+        input_raw_id:    FK to the ``input_raw`` row (for cache look-up and provenance).
+        news_articles:   Serialised :class:`~backend.resources.news.models.NewsArticle`
+                         dicts from the ``get_news`` output.
+        detailed_prompt: Optional detailed prompt to customise the summary task.
     """
 
     input_raw_id: int | None = Field(default=None, description="FK to input_raw row.")
     news_articles: list[dict[str, Any]] = Field(
-        default_factory=list, description="Serialised NewsArticle dicts."
+        default_factory=list, description="Serialised NewsArticle dicts.",
+    )
+    detailed_prompt: str | None = Field(
+        default=None, description="Optional detailed prompt for the summary task.",
     )
 
 

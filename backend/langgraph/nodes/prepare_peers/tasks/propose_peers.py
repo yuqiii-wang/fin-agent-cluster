@@ -28,7 +28,7 @@ import logging
 
 from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.func import task
+
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
@@ -42,11 +42,9 @@ logger = logging.getLogger(__name__)
 
 _TASK_NAME = "propose_peers"
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class ProposePeersInput(BaseModel):
     """Input for the propose_peers task.
@@ -56,7 +54,6 @@ class ProposePeersInput(BaseModel):
     """
 
     stock_name: str = Field(description="Company name or stock ticker.")
-
 
 class ProposePeersOutput(BaseModel):
     """Output from the propose_peers task.
@@ -74,7 +71,6 @@ class ProposePeersOutput(BaseModel):
         default="",
         description="Why these companies are considered peers.",
     )
-
 
 # ---------------------------------------------------------------------------
 # Prompt template
@@ -95,7 +91,6 @@ _PROPOSE_PEERS_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "Propose peer companies for: {stock_name}"),
 ])
 
-
 # ---------------------------------------------------------------------------
 # Streaming prompt builder
 # ---------------------------------------------------------------------------
@@ -112,16 +107,12 @@ def _build_propose_peers_prompt(payload: dict) -> list[BaseMessage]:
     inp = ProposePeersInput.model_validate(payload)
     return _PROPOSE_PEERS_PROMPT.format_messages(stock_name=inp.stock_name)
 
-
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_propose_peers_prompt}
-
 
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _propose_peers_task(
     task_input: TaskInput[ProposePeersInput],
 ) -> TaskOutput[ProposePeersOutput]:
@@ -174,7 +165,6 @@ async def _propose_peers_task(
             failed=True, error=str(exc), view_type=TASK_VIEW_STREAMING,
         )
         raise
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

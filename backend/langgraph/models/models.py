@@ -122,4 +122,15 @@ class TaskOutput(BaseModel, Generic[T]):
     thinking: str | None = None
 
 
-__all__ = ["NodeContext", "TaskContext", "TaskInput", "TaskOutput", "BaseTaskInput"]
+class TaskRecord(BaseModel):
+    """Lightweight record to store in checkpoints instead of full TaskOutput.
+
+    Contains only identifiers to recover the full task data from Postgres.
+    """
+
+    thread_id: str
+    node_id: str
+    task_id: str
+
+
+__all__ = ["NodeContext", "TaskContext", "TaskInput", "TaskOutput", "TaskRecord", "BaseTaskInput"]

@@ -29,7 +29,6 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any, Optional, Sequence, Union
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
@@ -50,6 +49,7 @@ from backend.httpx_client import (
     make_ark_async_client,
     make_ark_sync_client,
 )
+from backend.llm.providers.base_llm import BaseLLM
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ def _to_openai_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     return result
 
 
-class ArkLLM(BaseChatModel):
+class ArkLLM(BaseLLM):
     """ARK (Volcano Engine / Doubao) chat model using plain httpx.
 
     Calls the ARK OpenAI-compatible ``/chat/completions`` endpoint directly
@@ -172,9 +172,10 @@ class ArkLLM(BaseChatModel):
             :class:`ChatResult` wrapping the full assistant message.
         """
         url = f"{self.base_url}/chat/completions"
+        normalized_messages = self._normalize_messages(messages)
         request_body: dict[str, Any] = {
             "model": self.model,
-            "messages": _to_openai_messages(messages),
+            "messages": _to_openai_messages(normalized_messages),
             "stream": False,
             "temperature": self.temperature,
         }
@@ -270,9 +271,10 @@ class ArkLLM(BaseChatModel):
             :class:`ChatGenerationChunk` for each non-empty content delta.
         """
         url = f"{self.base_url}/chat/completions"
+        normalized_messages = self._normalize_messages(messages)
         request_body: dict[str, Any] = {
             "model": self.model,
-            "messages": _to_openai_messages(messages),
+            "messages": _to_openai_messages(normalized_messages),
             "stream": True,
             "temperature": self.temperature,
         }

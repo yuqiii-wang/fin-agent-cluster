@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculate_stats import (
-    CalculateStatsOutput,
-)
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.get_stats import (
     GetStatsOutput,
 )
+
+
+class CalculateStatsBaseOutput(BaseModel):
+    """Base model for calculate_stats output, containing common fields."""
+    rows_upserted: int
+    symbol: str
+    source: str
+    stats_views: list[str]
 
 
 class GetAndCalculateStatsInput(BaseModel):
@@ -30,6 +35,9 @@ class GetAndCalculateStatsInput(BaseModel):
     src_task_id: str | None = Field(default=None, description="Source task id for provenance.")
 
 
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_ohlcv_stats import CalculateOhlcvStatsOutput
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_option_stats import CalculateOptionStatsOutput
+
 class GetAndCalculateStatsOutput(BaseModel):
     """Combined output from the get_stats → calculate_stats pipeline.
 
@@ -39,7 +47,7 @@ class GetAndCalculateStatsOutput(BaseModel):
     """
 
     get_stats: GetStatsOutput
-    calculate_stats: CalculateStatsOutput
+    calculate_stats: CalculateOhlcvStatsOutput | CalculateOptionStatsOutput
 
 
-__all__ = ["GetAndCalculateStatsInput", "GetAndCalculateStatsOutput"]
+__all__ = ["GetAndCalculateStatsInput", "GetAndCalculateStatsOutput", "CalculateStatsBaseOutput"]

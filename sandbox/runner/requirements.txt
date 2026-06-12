@@ -7,4 +7,4 @@ pydantic-settings==2.13.1
 # PostgreSQL driver — available to sandboxed user scripts via PG_SANDBOX_DSN env var
 psycopg[binary]==3.2.9
 # Playwright — available to LLM-generated scripts for browser interaction
-playwright==1.50.0
+playwright==1.60.0

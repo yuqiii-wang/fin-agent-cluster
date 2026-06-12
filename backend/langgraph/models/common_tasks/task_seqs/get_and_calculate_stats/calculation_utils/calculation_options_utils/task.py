@@ -8,8 +8,6 @@ Provides:
 
 from __future__ import annotations
 
-from langgraph.func import task
-
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.models import TaskInput, TaskOutput
@@ -20,8 +18,6 @@ from .models import CalculateOptionStatsInput, CalculateOptionStatsOutput
 
 _TASK_NAME = "calculate_option_stats"
 
-
-@task
 async def _calculate_option_stats_task(
     task_input: TaskInput[CalculateOptionStatsInput],
 ) -> TaskOutput[CalculateOptionStatsOutput]:
@@ -56,7 +52,6 @@ async def _calculate_option_stats_task(
 
     output = CalculateOptionStatsOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 calculate_option_stats = NodeTask(
     name=_TASK_NAME,

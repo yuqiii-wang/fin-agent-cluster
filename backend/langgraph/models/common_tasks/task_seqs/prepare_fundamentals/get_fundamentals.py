@@ -32,7 +32,6 @@ import hashlib
 import json
 import logging
 
-from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
@@ -68,7 +67,6 @@ _PROVIDER_FALLBACK_CHAINS: dict[str, list[str]] = {
     "mock":     ["yfinance"],
 }
 
-
 def _build_provider_chain(symbol: str) -> list[str]:
     """Return ordered provider list for fundamentals fetching.
 
@@ -87,7 +85,6 @@ def _build_provider_chain(symbol: str) -> list[str]:
         chain = [p for p in chain if p != "fmp"]
     return chain or ["yfinance"]
 
-
 def _make_cache_key(source: str, symbol: str, endpoint_type: str) -> str:
     """Compute a deterministic SHA-256 cache key for ``input_raw`` lookup.
 
@@ -105,11 +102,9 @@ def _make_cache_key(source: str, symbol: str, endpoint_type: str) -> str:
     )
     return hashlib.sha256(payload.encode()).hexdigest()
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class GetFundamentalsInput(BaseModel):
     """Input for the get_fundamentals task.
@@ -131,7 +126,6 @@ class GetFundamentalsInput(BaseModel):
     )
     thread_id: str | None = Field(default=None, description="Thread id for input_raw provenance.")
 
-
 class GetFundamentalsOutput(BaseModel):
     """Output from the get_fundamentals task.
 
@@ -145,11 +139,9 @@ class GetFundamentalsOutput(BaseModel):
     json_data: dict = Field(default_factory=dict)
     from_cache: bool = Field(default=False)
 
-
 # ---------------------------------------------------------------------------
 # Celery layer — business logic
 # ---------------------------------------------------------------------------
-
 
 async def _handler(payload: dict) -> dict:
     """Fetch one fundamental endpoint, caching the raw result in ``input_raw``.
@@ -236,13 +228,10 @@ async def _handler(payload: dict) -> dict:
         f"endpoint={endpoint_type} from any provider. Last error: {last_error}"
     )
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _get_fundamentals_task(
     task_input: TaskInput[GetFundamentalsInput],
 ) -> TaskOutput[GetFundamentalsOutput]:
@@ -278,7 +267,6 @@ async def _get_fundamentals_task(
 
     output = GetFundamentalsOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

@@ -30,6 +30,11 @@ from backend.db.postgres.pool import (
     get_raw_pool,
     get_raw_read_pool,
 )
+from backend.db.postgres.state_recovery import (
+    recover_graph_state_from_db,
+    get_node_data_from_db,
+    get_task_data_from_db,
+)
 from backend.db.postgres.types import QueryStatus, query_status_sa_type, WorkStatus, work_status_sa_type, NodeType, node_type_sa_type
 
 __all__ = [
@@ -55,4 +60,7 @@ __all__ = [
     "work_status_sa_type",
     "NodeType",
     "node_type_sa_type",
+    "recover_graph_state_from_db",
+    "get_node_data_from_db",
+    "get_task_data_from_db",
 ]

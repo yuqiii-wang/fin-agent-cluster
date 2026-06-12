@@ -35,7 +35,6 @@ import hashlib
 import json
 import logging
 
-from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
@@ -79,7 +78,6 @@ _PROVIDER_FALLBACK_CHAINS: dict[str, list[str]] = {
     "mock":     ["mock"],
 }
 
-
 def _build_provider_chain(symbol: str) -> list[str]:
     """Return the ordered provider list for stats fetching.
 
@@ -95,7 +93,6 @@ def _build_provider_chain(symbol: str) -> list[str]:
     if not settings.FMP_API_KEY:
         chain = [p for p in chain if p != "fmp"]
     return chain or ["mock"]
-
 
 def _make_cache_key(source: str, method: str, symbol: str, period: str) -> str:
     """Compute a deterministic SHA-256 cache key for ``input_raw`` lookup.
@@ -115,11 +112,9 @@ def _make_cache_key(source: str, method: str, symbol: str, period: str) -> str:
     )
     return hashlib.sha256(payload.encode()).hexdigest()
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class GetStatsInput(BaseModel):
     """Input for the get_stats task.
@@ -141,7 +136,6 @@ class GetStatsInput(BaseModel):
     src_task_id: str | None = Field(default=None, description="Source task id for provenance.")
     thread_id: str | None = Field(default=None, description="Thread id for input_raw provenance.")
 
-
 class GetStatsOutput(BaseModel):
     """Output from the get_stats task.
 
@@ -155,11 +149,9 @@ class GetStatsOutput(BaseModel):
     from_cache: bool = Field(default=False)
     data_type: str = Field(default=STATS_DATA_TYPE.OHLCV.value)
 
-
 # ---------------------------------------------------------------------------
 # Celery layer — business logic
 # ---------------------------------------------------------------------------
-
 
 async def _persist(
     thread_id: str | None,
@@ -199,7 +191,6 @@ async def _persist(
             ),
         )
 
-
 def _build_stats_record(symbol: str, period: str, json_input: dict) -> StatsRecord:
     """Build a :class:`StatsRecord` from injected JSON without validating its shape.
 
@@ -234,7 +225,6 @@ def _build_stats_record(symbol: str, period: str, json_input: dict) -> StatsReco
         content=json_input,
     )
 
-
 async def _handle_json_input(inp: GetStatsInput, symbol: str) -> dict:
     """Inject a structured OHLCV/StatsRecord payload (no external call).
 
@@ -260,7 +250,6 @@ async def _handle_json_input(inp: GetStatsInput, symbol: str) -> dict:
         from_cache=False,
         data_type=data_type,
     ).model_dump(mode="json")
-
 
 async def _handle_text_input(inp: GetStatsInput, symbol: str) -> dict:
     """Inject free-form text as a non-OHLCV stub record (no external call).
@@ -290,7 +279,6 @@ async def _handle_text_input(inp: GetStatsInput, symbol: str) -> dict:
         from_cache=False,
         data_type=STATS_DATA_TYPE.TEXT.value,
     ).model_dump(mode="json")
-
 
 async def _handle_external_fetch(inp: GetStatsInput, symbol: str) -> dict:
     """Fetch OHLCV stats from a provider with provider/period fallback.
@@ -360,7 +348,6 @@ async def _handle_external_fetch(inp: GetStatsInput, symbol: str) -> dict:
         f"from any provider. Last error: {last_error}"
     )
 
-
 async def _handler(payload: dict) -> dict:
     """Resolve a StatsRecord via injection or external fetch.
 
@@ -382,13 +369,10 @@ async def _handler(payload: dict) -> dict:
         return await _handle_text_input(inp, symbol)
     return await _handle_external_fetch(inp, symbol)
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _get_stats_task(
     task_input: TaskInput[GetStatsInput],
 ) -> TaskOutput[GetStatsOutput]:
@@ -424,7 +408,6 @@ async def _get_stats_task(
 
     output = GetStatsOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

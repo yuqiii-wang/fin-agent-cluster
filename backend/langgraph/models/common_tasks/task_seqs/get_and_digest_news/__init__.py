@@ -14,7 +14,7 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news.get_new
     get_news,
     HANDLERS as _GN_HANDLERS,
 )
-from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news.do_summary import (
+from backend.langgraph.models.common_tasks.do_summary import (
     DoSummaryInput,
     DoSummaryOutput,
     SummaryRecord,

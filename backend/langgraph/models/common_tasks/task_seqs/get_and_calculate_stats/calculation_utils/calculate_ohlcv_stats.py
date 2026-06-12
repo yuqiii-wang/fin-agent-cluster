@@ -113,7 +113,9 @@ class CalculateOhlcvStatsInput(BaseModel):
     data_type: str = Field(default=STATS_DATA_TYPE.OHLCV.value, description="Payload category: 'ohlcv', 'options', 'futures', etc.")
 
 
-class CalculateOhlcvStatsOutput(BaseModel):
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.models import CalculateStatsBaseOutput
+
+class CalculateOhlcvStatsOutput(CalculateStatsBaseOutput):
     """Output from the calculate_ohlcv_stats handler.
 
     Attributes:
@@ -125,12 +127,11 @@ class CalculateOhlcvStatsOutput(BaseModel):
         stats_views:   Ordered list of applicable stats view types for this task.
     """
 
-    rows_upserted: int
-    symbol: str
     granularity: str
-    source: str
     df_split: dict[str, Any] = Field(default_factory=dict)
-    stats_views: list[str] = Field(default_factory=lambda: [STATS_VIEW_TYPE.CANDLE_STICK.value])
+    stats_views: list[str] = Field(
+        default_factory=lambda: [STATS_VIEW_TYPE.DATA_FRAME.value, STATS_VIEW_TYPE.CANDLE_STICK.value]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +364,7 @@ async def calculate_ohlcv_stats_handler(payload: dict) -> dict:
         granularity=granularity,
         source=source,
         df_split=df_split,
-        stats_views=[STATS_VIEW_TYPE.DATA_FRAME.value],
+        stats_views=[STATS_VIEW_TYPE.DATA_FRAME.value, STATS_VIEW_TYPE.CANDLE_STICK.value],
     ).model_dump()
 
 

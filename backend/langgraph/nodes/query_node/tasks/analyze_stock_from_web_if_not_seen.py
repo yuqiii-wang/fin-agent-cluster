@@ -31,7 +31,7 @@ import logging
 
 from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.func import task
+
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
@@ -44,11 +44,9 @@ logger = logging.getLogger(__name__)
 
 _TASK_NAME = "analyze_stock_from_web_if_not_seen"
 
-
 # ---------------------------------------------------------------------------
 # Intermediate models (task-local)
 # ---------------------------------------------------------------------------
-
 
 class AnalyzeWebStockInput(BaseModel):
     """Input for the ``analyze_stock_from_web_if_not_seen`` streaming task.
@@ -67,7 +65,6 @@ class AnalyzeWebStockInput(BaseModel):
     web_url: str = Field(default="", description="URL of the fetched page.")
     web_content: str = Field(default="", description="Plain-text extract from the fetched page.")
 
-
 class AnalyzeWebStockOutput(BaseModel):
     """Output from the ``analyze_stock_from_web_if_not_seen`` streaming task.
 
@@ -79,7 +76,6 @@ class AnalyzeWebStockOutput(BaseModel):
 
     stock_name: str = Field(description="Confirmed company name or ticker.")
     not_seen: bool = Field(default=False, description="True when the stock could not be identified.")
-
 
 # ---------------------------------------------------------------------------
 # Prompt template (module-level global)
@@ -100,11 +96,9 @@ _ANALYZE_WEB_STOCK_PROMPT = ChatPromptTemplate.from_messages([
      "Based on this information, identify the exact company name and primary stock ticker symbol."),
 ])
 
-
 # ---------------------------------------------------------------------------
 # Streaming prompt builder — imported by stream_task.py
 # ---------------------------------------------------------------------------
-
 
 def _build_analyze_web_stock_prompt(payload: dict) -> list[BaseMessage]:
     """Build the LangChain message list from an ``AnalyzeWebStockInput`` payload dict.
@@ -127,16 +121,12 @@ def _build_analyze_web_stock_prompt(payload: dict) -> list[BaseMessage]:
         web_section=web_section,
     )
 
-
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_analyze_web_stock_prompt}
-
 
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _analyze_stock_from_web_if_not_seen_task(
     task_input: TaskInput[AnalyzeWebStockInput],
 ) -> TaskOutput[AnalyzeWebStockOutput]:
@@ -210,7 +200,6 @@ async def _analyze_stock_from_web_if_not_seen_task(
             failed=True, error=str(exc), view_type="Streaming",
         )
         raise
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

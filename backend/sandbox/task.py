@@ -42,7 +42,6 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
@@ -60,11 +59,9 @@ logger = logging.getLogger(__name__)
 
 _TASK_NAME = "run_sandbox"
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class RunSandboxInput(BaseModel):
     """Input for the run_sandbox task.
@@ -87,7 +84,6 @@ class RunSandboxInput(BaseModel):
         description="Text piped to the process stdin.",
     )
 
-
 class RunSandboxOutput(BaseModel):
     """Output from the run_sandbox task.
 
@@ -103,11 +99,9 @@ class RunSandboxOutput(BaseModel):
     exit_code: int = Field(description="Process exit code; 0 = success.")
     timed_out: bool = Field(default=False, description="True if killed by timeout.")
 
-
 # ---------------------------------------------------------------------------
 # Celery layer — business logic
 # ---------------------------------------------------------------------------
-
 
 async def _handler(payload: dict) -> dict:
     """Validate and execute a sandboxed script.
@@ -159,13 +153,10 @@ async def _handler(payload: dict) -> dict:
         timed_out=result.timed_out,
     ).model_dump()
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _run_sandbox_task(
     task_input: TaskInput[RunSandboxInput],
 ) -> TaskOutput[RunSandboxOutput]:
@@ -205,11 +196,9 @@ async def _run_sandbox_task(
     output = RunSandboxOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
 
-
 # ---------------------------------------------------------------------------
 # NodeTask registration
 # ---------------------------------------------------------------------------
-
 
 run_sandbox = NodeTask(
     name=_TASK_NAME,

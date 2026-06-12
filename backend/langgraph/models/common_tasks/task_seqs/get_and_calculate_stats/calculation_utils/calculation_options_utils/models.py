@@ -218,7 +218,9 @@ class VolSmileExpiry(BaseModel):
     points: list[VolSmilePoint]
 
 
-class CalculateOptionStatsOutput(BaseModel):
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.models import CalculateStatsBaseOutput
+
+class CalculateOptionStatsOutput(CalculateStatsBaseOutput):
     """Output from the calculate_option_stats handler.
 
     The volatility smile visualization displays two key metrics for each strike price:
@@ -241,9 +243,6 @@ class CalculateOptionStatsOutput(BaseModel):
         vol_smile:           Per-expiry volatility smile data with IV and cost for calls/puts.
     """
 
-    rows_upserted: int
-    symbol: str
-    source: str
     contracts_upserted: int
     contracts_skipped: int
     expiries_aggregated: int

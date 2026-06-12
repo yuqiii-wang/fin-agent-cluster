@@ -100,9 +100,25 @@ async def get_latest_sibling_node_version(
         Highest completed version, or ``None`` if no completed version exists.
         ``None`` signals the caller that the sibling has never completed and
         must run fresh rather than taking the shortcut path.
+        Also returns ``None`` if any version of this node is currently running
+        or pending, to avoid overwriting in-progress executions.
     """
     try:
         async with raw_conn(readonly=True) as conn:
+            # First, check if any version of this node is currently running or pending
+            cur = await conn.execute(
+                "SELECT 1"
+                " FROM fin_agents.nodes"
+                " WHERE thread_id = %s AND node_name = %s"
+                " AND status IN ('running', 'pending')"
+                " LIMIT 1",
+                (thread_id, node_name),
+            )
+            row = await cur.fetchone()
+            if row:
+                return None  # Node is currently running or pending, don't take shortcut
+
+            # Then get the latest completed version
             cur = await conn.execute(
                 "SELECT MAX(version) AS v"
                 " FROM fin_agents.nodes"

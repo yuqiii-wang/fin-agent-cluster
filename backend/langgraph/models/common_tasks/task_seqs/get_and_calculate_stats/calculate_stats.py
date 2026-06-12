@@ -28,10 +28,9 @@ Public exports
 
 from __future__ import annotations
 
-from langgraph.func import task
-
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.langgraph.lifecycle import complete_task, create_task
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.models import CalculateStatsBaseOutput
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_ohlcv_stats import (
     CalculateOhlcvStatsInput,
     CalculateOhlcvStatsOutput,
@@ -50,13 +49,11 @@ _TASK_NAME = "calculate_stats"
 
 # Public aliases so existing importers of CalculateStatsInput/Output continue to work.
 CalculateStatsInput = CalculateOhlcvStatsInput
-CalculateStatsOutput = CalculateOhlcvStatsOutput
-
+CalculateStatsOutput = CalculateStatsBaseOutput
 
 # ---------------------------------------------------------------------------
 # Celery layer — entry dispatcher
 # ---------------------------------------------------------------------------
-
 
 async def _handler(payload: dict) -> dict:
     """Dispatch the calculate_stats payload to the appropriate instrument handler.
@@ -88,16 +85,13 @@ async def _handler(payload: dict) -> dict:
             granularity="",
             source="",
             df_split={},
-            stats_views=[STATS_VIEW_TYPE.DATA_FRAME.value],
+            stats_views=[STATS_VIEW_TYPE.DATA_FRAME.value, STATS_VIEW_TYPE.CANDLE_STICK.value],
         ).model_dump()
-
 
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _calculate_stats_task(
     task_input: TaskInput[CalculateStatsInput],
 ) -> TaskOutput[CalculateStatsOutput]:
@@ -133,14 +127,10 @@ async def _calculate_stats_task(
     # Validate against the correct output model based on data_type
     data_type = payload.get("data_type", STATS_DATA_TYPE.OHLCV.value)
     if data_type == STATS_DATA_TYPE.OPTIONS.value:
-        from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_option_stats import (
-            CalculateOptionStatsOutput,
-        )
         output = CalculateOptionStatsOutput.model_validate(result)
     else:
-        output = CalculateStatsOutput.model_validate(result)
+        output = CalculateOhlcvStatsOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

@@ -34,7 +34,6 @@ import json
 import logging
 from typing import Any
 
-from langgraph.func import task
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
@@ -53,11 +52,9 @@ logger = logging.getLogger(__name__)
 
 _TASK_NAME = "do_emb"
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class DoEmbInput(BaseModel):
     """Input for the do_emb task.
@@ -75,7 +72,6 @@ class DoEmbInput(BaseModel):
         default_factory=list,
         description="Raw article dicts from get_news output.",
     )
-
 
 class DoEmbOutput(BaseModel):
     """Output from the do_emb task.
@@ -97,7 +93,6 @@ class DoEmbOutput(BaseModel):
     )
     from_cache: bool = Field(default=False, description="True when loaded from existing news_stats rows.")
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -110,7 +105,6 @@ _PROJECTION_SEED = 42
 # Module-level cache: src_dim → (src_dim × TARGET_DIM) projection matrix.
 # Populated lazily on first call per unique source dimension.
 _PROJECTION_CACHE: dict[int, Any] = {}
-
 
 def _get_projection_matrix(src_dim: int) -> Any:
     """Return (or build) the fixed random Gaussian projection matrix for *src_dim*.
@@ -136,7 +130,6 @@ def _get_projection_matrix(src_dim: int) -> Any:
         mat /= col_norms
         _PROJECTION_CACHE[src_dim] = mat
     return _PROJECTION_CACHE[src_dim]
-
 
 def _unify_dim(vec: list[float]) -> list[float]:
     """Unify an embedding vector to :data:`_TARGET_DIM` (768) dimensions.
@@ -178,17 +171,14 @@ def _unify_dim(vec: list[float]) -> list[float]:
         projected = projected / norm
     return projected.tolist()
 
-
 # ---------------------------------------------------------------------------
 # Celery handler
 # ---------------------------------------------------------------------------
-
 
 def _url_hash(url: str | None, title: str) -> str:
     """Compute sha256 of URL, falling back to title when url is absent."""
     key = url or title
     return hashlib.sha256(key.encode()).hexdigest()
-
 
 async def _handler(payload: dict) -> dict:
     """Celery-layer business logic for do_emb.
@@ -234,11 +224,9 @@ async def _handler(payload: dict) -> dict:
 
     return DoEmbOutput(embeddings=embeddings, skipped_count=skipped_count).model_dump(mode="json")
 
-
 # ---------------------------------------------------------------------------
 # PG cache function
 # ---------------------------------------------------------------------------
-
 
 async def _do_emb_pg_cache(
     inp: DoEmbInput, ctx: NodeContext
@@ -274,13 +262,10 @@ async def _do_emb_pg_cache(
         return None
     return DoEmbOutput(embeddings=cached_embeddings, from_cache=True)
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _do_emb_task(
     task_input: TaskInput[DoEmbInput],
 ) -> TaskOutput[DoEmbOutput]:
@@ -318,7 +303,6 @@ async def _do_emb_task(
         raise
     output = DoEmbOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 do_emb: NodeTask[DoEmbInput, DoEmbOutput] = NodeTask(
     name=_TASK_NAME,

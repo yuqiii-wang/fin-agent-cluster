@@ -8,7 +8,6 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any, Optional, Sequence, Union
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
@@ -24,6 +23,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from backend.config import get_settings
 from backend.httpx_client import ConnectError, TimeoutException, make_ollama_async_client, make_ollama_sync_client
+from backend.llm.providers.base_llm import BaseLLM
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ def _to_ollama_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     return result
 
 
-class OllamaLLM(BaseChatModel):
+class OllamaLLM(BaseLLM):
     """Ollama chat model using pure HTTP streaming.
 
     Streams tokens from the Ollama ``/api/chat`` endpoint via httpx NDJSON.
@@ -165,7 +165,8 @@ class OllamaLLM(BaseChatModel):
         Returns:
             ``ChatResult`` wrapping the full assistant message.
         """
-        ollama_messages = _to_ollama_messages(messages)
+        normalized_messages = self._normalize_messages(messages)
+        ollama_messages = _to_ollama_messages(normalized_messages)
         options: dict[str, Any] = {"num_gpu": self.num_gpu}
         if stop:
             options["stop"] = stop
@@ -270,7 +271,8 @@ class OllamaLLM(BaseChatModel):
         Yields:
             ChatGenerationChunk for each non-empty content or thinking token.
         """
-        ollama_messages = _to_ollama_messages(messages)
+        normalized_messages = self._normalize_messages(messages)
+        ollama_messages = _to_ollama_messages(normalized_messages)
         options: dict[str, Any] = {"num_gpu": self.num_gpu}
         if stop:
             options["stop"] = stop

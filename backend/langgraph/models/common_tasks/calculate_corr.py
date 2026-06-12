@@ -41,7 +41,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
-from langgraph.func import task
+
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
@@ -74,11 +74,9 @@ _GRANULARITY_CALENDAR_DAYS: dict[str, float] = {
 
 _MIN_BARS_FOR_CORR = 2
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class CalculateCorrInput(BaseModel):
     """Input for the calculate_corr task.
@@ -92,7 +90,6 @@ class CalculateCorrInput(BaseModel):
     symbols: list[str] = Field(min_length=2, description="Equity tickers to correlate.")
     granularity: str = Field(description="Bar granularity: '1h', '1day', '1mo', etc.")
     window_bars: int = Field(default=252, ge=2, description="Lookback bar count per symbol.")
-
 
 class CalculateCorrOutput(BaseModel):
     """Output from the calculate_corr task.
@@ -127,11 +124,9 @@ class CalculateCorrOutput(BaseModel):
         description="Stats view types to render for this task output.",
     )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _lookback_start(granularity: str, window_bars: int) -> datetime:
     """Compute the earliest bar_time to query given a granularity and bar count.
@@ -149,7 +144,6 @@ def _lookback_start(granularity: str, window_bars: int) -> datetime:
     cal_days_per_bar = _GRANULARITY_CALENDAR_DAYS.get(granularity, 1.4)
     total_days = max(30.0, cal_days_per_bar * window_bars * 2)
     return datetime.now(timezone.utc) - timedelta(days=total_days)
-
 
 async def _fetch_close_series(symbol: str, granularity: str, start_dt: datetime) -> pd.Series:
     """Query close prices for *symbol* from ``quant_stats`` and return as a Series.
@@ -175,10 +169,8 @@ async def _fetch_close_series(symbol: str, granularity: str, start_dt: datetime)
     closes = [float(row["close"]) if row["close"] is not None else float("nan") for row in rows]
     return pd.Series(closes, index=pd.DatetimeIndex(bar_times), name=symbol)
 
-
 # SMA/EMA indicator columns fetched for cross-symbol correlation.
 _SMA_EMA_COLS: tuple[str, ...] = ("sma_20", "sma_50", "ema_12", "ema_26")
-
 
 async def _fetch_sma_ema_series(
     symbol: str, granularity: str, start_dt: datetime
@@ -217,11 +209,9 @@ async def _fetch_sma_ema_series(
         for col in _SMA_EMA_COLS
     }
 
-
 # ---------------------------------------------------------------------------
 # Celery layer — business logic
 # ---------------------------------------------------------------------------
-
 
 async def _handler(payload: dict) -> dict:
     """Fetch close-price and SMA/EMA series for all symbols and compute Pearson correlation matrices.
@@ -304,13 +294,10 @@ async def _handler(payload: dict) -> dict:
         df_split=df_split,
     ).model_dump()
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _calculate_corr_task(
     task_input: TaskInput[CalculateCorrInput],
 ) -> TaskOutput[CalculateCorrOutput]:
@@ -344,7 +331,6 @@ async def _calculate_corr_task(
 
     output = CalculateCorrOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

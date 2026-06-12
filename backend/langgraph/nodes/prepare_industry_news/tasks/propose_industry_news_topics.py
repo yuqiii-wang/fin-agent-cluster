@@ -31,7 +31,7 @@ import logging
 
 from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.func import task
+
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
@@ -74,7 +74,6 @@ _GET_CACHED_LLM_RESPONSE = """
 # Input / output models
 # ---------------------------------------------------------------------------
 
-
 class ProposeIndustryNewsTopicsInput(BaseModel):
     """Input for the propose_industry_news_topics task.
 
@@ -83,7 +82,6 @@ class ProposeIndustryNewsTopicsInput(BaseModel):
     """
 
     stock_name: str = Field(description="Company name or stock ticker.")
-
 
 class ProposeIndustryNewsTopicsOutput(BaseModel):
     """Output from the propose_industry_news_topics task.
@@ -98,7 +96,6 @@ class ProposeIndustryNewsTopicsOutput(BaseModel):
         default_factory=list,
         description="5–8 industry-specific news topic keywords.",
     )
-
 
 # ---------------------------------------------------------------------------
 # Prompt template (module-level global)
@@ -125,11 +122,9 @@ _PROPOSE_INDUSTRY_NEWS_TOPICS_PROMPT = ChatPromptTemplate.from_messages([
      "Identify the industry and propose industry news topics for: {stock_name}"),
 ])
 
-
 # ---------------------------------------------------------------------------
 # Streaming prompt builder — imported by stream_task.py
 # ---------------------------------------------------------------------------
-
 
 def _build_propose_industry_news_topics_prompt(payload: dict) -> list[BaseMessage]:
     """Build the LangChain message list for propose_industry_news_topics.
@@ -145,14 +140,11 @@ def _build_propose_industry_news_topics_prompt(payload: dict) -> list[BaseMessag
         stock_name=inp.stock_name,
     )
 
-
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_propose_industry_news_topics_prompt}
-
 
 # ---------------------------------------------------------------------------
 # PG cache function
 # ---------------------------------------------------------------------------
-
 
 async def _propose_industry_news_topics_pg_cache(
     inp: ProposeIndustryNewsTopicsInput, ctx: NodeContext
@@ -187,13 +179,10 @@ async def _propose_industry_news_topics_pg_cache(
         return None
     return ProposeIndustryNewsTopicsOutput(industry=industry, topics=topics)
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _propose_industry_news_topics_task(
     task_input: TaskInput[ProposeIndustryNewsTopicsInput],
 ) -> TaskOutput[ProposeIndustryNewsTopicsOutput]:
@@ -248,7 +237,6 @@ async def _propose_industry_news_topics_task(
             failed=True, error=str(exc), view_type="Streaming",
         )
         raise
-
 
 # ---------------------------------------------------------------------------
 # NodeTask instance — imported by PrepareIndustryNewsNode

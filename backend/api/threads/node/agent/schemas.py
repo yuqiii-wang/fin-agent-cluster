@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from backend.langgraph.agent.memory.models import TaskMemory
+from backend.langgraph.agent.memory import MemoryItem
 from backend.langgraph.agent.skills.models import Skill
 
 
@@ -36,8 +36,8 @@ class AgentCapabilitiesResponse(BaseModel):
     skills: list[Skill]
     """User-defined active skills attached to this node execution."""
 
-    memory: list[TaskMemory]
-    """Completed task outputs from this node execution, used as memory."""
+    memory: list[MemoryItem]
+    """Memory entries from ``fin_agents.agent_memory`` for this node execution."""
 
 
 __all__ = [

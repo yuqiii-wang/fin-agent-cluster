@@ -24,7 +24,7 @@ import logging
 
 from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.func import task
+
 from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_stream
@@ -37,11 +37,9 @@ logger = logging.getLogger(__name__)
 
 _TASK_NAME = "analyze_query"
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class AnalyzeQueryInput(BaseModel):
     """Input for the analyze_query task.
@@ -51,7 +49,6 @@ class AnalyzeQueryInput(BaseModel):
     """
 
     query: str = Field(description="Raw user query string.")
-
 
 class AnalyzeQueryOutput(BaseModel):
     """Output from the analyze_query task.
@@ -64,7 +61,6 @@ class AnalyzeQueryOutput(BaseModel):
 
     stock_name: str = Field(description="Company name or stock ticker extracted from the query.")
     not_seen: bool = Field(default=False, description="True when the LLM does not recognise the stock.")
-
 
 # ---------------------------------------------------------------------------
 # Prompt template (module-level global)
@@ -83,11 +79,9 @@ _ANALYZE_QUERY_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "Query: {query}"),
 ])
 
-
 # ---------------------------------------------------------------------------
 # Streaming prompt builder — imported by stream_task.py
 # ---------------------------------------------------------------------------
-
 
 def _build_analyze_query_prompt(payload: dict) -> list[BaseMessage]:
     """Build the LangChain message list for analyze_query from a serialised AnalyzeQueryInput.
@@ -101,16 +95,12 @@ def _build_analyze_query_prompt(payload: dict) -> list[BaseMessage]:
     inp = AnalyzeQueryInput.model_validate(payload)
     return _ANALYZE_QUERY_PROMPT.format_messages(query=inp.query)
 
-
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_analyze_query_prompt}
-
 
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _analyze_query_task(
     task_input: TaskInput[AnalyzeQueryInput],
 ) -> TaskOutput[AnalyzeQueryOutput]:
@@ -163,7 +153,6 @@ async def _analyze_query_task(
             failed=True, error=str(exc), view_type="Streaming",
         )
         raise
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

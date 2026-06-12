@@ -38,7 +38,6 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-from langgraph.func import task
 from pydantic import BaseModel, Field, field_validator
 
 from backend.celery_task.workers.task_delegation import delegate_completion
@@ -58,11 +57,9 @@ _TASK_NAME = "pdf_to_markdown"
 # Single shared executor — markitdown conversion is CPU-bound (pdfminer under the hood).
 _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pdf_convert")
 
-
 # ---------------------------------------------------------------------------
 # Input / output models
 # ---------------------------------------------------------------------------
-
 
 class PdfToMarkdownInput(BaseModel):
     """Input for the pdf_to_markdown task.
@@ -82,7 +79,6 @@ class PdfToMarkdownInput(BaseModel):
             raise ValueError("source must not be empty")
         return v
 
-
 class PdfToMarkdownOutput(BaseModel):
     """Output from the pdf_to_markdown task.
 
@@ -96,11 +92,9 @@ class PdfToMarkdownOutput(BaseModel):
     char_count: int = Field(description="Character count of the extracted markdown.")
     source: str = Field(description="Input source that was converted.")
 
-
 # ---------------------------------------------------------------------------
 # Celery layer — business logic
 # ---------------------------------------------------------------------------
-
 
 def _convert(source: str) -> str:
     """Run markitdown conversion synchronously (called inside a thread executor).
@@ -132,7 +126,6 @@ def _convert(source: str) -> str:
     except Exception as exc:
         raise RuntimeError(f"[{PDF_TASK_CONVERT_ERROR}] markitdown conversion failed: {exc}") from exc
 
-
 async def _handler(payload: dict) -> dict:
     """Convert a PDF to Markdown in a thread executor.
 
@@ -156,13 +149,10 @@ async def _handler(payload: dict) -> dict:
         source=inp.source,
     ).model_dump()
 
-
 # ---------------------------------------------------------------------------
 # LangGraph layer — @task orchestration
 # ---------------------------------------------------------------------------
 
-
-@task
 async def _pdf_to_markdown_task(
     task_input: TaskInput[PdfToMarkdownInput],
 ) -> TaskOutput[PdfToMarkdownOutput]:
@@ -196,7 +186,6 @@ async def _pdf_to_markdown_task(
 
     output = PdfToMarkdownOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)
-
 
 # ---------------------------------------------------------------------------
 # NodeTask registration

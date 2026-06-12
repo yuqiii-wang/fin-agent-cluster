@@ -8,10 +8,10 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any, Optional
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 
+from backend.llm.providers.base_llm import BaseLLM
 from backend.llm.providers.mock_llm.word_pool import (
     SEMANTIC_DURATION_SECS,
     SEMANTIC_TOKENS_PER_SEC,
@@ -23,7 +23,7 @@ def _chunk(content: str) -> ChatGenerationChunk:
     return ChatGenerationChunk(message=AIMessageChunk(content=content))
 
 
-class MockLLM(BaseChatModel):
+class MockLLM(BaseLLM):
     """Streaming mock chat model.
 
     Emits AAPL-related tokens at the configured rate for the configured duration.
@@ -59,6 +59,8 @@ class MockLLM(BaseChatModel):
         stop: Optional[list[str]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
+        # Normalize messages even though we don't use them in MockLLM
+        self._normalize_messages(messages)
         yield _chunk("<think>")
         await asyncio.sleep(0)
 
