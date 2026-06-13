@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from backend.httpx_client import AsyncBaseTransport, Request, Response
+from _shared.httpx_client import AsyncBaseTransport, Request, Response
 from backend.resources.stats.mock.stats import MOCK_STATS
 
 

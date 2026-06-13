@@ -14,7 +14,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from backend.config import get_settings
-from backend.httpx_client import AsyncClient, make_internal_async_client
+from _shared.httpx_client import AsyncClient, make_internal_async_client
 
 logger = logging.getLogger(__name__)
 

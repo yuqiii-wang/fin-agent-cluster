@@ -33,7 +33,7 @@ import logging
 from typing import Optional
 
 from backend.config import get_settings
-from backend.httpx_client import AsyncClient, make_fmp_async_client, make_mock_transport_async_client
+from _shared.httpx_client import AsyncClient, make_fmp_async_client, make_mock_transport_async_client
 from backend.resources.stats.errors import STATS_AKSHARE_EMPTY, STATS_FMP_EMPTY, STATS_YFINANCE_EMPTY
 from backend.resources.stats.mock.transport import MockStatsTransport
 from backend.resources.stats.models import StatsListResponse, StatsRecord

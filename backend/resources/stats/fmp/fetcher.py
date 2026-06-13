@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
-from backend.httpx_client import AsyncClient, HTTPError
+from _shared.httpx_client import AsyncClient, HTTPError
 from backend.resources.stats.errors import (
     STATS_FMP_AUTH_ERROR,
     STATS_FMP_EMPTY,

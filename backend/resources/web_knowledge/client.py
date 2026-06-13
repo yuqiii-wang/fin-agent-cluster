@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 
 from backend.config import get_settings
-from backend.httpx_client import HTTPStatusError, RequestError, make_web_browser_async_client
+from _shared.httpx_client import HTTPStatusError, RequestError, make_web_browser_async_client
 from backend.resources.web_knowledge.errors import WK_EMPTY_RESPONSE, WK_FETCH_FAILED
 from backend.resources.web_knowledge.models import WebPageResponse, WebPageType
 from backend.resources.web_knowledge.urls import build_url

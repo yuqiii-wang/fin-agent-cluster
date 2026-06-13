@@ -21,9 +21,9 @@ def select_llm(query: str) -> Any:
         attributes carry metadata for DB storage.
     """
     import re
-    from backend.llm.factory import get_llm
-    from backend.llm.providers.mock_llm import get_mock_llm
-    from backend.llm.providers.mock_llm.word_pool import SEMANTIC_DURATION_SECS, SEMANTIC_TOKENS_PER_SEC
+    from _shared.llm.factory import get_llm
+    from _shared.llm.providers.mock_llm import get_mock_llm
+    from _shared.llm.providers.mock_llm.word_pool import SEMANTIC_DURATION_SECS, SEMANTIC_TOKENS_PER_SEC
 
     if query.startswith("semantic test") or query.startswith("concurrency test"):
         _tps_m = re.search(r"\btps=(\d+(?:\.\d+)?)", query)

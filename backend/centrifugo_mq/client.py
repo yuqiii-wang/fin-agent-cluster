@@ -39,7 +39,7 @@ from typing import Any
 
 from backend.centrifugo_mq.errors import CENTRIFUGO_NO_NODES, CENTRIFUGO_PUBLISH_FAILED
 from backend.config import get_settings
-from backend.httpx_client import (
+from _shared.httpx_client import (
     AsyncClient,
     ConnectError,
     ReadError,

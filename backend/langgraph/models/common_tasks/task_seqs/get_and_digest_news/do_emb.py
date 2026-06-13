@@ -46,7 +46,7 @@ from backend.langgraph.models.common_tasks.errors.codes import (
 )
 from backend.langgraph.models.models import NodeContext, TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
-from backend.llm.factory import get_embedder
+from _shared.llm.factory import get_embedder
 
 logger = logging.getLogger(__name__)
 

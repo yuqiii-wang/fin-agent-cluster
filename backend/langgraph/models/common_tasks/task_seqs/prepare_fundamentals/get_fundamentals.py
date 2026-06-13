@@ -184,7 +184,7 @@ async def _handler(payload: dict) -> dict:
 
         try:
             if provider == "fmp":
-                from backend.httpx_client import make_fmp_async_client
+                from _shared.httpx_client import make_fmp_async_client
                 from backend.resources.stats.fmp.fundamentals_fetcher import fetch as fmp_fetch
                 settings = get_settings()
                 async with make_fmp_async_client(settings.FMP_API_KEY) as http:

@@ -26,7 +26,7 @@ from backend.config import get_settings
 from backend.resources.news.errors import NEWS_NO_RESULTS, NEWS_SEARCH_FAILED
 from backend.resources.news.fmp.fetcher import fetch as fmp_fetch
 from backend.resources.news.models import InfoResult, NewsArticle, NewsListResponse
-from backend.httpx_client import make_fmp_async_client
+from _shared.httpx_client import make_fmp_async_client
 
 logger = logging.getLogger(__name__)
 

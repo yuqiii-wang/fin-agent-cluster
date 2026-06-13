@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field, field_validator
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.db.postgres import raw_conn
 from backend.db.postgres.queries.fin_markets_input_raw import InputRawSQL
-from backend.httpx_client import RequestError, make_web_browser_async_client
+from _shared.httpx_client import RequestError, make_web_browser_async_client
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import (
     WEB_TASK_FETCH_ERROR,

@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from backend.httpx_client import AsyncClient
+from _shared.httpx_client import AsyncClient
 from backend.resources.news.errors import (
     NEWS_FMP_AUTH_ERROR,
     NEWS_FMP_EMPTY,
