@@ -152,7 +152,7 @@ class OhlcvStatsSQL:
         """Build a parameterised SELECT for the given whitelisted indicator columns.
 
         Column names must be pre-validated against the allowed whitelist by the
-        caller before passing here — this method does no sanitisation itself.
+        caller before passing here -- this method does no sanitisation itself.
 
         Args:
             columns: List of validated ``quant_stats`` column names to fetch,
@@ -265,7 +265,7 @@ class CryptoStatsSQL:
     """Queries against ``fin_markets.quant_stats`` for crypto (instrument_type='crypto').
 
     Used for cryptocurrency spot pairs (e.g. ``'BTC-USD'``, ``'ETH-USD'``).
-    Column set is identical to :class:`OhlcvStatsSQL` — full OHLCV + all technicals.
+    Column set is identical to :class:`OhlcvStatsSQL` -- full OHLCV + all technicals.
     """
 
     UPSERT = """
@@ -347,7 +347,7 @@ class CommodityStatsSQL:
     """Queries against ``fin_markets.quant_stats`` for commodity futures (instrument_type='commodity').
 
     Used for commodity futures tickers (e.g. ``'GC=F'``, ``'CL=F'``, ``'NG=F'``, ``'SI=F'``).
-    Column set is identical to :class:`OhlcvStatsSQL` — full OHLCV + all technicals.
+    Column set is identical to :class:`OhlcvStatsSQL` -- full OHLCV + all technicals.
     """
 
     UPSERT = """
@@ -429,7 +429,7 @@ class PreciousMetalStatsSQL:
     """Queries against ``fin_markets.quant_stats`` for precious metals (instrument_type='precious_metal').
 
     Used for precious metal futures tickers (e.g. ``'GC=F'`` gold, ``'SI=F'`` silver).
-    Column set is identical to :class:`OhlcvStatsSQL` — full OHLCV + all technicals.
+    Column set is identical to :class:`OhlcvStatsSQL` -- full OHLCV + all technicals.
     """
 
     UPSERT = """

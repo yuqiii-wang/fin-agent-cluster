@@ -1,4 +1,4 @@
-"""dummy_task — placeholder NodeTask that runs until parent signals completion.
+"""dummy_task -- placeholder NodeTask that runs until parent signals completion.
 
 Useful for visually bracketing long-running operations in the UI without a real task
 that are not Celery-dispatched. The task enters a 100-ms sleep loop and exits

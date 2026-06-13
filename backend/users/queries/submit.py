@@ -1,4 +1,4 @@
-"""backend.users.queries.submit — submit_query handler."""
+"""backend.users.queries.submit -- submit_query handler."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""backend.langgraph.lifecycle.pause_flag — Redis-backed task pause flags.
+"""backend.langgraph.lifecycle.pause_flag -- Redis-backed task pause flags.
 
 Key schema
 ----------
@@ -15,11 +15,11 @@ specific task's worker should stop.
 
 Public API
 ----------
-:func:`set_task_pause_flag`      — called by pause_task_by_uuid().
-:func:`is_task_pause_flag_set`   — polled by the stream Celery worker.
-:func:`clear_task_pause_flag`    — called by retry_task before retry dispatch.
-:func:`save_task_pause_snapshot` — persist partial stream thinking content.
-:func:`get_task_pause_snapshot`  — retrieve saved partial thinking content.
+:func:`set_task_pause_flag`      -- called by pause_task_by_uuid().
+:func:`is_task_pause_flag_set`   -- polled by the stream Celery worker.
+:func:`clear_task_pause_flag`    -- called by retry_task before retry dispatch.
+:func:`save_task_pause_snapshot` -- persist partial stream thinking content.
+:func:`get_task_pause_snapshot`  -- retrieve saved partial thinking content.
 """
 
 from __future__ import annotations

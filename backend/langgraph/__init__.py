@@ -2,10 +2,10 @@
 
 Public API
 ----------
-:func:`run_analysis`      — run the full graph for one user query.
-:data:`fin_analysis_graph` — pre-compiled graph (no checkpointer).
+:func:`run_analysis`      -- run the full graph for one user query.
+:data:`fin_analysis_graph` -- pre-compiled graph (no checkpointer).
 
-Hierarchy: Thread → Node → Task
+Hierarchy: Thread -> Node -> Task
   - Thread  = one ``run_analysis`` invocation (one ``thread_id``)
   - Node    = one LangGraph node function (query_node, research_subgraph,
               stats_node, news_node, merge_node, conclusion_node)

@@ -2,10 +2,10 @@
 
 Error code prefixes
 -------------------
-``API_QUERY_``   — User query lifecycle errors (not found, status conflict).
-``API_TASK_``    — Agent task control errors.
-``API_QUANT_``   — Quant stats / indicator endpoint errors.
-``API_REPORT_``  — Report retrieval errors.
+``API_QUERY_``   -- User query lifecycle errors (not found, status conflict).
+``API_TASK_``    -- Agent task control errors.
+``API_QUANT_``   -- Quant stats / indicator endpoint errors.
+``API_REPORT_``  -- Report retrieval errors.
 """
 
 from __future__ import annotations

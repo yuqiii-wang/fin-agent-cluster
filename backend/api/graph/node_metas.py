@@ -1,4 +1,4 @@
-"""Node metadata endpoint helpers — GET /api/v1/graph/node-metas.
+"""Node metadata endpoint helpers -- GET /api/v1/graph/node-metas.
 
 Returns structured metadata for every production graph node plus a
 ``__global__`` virtual entry that represents graph-wide defaults.
@@ -49,7 +49,7 @@ class NodeMetaResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# __global__ entry — represents graph-wide default preferences
+# __global__ entry -- represents graph-wide default preferences
 # ---------------------------------------------------------------------------
 
 _GLOBAL_META = NodeMetaResponse(

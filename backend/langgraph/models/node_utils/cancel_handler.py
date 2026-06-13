@@ -1,4 +1,4 @@
-"""CancelHandlerMixin — node/thread cancellation with cascade logic."""
+"""CancelHandlerMixin -- node/thread cancellation with cascade logic."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ class CancelHandlerMixin:
 
         Called when a merge/join node detects that one of its required
         predecessors was cancelled.  Performs:
-        1. ``cancel_node`` — DB + SSE (node is already 'running' from upsert_node).
-        2. Thread-level cascade — if no active top-level nodes remain, cancels
+        1. ``cancel_node`` -- DB + SSE (node is already 'running' from upsert_node).
+        2. Thread-level cascade -- if no active top-level nodes remain, cancels
            the thread (sets Redis cancel flag + DB status).
         3. Returns a ``cancelled`` state delta so LangGraph can finish the
            graph cleanly without raising.
@@ -49,7 +49,7 @@ class CancelHandlerMixin:
         from backend.langgraph.lifecycle import cancel_thread as _lc_cancel_thread
         from backend.langgraph.lifecycle.cancel_flag import set_cancel_flag
 
-        # 1. Cancel in lifecycle (DB → 'cancelled', SSE emitted).
+        # 1. Cancel in lifecycle (DB -> 'cancelled', SSE emitted).
         try:
             await _lc_cancel_node(thread_id, node_id, reason=reason)
         except Exception as exc:
@@ -77,7 +77,7 @@ class CancelHandlerMixin:
                 thread_id, exc,
             )
 
-        # 3. Return cancelled state delta — do not raise.
+        # 3. Return cancelled state delta -- do not raise.
         cancelled_record = self._build_node_record(node_id, version, prev_node_ids, "cancelled")  # type: ignore[attr-defined]
         return {"nodes": {node_id: cancelled_record}}
 
@@ -93,8 +93,8 @@ class CancelHandlerMixin:
 
         Called when a workflow node detects that one of its required predecessors
         failed.  Performs:
-        1. ``complete_node(failed=True)`` — DB + SSE.
-        2. Thread-level cascade — if no active top-level nodes remain, fails
+        1. ``complete_node(failed=True)`` -- DB + SSE.
+        2. Thread-level cascade -- if no active top-level nodes remain, fails
            the thread (DB status + SSE).
         3. Returns a ``failed`` state delta so LangGraph can finish the graph
            cleanly without raising.
@@ -113,7 +113,7 @@ class CancelHandlerMixin:
         from backend.langgraph.lifecycle import complete_node as _lc_complete_node
         from backend.langgraph.lifecycle import complete_thread as _lc_complete_thread
 
-        # 1. Fail in lifecycle (DB → 'failed', SSE emitted).
+        # 1. Fail in lifecycle (DB -> 'failed', SSE emitted).
         try:
             await _lc_complete_node(
                 thread_id=thread_id,
@@ -146,7 +146,7 @@ class CancelHandlerMixin:
                 thread_id, exc,
             )
 
-        # 3. Return failed state delta — do not raise.
+        # 3. Return failed state delta -- do not raise.
         failed_record = self._build_node_record(node_id, version, prev_node_ids, "failed")  # type: ignore[attr-defined]
         return {"nodes": {node_id: failed_record}}
 

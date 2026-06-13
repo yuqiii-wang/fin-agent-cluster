@@ -1,4 +1,4 @@
-"""pdf_to_markdown — NodeTask: convert a PDF file or URL to Markdown using markitdown.
+"""pdf_to_markdown -- NodeTask: convert a PDF file or URL to Markdown using markitdown.
 
 Accepts either a local file path or an HTTP/HTTPS URL pointing to a PDF document
 and returns the full Markdown text extracted by
@@ -8,7 +8,7 @@ Design notes
 ------------
 * markitdown is used as the conversion engine; it preserves headings, tables,
   lists, and inline formatting better than plain text extractors.
-* No DB persistence — this is a pure in-process transform task.
+* No DB persistence -- this is a pure in-process transform task.
 * The Celery layer runs synchronously inside an async executor so that the
   blocking markitdown I/O does not stall the event loop.
 
@@ -25,10 +25,10 @@ Celery layer (``_handler``):
 
 Public exports
 --------------
-``pdf_to_markdown``      — ``NodeTask`` instance.
-``PdfToMarkdownInput``   — Pydantic input model.
-``PdfToMarkdownOutput``  — Pydantic output model.
-``HANDLERS``             — dict slice for ``backend.langgraph.nodes.HANDLERS``.
+``pdf_to_markdown``      -- ``NodeTask`` instance.
+``PdfToMarkdownInput``   -- Pydantic input model.
+``PdfToMarkdownOutput``  -- Pydantic output model.
+``HANDLERS``             -- dict slice for ``backend.langgraph.nodes.HANDLERS``.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 _TASK_NAME = "pdf_to_markdown"
 
-# Single shared executor — markitdown conversion is CPU-bound (pdfminer under the hood).
+# Single shared executor -- markitdown conversion is CPU-bound (pdfminer under the hood).
 _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pdf_convert")
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ class PdfToMarkdownOutput(BaseModel):
     source: str = Field(description="Input source that was converted.")
 
 # ---------------------------------------------------------------------------
-# Celery layer — business logic
+# Celery layer -- business logic
 # ---------------------------------------------------------------------------
 
 def _convert(source: str) -> str:
@@ -110,7 +110,7 @@ def _convert(source: str) -> str:
         ValueError:        When *source* is not a valid file path or http/https URL.
         RuntimeError:      When markitdown raises any conversion error.
     """
-    from markitdown import MarkItDown  # deferred import — optional dependency
+    from markitdown import MarkItDown  # deferred import -- optional dependency
 
     is_url = source.startswith("http://") or source.startswith("https://")
     if not is_url:
@@ -150,7 +150,7 @@ async def _handler(payload: dict) -> dict:
     ).model_dump()
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _pdf_to_markdown_task(

@@ -1,4 +1,4 @@
-"""LangGraph models package — node/task identity envelopes and SSE notification bases."""
+"""LangGraph models package -- node/task identity envelopes and SSE notification bases."""
 
 from backend.langgraph.models.models import NodeContext, TaskContext, TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask

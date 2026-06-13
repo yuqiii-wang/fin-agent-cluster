@@ -1,7 +1,7 @@
 """SQL query constants for task-level lifecycle operations."""
 
 # Params: (task_id, thread_id, node_id, node_name, task_name, description, view_type, stats_views, fencing_token, cache_ttl_seconds)
-# ON CONFLICT DO NOTHING because task_id is a UUID4 — duplicates cannot
+# ON CONFLICT DO NOTHING because task_id is a UUID4 -- duplicates cannot
 # occur in normal operation; the guard is a safety net.
 _INSERT_TASK = """
     INSERT INTO fin_agents.tasks
@@ -23,7 +23,7 @@ _INSERT_TASK_EXECUTION = """
 """
 
 # Update task status on completion/failure.
-# cache_ttl_seconds is set to the configured value on success, 0 on failure —
+# cache_ttl_seconds is set to the configured value on success, 0 on failure --
 # so only healthily completed tasks are eligible for cache reuse.
 # Params: (status, cache_ttl_seconds, task_id, thread_id)
 _UPDATE_TASK_COMPLETED = """
@@ -83,7 +83,7 @@ _CLEANUP_ZOMBIE_TASKS = """
 """
 
 # Reset a terminal task back to 'running' for retry.
-# Only transitions from completed/failed/cancelled/paused — guards against double-reset.
+# Only transitions from completed/failed/cancelled/paused -- guards against double-reset.
 # Params: (task_id, thread_id)
 _RESET_TASK_FOR_RETRY = """
     UPDATE fin_agents.tasks

@@ -1,12 +1,12 @@
-"""navigate_web — web navigation tasks: propose URLs, load Markdown, study and extract.
+"""navigate_web -- web navigation tasks: propose URLs, load Markdown, study and extract.
 
 Building blocks
 ---------------
-- ``propose_web_knowledge_urls`` — map an equity symbol to one or more URLs.
-- ``load_md_from_url`` (TaskSeq)  — ``crawl_url`` → ``html_to_markdown``.
-- ``study_web_content``           — streaming LLM: generate a transform script and
+- ``propose_web_knowledge_urls`` -- map an equity symbol to one or more URLs.
+- ``load_md_from_url`` (TaskSeq)  -- ``crawl_url`` -> ``html_to_markdown``.
+- ``study_web_content``           -- streaming LLM: generate a transform script and
                                     detect page barriers (``has_popup``).
-- ``propose_playwright_script``   — streaming LLM: generate a barrier-clearing script.
+- ``propose_playwright_script``   -- streaming LLM: generate a barrier-clearing script.
 
 Hosting AGENT nodes compose these into steps and own failure recovery via
 ``llm_orchestration_on_failure``.

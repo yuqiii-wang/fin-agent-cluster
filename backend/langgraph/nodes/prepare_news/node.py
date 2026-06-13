@@ -1,19 +1,19 @@
-"""PrepareNewsNode — Workflow node that fetches and digests news for the queried stock.
+"""PrepareNewsNode -- Workflow node that fetches and digests news for the queried stock.
 
 Hierarchy
 ---------
 Thread
   └── prepare_news  (Workflow)
-        └── get_and_digest_news  (TaskSeq → get_news + digest_news)  [×1]
+        └── get_and_digest_news  (TaskSeq -> get_news + digest_news)  [×1]
 
 Node design
 -----------
 The node reads ``stock_name`` from the ``query_node`` output, uses it as the
 primary news symbol, and runs the ``get_and_digest_news`` pipeline to:
 
-1. ``get_news``    — fetch latest news via FMP and web-search snippets via
+1. ``get_news``    -- fetch latest news via FMP and web-search snippets via
                      DDGS, cache result in ``fin_markets.input_raw``.
-2. ``digest_news`` — enrich each article with LLM completion (ARK/Doubao),
+2. ``digest_news`` -- enrich each article with LLM completion (ARK/Doubao),
                      embed the AI summary, and upsert to ``fin_markets.news_stats``.
 
 Default topics: ``["earnings", "analyst", "market", "fundamentals"]``.
@@ -21,7 +21,7 @@ Default lookback: 7 calendar days before the run date.
 
 Predecessor
 -----------
-``query_node`` — must be completed before ``prepare_news`` starts.
+``query_node`` -- must be completed before ``prepare_news`` starts.
 Runs in parallel with ``prepare_peers``, ``prepare_macro_stats``, and ``prepare_index``.
 """
 
@@ -80,7 +80,7 @@ class PrepareNewsNode(BaseNode[PrepareNewsInput, PrepareNewsOutput]):
     _prev_node_names: ClassVar[list[str]] = ["query_node"]
 
     async def build_input(self, state: GraphState) -> PrepareNewsInput:
-        """Construct node input — resolves stock symbol from query_node output.
+        """Construct node input -- resolves stock symbol from query_node output.
 
         Args:
             state: Current GraphState.
@@ -161,7 +161,7 @@ class PrepareNewsNode(BaseNode[PrepareNewsInput, PrepareNewsOutput]):
         )
 
     def get_state_updates(self, output: PrepareNewsOutput) -> dict[str, Any]:
-        """No GraphState updates — output stored in node_executions via lifecycle.
+        """No GraphState updates -- output stored in node_executions via lifecycle.
 
         Args:
             output: Completed node output.

@@ -8,7 +8,7 @@ Thread (thread_id)
 
 State design
 ------------
-GraphState carries only graph topology — not domain data.  Actual node/task
+GraphState carries only graph topology -- not domain data.  Actual node/task
 execution payloads (inputs and outputs) are stored in the separate DB tables
 ``fin_agents.node_executions`` and ``fin_agents.task_executions``.
 

@@ -1,4 +1,4 @@
-"""constants.py — Step-name constants for the prepare_derivatives agent steps."""
+"""constants.py -- Step-name constants for the prepare_derivatives agent steps."""
 
 from __future__ import annotations
 

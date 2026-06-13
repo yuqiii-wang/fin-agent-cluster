@@ -2,7 +2,7 @@
 
 Node-local tasks
 ----------------
-``propose_index``  — determines which equity market indexes to analyse
+``propose_index``  -- determines which equity market indexes to analyse
                      (hard-coded defaults + optional stock home index).
 
 Shared task sequences used by this node are provided by the

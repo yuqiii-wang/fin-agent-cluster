@@ -8,13 +8,13 @@ pool (``get_raw_read_pool()``).  When no replica is configured both pools target
 the primary, so the parameter is safe to add without any infrastructure change.
 
 For the default search_path (``fin_markets,fin_agents,public``) connections are
-acquired from the appropriate shared pool — zero TCP overhead per call after
+acquired from the appropriate shared pool -- zero TCP overhead per call after
 pool open.
 
 For non-default search_paths a dedicated connection is opened and closed for
 that call (rare in practice; all hot-path callers use the default).
 
-:func:`pg_retry` — decorator that retries a DB coroutine once on transient
+:func:`pg_retry` -- decorator that retries a DB coroutine once on transient
 ``psycopg.OperationalError`` (covers ``AdminShutdown``, broken-pipe, etc.).
 The pool discards the broken connection automatically; the retry acquires a
 fresh one.
@@ -90,7 +90,7 @@ async def raw_conn(
             Defaults to ``False`` (primary/write pool).
     """
     if search_path == _DEFAULT_SEARCH_PATH:
-        # Hot path: acquire from the appropriate pool — no TCP overhead.
+        # Hot path: acquire from the appropriate pool -- no TCP overhead.
         # Falls back to a direct connection when the pool is not open
         # (e.g. Celery worker processes that never call open_pools()).
         pool = None
@@ -102,7 +102,7 @@ async def raw_conn(
                 from backend.db.postgres.pool import get_raw_pool
                 pool = get_raw_pool()
         except RuntimeError:
-            pass  # pool not opened — fall through to direct connection
+            pass  # pool not opened -- fall through to direct connection
 
         if pool is not None:
             async with pool.connection() as conn:

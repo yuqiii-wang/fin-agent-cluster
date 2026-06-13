@@ -14,9 +14,9 @@ def extract_thinking_answer(text: str) -> tuple[str | None, str]:
 
     Handles two tag variants produced by different LLM providers:
 
-    * ``<think>…</think>`` — Ollama reasoning models (e.g. Qwen3) after
+    * ``<think>...</think>`` -- Ollama reasoning models (e.g. Qwen3) after
       normalisation by :meth:`OllamaLLM._astream`.
-    * ``<thinking>…</thinking>`` — Anthropic-style extended thinking or
+    * ``<thinking>...</thinking>`` -- Anthropic-style extended thinking or
       models that emit the tag verbatim.
 
     If the close tag is missing (stream was truncated), the remaining text
@@ -42,21 +42,21 @@ def extract_thinking_answer(text: str) -> tuple[str | None, str]:
         if close_tag in after_open:
             thinking_raw, _, answer = after_open.partition(close_tag)
             return thinking_raw.strip() or None, answer.strip()
-        # Close tag missing — stream was truncated or model forgot to close it.
+        # Close tag missing -- stream was truncated or model forgot to close it.
         logger.error(
             "[stream_task] %s opened but %s never closed in LLM output; "
             "treating remaining text as thinking. First 120: %r",
             open_tag, close_tag, after_open[:120],
         )
         return after_open.strip() or None, ""
-    # No reasoning block — normal for non-reasoning models (MockLLM, plain Ollama).
+    # No reasoning block -- normal for non-reasoning models (MockLLM, plain Ollama).
     return None, stripped
 
 
 def extract_json_from_text(text: str) -> dict[str, Any]:
     """Extract a JSON object from text that may contain markdown fences or prose.
 
-    Handles LLM responses that wrap the JSON in ````json … ```` fences or
+    Handles LLM responses that wrap the JSON in ````json ... ```` fences or
     prefix it with explanation text.  Falls back to ``{"raw": text}`` when no
     parseable JSON object is found, which allows callers to inspect the raw
     output for debugging.
@@ -69,7 +69,7 @@ def extract_json_from_text(text: str) -> dict[str, Any]:
     """
     stripped = text.strip()
 
-    # Strip common markdown code fences (```json … ``` or ``` … ```)
+    # Strip common markdown code fences (```json ... ``` or ``` ... ```)
     if stripped.startswith("```"):
         lines = stripped.splitlines()
         inner_lines = lines[1:]
@@ -83,7 +83,7 @@ def extract_json_from_text(text: str) -> dict[str, Any]:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # Find the first balanced { … } block in the text
+    # Find the first balanced { ... } block in the text
     start = stripped.find("{")
     if start >= 0:
         depth = 0

@@ -30,7 +30,7 @@ class HealthCheckThrottleFilter(logging.Filter):
     _THROTTLED: frozenset[str] = frozenset(
         {"/docs", "/health", "/openapi.json", "/redoc", "/favicon.ico"}
     )
-    # Paths that are always dropped — no throttle summary, no log entry.
+    # Paths that are always dropped -- no throttle summary, no log entry.
     # Internal Centrifugo publish-proxy callbacks are high-frequency and
     # provide no diagnostic value in normal operation.
     _SUPPRESSED: frozenset[str] = frozenset(

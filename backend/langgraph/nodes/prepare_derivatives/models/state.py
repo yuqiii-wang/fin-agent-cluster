@@ -1,4 +1,4 @@
-"""state.py — Step context for prepare_derivatives agent steps."""
+"""state.py -- Step context for prepare_derivatives agent steps."""
 
 from __future__ import annotations
 

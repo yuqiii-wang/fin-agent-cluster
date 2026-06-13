@@ -2,11 +2,11 @@
 
 Two flavours of memory entry exist per node:
 
-* **Task-backed memory** — ``task_id`` is set; ``content`` may be ``None``.
+* **Task-backed memory** -- ``task_id`` is set; ``content`` may be ``None``.
   The effective payload is the latest ``fin_agents.task_executions.output``
   for the referenced task.  This is how the agent remembers outputs from
   tasks it already ran.
-* **Direct memory** — ``task_id`` is ``None``; ``content`` is a non-empty
+* **Direct memory** -- ``task_id`` is ``None``; ``content`` is a non-empty
   JSONB payload written directly via :func:`write_memory`.  This is the
   general-purpose scratchpad for arbitrary node-scoped state.
 
@@ -38,7 +38,7 @@ class MemoryItem(BaseModel):
                      listing memory contents.
         content:     JSONB payload.  None for task-backed entries (task_id is
                      set); must be a non-empty JSON value for direct entries.
-        effective_content: The resolved content actually used at read-time —
+        effective_content: The resolved content actually used at read-time --
                      either the stored ``content``, or the referenced task's
                      output (when task_id is set and content is None).
         task_name:   Name of the referenced task (fin_agents.tasks.task_name),

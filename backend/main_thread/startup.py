@@ -1,4 +1,4 @@
-"""backend.main_thread.startup — recover running threads on FastAPI startup.
+"""backend.main_thread.startup -- recover running threads on FastAPI startup.
 
 On startup, queries PostgreSQL for threads that still have ``status='running'``
 and dispatches a recovery graph run for each one that either:
@@ -6,7 +6,7 @@ and dispatches a recovery graph run for each one that either:
 * Has no Redis ownership lock (lock expired during downtime), or
 * Has a lock pointing to a dead instance (previous process died).
 
-Threads whose lock points to another *live* instance are skipped — that
+Threads whose lock points to another *live* instance are skipped -- that
 instance is already handling them.
 """
 
@@ -72,9 +72,9 @@ async def recover_running_threads() -> None:
             if not is_mine:
                 alive = await check_owner_alive(owner)
                 if alive:
-                    # Another live instance owns this — it will handle it.
+                    # Another live instance owns this -- it will handle it.
                     continue
-                # Owner is dead — fall through to dispatch recovery.
+                # Owner is dead -- fall through to dispatch recovery.
 
         try:
             # Refresh the viewer flags so stream_core sees a live viewer during
@@ -89,7 +89,7 @@ async def recover_running_threads() -> None:
                 "[main_thread.startup] dispatched recovery thread_id=%s", thread_id
             )
         except ThreadRoutingError:
-            # Another instance grabbed the lock between our check and dispatch — fine.
+            # Another instance grabbed the lock between our check and dispatch -- fine.
             pass
         except Exception as exc:  # noqa: BLE001
             logger.error(

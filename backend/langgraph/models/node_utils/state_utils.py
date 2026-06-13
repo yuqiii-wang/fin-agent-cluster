@@ -1,4 +1,4 @@
-"""StateUtilsMixin — GraphState inspection and NodeRecord construction."""
+"""StateUtilsMixin -- GraphState inspection and NodeRecord construction."""
 
 from __future__ import annotations
 

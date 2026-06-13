@@ -1,10 +1,10 @@
-"""Resources — outbound data provider layer.
+"""Resources -- outbound data provider layer.
 
 Sub-packages
 ------------
-news          — DDGS-backed news and web-search client + models
-stats         — market statistics client + models + mock transport
-web_knowledge — raw HTML fetcher for financial web pages (competitors, press releases, options)
+news          -- DDGS-backed news and web-search client + models
+stats         -- market statistics client + models + mock transport
+web_knowledge -- raw HTML fetcher for financial web pages (competitors, press releases, options)
 """
 
 from __future__ import annotations

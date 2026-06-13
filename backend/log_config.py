@@ -45,11 +45,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Project root is two levels up from this file (backend/log_config.py → root)
+# Project root is two levels up from this file (backend/log_config.py -> root)
 _LOG_DIR: Path = Path(__file__).resolve().parent.parent / "logs"
 
 # ---------------------------------------------------------------------------
-# ANSI colour helpers — applied per log level in the console formatter.
+# ANSI colour helpers -- applied per log level in the console formatter.
 # No external dependencies; just escape codes.
 # ---------------------------------------------------------------------------
 _RESET = "\x1b[0m"
@@ -117,7 +117,7 @@ class ComponentFormatter(logging.Formatter):
     Output format::
 
         10:23:45 | INFO     | API              | Created guest user abc123
-        10:23:46 | WARNING  | LLM/Providers    | Ollama not reachable — retrying
+        10:23:46 | WARNING  | LLM/Providers    | Ollama not reachable -- retrying
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -285,7 +285,7 @@ def get_logging_config() -> dict[str, Any]:
             "formatter": "file",
             "filename": f"{log_dir}/{filename}",
             "maxBytes": 10 * 1024 * 1024,  # 10 MB per file
-            "backupCount": 5,               # keeps .log .log.1 … .log.5 → all matched by *.log*
+            "backupCount": 5,               # keeps .log .log.1 ... .log.5 -> all matched by *.log*
             "encoding": "utf-8",
             "delay": True,                  # don't create the file until first write
         }
@@ -304,7 +304,7 @@ def get_logging_config() -> dict[str, Any]:
             "file": {
                 "()": "backend.log_config.JsonFileFormatter",
             },
-            # Uvicorn's own access formatter — preserves coloured status codes.
+            # Uvicorn's own access formatter -- preserves coloured status codes.
             # [%(server_port)s] is injected by ServerPortFilter (added to uvicorn_access_h)
             # so each line shows which FastAPI instance handled the request.
             "uvicorn_access": {
@@ -361,7 +361,7 @@ def get_logging_config() -> dict[str, Any]:
                 "formatter": "uvicorn_default",
                 "stream": "ext://sys.stderr",
             },
-            # Dedicated console handler for Celery — filter attached programmatically
+            # Dedicated console handler for Celery -- filter attached programmatically
             # by celery_engine._configure_worker_logging after configure_logging() runs.
             "celery_console": {
                 "class": "logging.StreamHandler",
@@ -468,7 +468,7 @@ def get_logging_config() -> dict[str, Any]:
                 "level": "INFO",
                 "propagate": False,
             },
-            # celery.app.trace logs every task execution at INFO — noisy in prod
+            # celery.app.trace logs every task execution at INFO -- noisy in prod
             "celery.app.trace": {
                 "handlers": ["streaming_file"],
                 "level": "WARNING",
@@ -507,7 +507,7 @@ def configure_logging() -> None:
     """
     logging.config.dictConfig(get_logging_config())
     # Start the background writer for the per-thread error-log handler installed
-    # above (idempotent — safe across repeated configure_logging calls).
+    # above (idempotent -- safe across repeated configure_logging calls).
     from backend.langgraph.agent.error_log.handler import start_listener
 
     start_listener()

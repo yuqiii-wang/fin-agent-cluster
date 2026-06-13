@@ -5,30 +5,30 @@ governance hierarchy on every call.
 
 Top-level (no thread_id)
 ------------------------
-POST /api/v1/threads/query              — submit a new query and get thread_id
+POST /api/v1/threads/query              -- submit a new query and get thread_id
 
 Thread-level
 ------------
-GET  /api/v1/threads/{thread_id}                         — query status
-POST /api/v1/threads/{thread_id}/ack                      — ACK and start execution
-POST /api/v1/threads/{thread_id}/cancel                   — cancel entire thread
-POST /api/v1/threads/{thread_id}/resume                   — resume from checkpoint
+GET  /api/v1/threads/{thread_id}                         -- query status
+POST /api/v1/threads/{thread_id}/ack                      -- ACK and start execution
+POST /api/v1/threads/{thread_id}/cancel                   -- cancel entire thread
+POST /api/v1/threads/{thread_id}/resume                   -- resume from checkpoint
 
 Node-level
 ----------
-GET  /api/v1/threads/{thread_id}/nodes                          — all node executions
-POST /api/v1/threads/{thread_id}/nodes/{node_id}/cancel         — cancel a node
-POST /api/v1/threads/{thread_id}/nodes/{node_id}/re-explore     — fork at pre-node checkpoint
+GET  /api/v1/threads/{thread_id}/nodes                          -- all node executions
+POST /api/v1/threads/{thread_id}/nodes/{node_id}/cancel         -- cancel a node
+POST /api/v1/threads/{thread_id}/nodes/{node_id}/re-explore     -- fork at pre-node checkpoint
 
 Version-level
 -------------
-GET  /api/v1/threads/{thread_id}/version/{version_id}           — fork node + branch nodes for version
+GET  /api/v1/threads/{thread_id}/version/{version_id}           -- fork node + branch nodes for version
 
 Task-level
 ----------
-GET  /api/v1/threads/{thread_id}/tasks                    — all tasks in thread
-POST /api/v1/threads/{thread_id}/tasks/{task_id}/cancel  — cancel a task
-GET  /api/v1/threads/{thread_id}/tasks/{task_id}         — single task status
+GET  /api/v1/threads/{thread_id}/tasks                    -- all tasks in thread
+POST /api/v1/threads/{thread_id}/tasks/{task_id}/cancel  -- cancel a task
+GET  /api/v1/threads/{thread_id}/tasks/{task_id}         -- single task status
 
 Business logic lives in :mod:`backend.users.queries`.
 """

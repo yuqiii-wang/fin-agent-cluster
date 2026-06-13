@@ -1,4 +1,4 @@
-"""analyze_stock_from_web_if_not_seen — NodeTask for query_node.
+"""analyze_stock_from_web_if_not_seen -- NodeTask for query_node.
 
 This is a Streaming task: it uses ``delegate_stream`` so the LLM analysis is
 streamed token-by-token to the frontend via Centrifugo.
@@ -20,8 +20,8 @@ Celery layer:
 
 Public export
 -------------
-``analyze_stock_from_web_if_not_seen`` — ``NodeTask`` instance.
-``STREAM_PROMPT_BUILDERS``             — dict slice consumed by ``stream_task``.
+``analyze_stock_from_web_if_not_seen`` -- ``NodeTask`` instance.
+``STREAM_PROMPT_BUILDERS``             -- dict slice consumed by ``stream_task``.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ class AnalyzeWebStockInput(BaseModel):
         query:      Original raw user query.
         web_title:  Title of the Wikipedia page fetched by the web task.
         web_url:    Canonical URL of the fetched page.
-        web_content: Plain-text extract from the fetched page (≤2 000 chars).
+        web_content: Plain-text extract from the fetched page (<=2 000 chars).
     """
 
     stock_name: str = Field(description="Best-guess stock name from analyze_query.")
@@ -97,7 +97,7 @@ _ANALYZE_WEB_STOCK_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 # ---------------------------------------------------------------------------
-# Streaming prompt builder — imported by stream_task.py
+# Streaming prompt builder -- imported by stream_task.py
 # ---------------------------------------------------------------------------
 
 def _build_analyze_web_stock_prompt(payload: dict) -> list[BaseMessage]:
@@ -124,7 +124,7 @@ def _build_analyze_web_stock_prompt(payload: dict) -> list[BaseMessage]:
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_analyze_web_stock_prompt}
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _analyze_stock_from_web_if_not_seen_task(
@@ -134,7 +134,7 @@ async def _analyze_stock_from_web_if_not_seen_task(
 
     Delegates to the Celery stream worker.  Parses the final LLM answer as
     JSON to extract ``stock_name`` and ``not_seen``.  Raises ``ValueError``
-    when ``not_seen`` is still True after web analysis — this fails the node
+    when ``not_seen`` is still True after web analysis -- this fails the node
     with a clear user-visible error.
 
     Args:
@@ -167,7 +167,7 @@ async def _analyze_stock_from_web_if_not_seen_task(
                 answer_dict = json.loads(raw_answer)
             except (json.JSONDecodeError, TypeError):
                 logger.error(
-                    "[analyze_stock_from_web] answer JSON parse failed task_id=%s — raw: %r",
+                    "[analyze_stock_from_web] answer JSON parse failed task_id=%s -- raw: %r",
                     ctx.task_id, raw_answer,
                 )
                 answer_dict = {}
@@ -192,7 +192,7 @@ async def _analyze_stock_from_web_if_not_seen_task(
         return TaskOutput(ctx=ctx, content=output)
 
     except ValueError:
-        # not_seen failure — already called complete_task above; re-raise to fail the node.
+        # not_seen failure -- already called complete_task above; re-raise to fail the node.
         raise
     except Exception as exc:
         await complete_task(

@@ -72,7 +72,7 @@ class AnalyzeIndexOutput(BaseModel):
 
     Attributes:
         instruments:    Stats results for macro market-index instruments (e.g. SOFR 3-Month).
-        equity_indexes: Stats results for equity benchmark indexes (SP500, NASDAQ 100, …).
+        equity_indexes: Stats results for equity benchmark indexes (SP500, NASDAQ 100, ...).
         period:         Stats aggregation period used for all instruments.
         df_splits:      Per-symbol OHLCV df_split payloads for StackCandleStick rendering.
                         Shape: [{"symbol": str, "label": str, "df_split": DfSplitDict}, ...].

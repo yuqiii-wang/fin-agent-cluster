@@ -1,4 +1,4 @@
-"""backend.langgraph.agent.errors — agent error codes and exception types."""
+"""backend.langgraph.agent.errors -- agent error codes and exception types."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from backend.langgraph.lifecycle.errors import TaskPausedError
 class AgentPausedError(TaskPausedError):
     """Raised by the custom agent loop when the agent-level Redis pause flag is detected.
 
-    Subclasses ``TaskPausedError`` so ``executor.py`` treats it identically —
+    Subclasses ``TaskPausedError`` so ``executor.py`` treats it identically --
     graceful exit without marking the thread as failed.  The owning node is
     transitioned to ``paused`` via ``pause_node`` before this exception reaches
     the executor.

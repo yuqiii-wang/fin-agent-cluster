@@ -1,4 +1,4 @@
-"""AnalyzeIndexNode — Workflow node that fetches and calculates stats for
+"""AnalyzeIndexNode -- Workflow node that fetches and calculates stats for
 market-rate index instruments (SOFR 3-Month Futures) and major equity benchmark
 indexes (S&P 500, Nasdaq 100, Dow Jones, FTSE 100, Hang Seng, Nikkei 225).
 
@@ -6,12 +6,12 @@ Hierarchy
 ---------
 Thread
   └── prepare_index  (Workflow)
-        ├── propose_index               (@task → pure computation)              [×1]
-        └── get_and_calculate_stats     (TaskSeq → get_stats + calculate_stats)  [×N instruments, parallel]
+        ├── propose_index               (@task -> pure computation)              [×1]
+        └── get_and_calculate_stats     (TaskSeq -> get_stats + calculate_stats)  [×N instruments, parallel]
 
 Node design
 -----------
-1. ``propose_index`` (pure computation) → resolves the set of equity benchmark
+1. ``propose_index`` (pure computation) -> resolves the set of equity benchmark
    indexes to analyse: always includes the six major global indexes plus the
    stock's home index if not already covered.
 2. ``get_and_calculate_stats`` runs in parallel for:
@@ -21,7 +21,7 @@ Node design
 
 Predecessor
 -----------
-``query_node`` — must be completed before ``prepare_index`` starts.
+``query_node`` -- must be completed before ``prepare_index`` starts.
 Runs in parallel with ``prepare_peers`` and ``analyze_economics``.
 """
 
@@ -84,9 +84,9 @@ class AnalyzeIndexNode(BaseNode[AnalyzeIndexInput, AnalyzeIndexOutput]):
             "label": "Analysis depth",
             "type": "select",
             "options": [
-                {"value": "shallow", "label": "Shallow — fast overview"},
-                {"value": "normal", "label": "Normal — balanced"},
-                {"value": "deep", "label": "Deep — thorough"},
+                {"value": "shallow", "label": "Shallow -- fast overview"},
+                {"value": "normal", "label": "Normal -- balanced"},
+                {"value": "deep", "label": "Deep -- thorough"},
             ],
             "description": "Controls scope of equity benchmark indexes and historical data analysed.",
         },
@@ -97,7 +97,7 @@ class AnalyzeIndexNode(BaseNode[AnalyzeIndexInput, AnalyzeIndexOutput]):
     _prev_node_names: ClassVar[list[str]] = ["query_node"]
 
     async def build_input(self, state: GraphState) -> AnalyzeIndexInput:
-        """Construct node input — reads stock_symbol from query_node output.
+        """Construct node input -- reads stock_symbol from query_node output.
 
         Args:
             state: Current GraphState.
@@ -118,7 +118,7 @@ class AnalyzeIndexNode(BaseNode[AnalyzeIndexInput, AnalyzeIndexOutput]):
         """Return a RunnableLambda that proposes indexes then fetches stats in parallel.
 
         Flow:
-          1. ``propose_index`` → resolves the equity benchmark index set.
+          1. ``propose_index`` -> resolves the equity benchmark index set.
           2. Parallel ``get_and_calculate_stats`` for every equity benchmark
              index ticker returned by ``propose_index``.
           3. Parallel ``get_and_calculate_stats`` for every macro instrument
@@ -266,7 +266,7 @@ class AnalyzeIndexNode(BaseNode[AnalyzeIndexInput, AnalyzeIndexOutput]):
         )
 
     def get_state_updates(self, output: AnalyzeIndexOutput) -> dict[str, Any]:
-        """No GraphState updates — output stored in node_executions via lifecycle.
+        """No GraphState updates -- output stored in node_executions via lifecycle.
 
         Args:
             output: Completed node output.

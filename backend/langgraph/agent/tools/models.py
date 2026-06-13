@@ -1,4 +1,4 @@
-"""ToolInfo — lightweight metadata model bridging NodeTask and agent tools."""
+"""ToolInfo -- lightweight metadata model bridging NodeTask and agent tools."""
 
 from __future__ import annotations
 

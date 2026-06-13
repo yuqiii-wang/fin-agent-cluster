@@ -9,7 +9,7 @@ Usage::
     from backend.resources.news.client import NewsClient
 
     client = NewsClient()
-    response = await client.list_news("AAPL")   # FMP → DDGS fallback
+    response = await client.list_news("AAPL")   # FMP -> DDGS fallback
     results  = await client.search("Apple stock outlook")  # always DDGS
 """
 
@@ -98,7 +98,7 @@ class NewsClient:
 
     Attributes:
         provider: Reflects the provider actually used for the last
-                  ``list_news`` call — ``"fmp"`` or ``"ddgs"``.
+                  ``list_news`` call -- ``"fmp"`` or ``"ddgs"``.
     """
 
     provider: str
@@ -118,7 +118,7 @@ class NewsClient:
         to_dt: datetime | None = None,
         limit: int = 20,
     ) -> NewsListResponse:
-        """Fetch news articles, with FMP → DDGS fallback on empty.
+        """Fetch news articles, with FMP -> DDGS fallback on empty.
 
         Tries FMP when ``FMP_API_KEY`` is configured.  Falls back to DDGS
         news search when FMP returns an empty result set (or is not configured).
@@ -151,7 +151,7 @@ class NewsClient:
                 self.provider = _PROVIDER_FMP
                 return NewsListResponse(items=articles, total=len(articles))
 
-        # FMP empty or not configured — fall back to DDGS
+        # FMP empty or not configured -- fall back to DDGS
         return await self._ddgs_news(symbol=symbol, topics=topics, from_dt=from_dt, limit=limit)
 
     async def _ddgs_news(

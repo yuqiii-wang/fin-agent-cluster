@@ -5,13 +5,13 @@ releases, option chain) for a given equity symbol via plain HTTP GET.
 
 Sub-packages
 ------------
-errors  — web-knowledge-specific error codes.
+errors  -- web-knowledge-specific error codes.
 
 Exports
 -------
-WebKnowledgeClient  — async HTTP client.
-WebPageType         — enum of supported page categories.
-WebPageResponse     — Pydantic model for a fetched page result.
+WebKnowledgeClient  -- async HTTP client.
+WebPageType         -- enum of supported page categories.
+WebPageResponse     -- Pydantic model for a fetched page result.
 
 Reference URL patterns (populated dynamically per symbol)
 ----------------------------------------------------------

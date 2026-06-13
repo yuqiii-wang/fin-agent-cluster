@@ -1,13 +1,13 @@
-"""QueryNode — first node in the fin-analysis graph.
+"""QueryNode -- first node in the fin-analysis graph.
 
 Hierarchy
 ---------
 Thread
   └── query_node  (Workflow)
-        ├── analyze_query                        (@task → Celery, Streaming)
-        ├── [get_stock_from_web_if_not_seen]     (@task → Celery, conditional WebRequest)
-        ├── [analyze_stock_from_web_if_not_seen] (@task → Celery, conditional Streaming)
-        └── get_and_calculate_stats              (TaskSeq → get_stats + calculate_stats)
+        ├── analyze_query                        (@task -> Celery, Streaming)
+        ├── [get_stock_from_web_if_not_seen]     (@task -> Celery, conditional WebRequest)
+        ├── [analyze_stock_from_web_if_not_seen] (@task -> Celery, conditional Streaming)
+        └── get_and_calculate_stats              (TaskSeq -> get_stats + calculate_stats)
 
 Flow
 ----
@@ -81,11 +81,11 @@ class QueryNode(BaseNode[QueryNodeInput, QueryNodeOutput]):
         return QueryNodeInput(query=state.get("query", ""))
 
     def build_chain(self, ctx: NodeContext) -> Runnable[QueryNodeInput, dict[str, TaskOutput]]:
-        """Chain: analyze_query → (optional web tasks)."""
+        """Chain: analyze_query -> (optional web tasks)."""
         async def _orchestrate(node_input: QueryNodeInput) -> dict[str, TaskOutput]:
             query_stripped = node_input.query.strip()
 
-            # Fast-path: single-token input is a direct symbol — bypass LLM entirely.
+            # Fast-path: single-token input is a direct symbol -- bypass LLM entirely.
             if len(query_stripped.split()) == 1:
                 stock_name = query_stripped.upper()
                 results: dict[str, Any] = {

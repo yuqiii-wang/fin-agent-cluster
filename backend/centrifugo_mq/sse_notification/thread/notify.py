@@ -48,7 +48,7 @@ async def notify(
     Returns:
         ``True`` if the frontend ACKed; ``False`` on explicit NACK or exhaustion.
     """
-    # When the browser is closed skip publishing entirely — the graph keeps
+    # When the browser is closed skip publishing entirely -- the graph keeps
     # running silently.  When the app is open but the user is on a different
     # thread, publish once for Centrifugo history recovery without waiting for
     # an ACK (no subscriber is actively listening).  Full ACK cycle only when
@@ -56,7 +56,7 @@ async def notify(
     if not await has_app_viewers(thread_id):
         return True
 
-    # When no frontend client is subscribed, publish once and return — the
+    # When no frontend client is subscribed, publish once and return -- the
     # event is stored in Centrifugo history (force_recovery) so the user sees
     # it when they open the thread later.  Skipping the ACK loop avoids
     # blocking the graph runner for ~18 s on background threads.
@@ -101,7 +101,7 @@ async def notify(
             SSE_NACK.labels(scope="thread", event=event, reason="explicit_nack").inc()
             break
         logger.debug(
-            "[sse:thread] ack timeout thread_id=%s event=%s attempt=%d attempt_ms=%.0f — retrying",
+            "[sse:thread] ack timeout thread_id=%s event=%s attempt=%d attempt_ms=%.0f -- retrying",
             thread_id, event, attempt, elapsed_attempt,
         )
 

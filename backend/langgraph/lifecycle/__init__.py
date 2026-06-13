@@ -1,4 +1,4 @@
-"""backend.langgraph.lifecycle — thread / node / task lifecycle management.
+"""backend.langgraph.lifecycle -- thread / node / task lifecycle management.
 
 Hierarchy
 ---------
@@ -9,20 +9,20 @@ Thread (thread_id)
 Cancellation propagation
 ------------------------
 ``cancel_thread``
-  → revoke all in-flight Celery tasks for the thread
-  → bulk-cancel all active tasks  (DB RETURNING → SSE)
-  → bulk-cancel all active nodes  (DB RETURNING → SSE)
-  → cancel thread row             (DB RETURNING → SSE)
-  → set asyncio cancel token      (signals delegation poll loops)
+  -> revoke all in-flight Celery tasks for the thread
+  -> bulk-cancel all active tasks  (DB RETURNING -> SSE)
+  -> bulk-cancel all active nodes  (DB RETURNING -> SSE)
+  -> cancel thread row             (DB RETURNING -> SSE)
+  -> set asyncio cancel token      (signals delegation poll loops)
 
 ``cancel_node``
-  → revoke Celery tasks for the node
-  → bulk-cancel active tasks for the node
-  → cancel the node itself
+  -> revoke Celery tasks for the node
+  -> bulk-cancel active tasks for the node
+  -> cancel the node itself
 
 ``cancel_task``
-  → revoke the specific Celery task
-  → cancel the task row
+  -> revoke the specific Celery task
+  -> cancel the task row
 
 Terminal states (no further transitions allowed)
 ------------------------------------------------

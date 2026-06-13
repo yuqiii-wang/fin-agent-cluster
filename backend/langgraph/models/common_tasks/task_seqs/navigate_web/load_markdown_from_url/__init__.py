@@ -1,9 +1,9 @@
-"""load_markdown_from_url — NodeTasks and TaskSeq for URL fetching and Markdown conversion.
+"""load_markdown_from_url -- NodeTasks and TaskSeq for URL fetching and Markdown conversion.
 
 Orchestration
 -------------
-1. ``crawl_url``        — httpx async fetch + link extraction.
-2. ``html_to_markdown`` — markitdown HTML → Markdown conversion.
+1. ``crawl_url``        -- httpx async fetch + link extraction.
+2. ``html_to_markdown`` -- markitdown HTML -> Markdown conversion.
 
 On ``crawl_url`` failure, ``llm_orchestration_on_failure`` is invoked to decide recovery:
 re-run ``propose_web_knowledge_urls`` with a new symbol, or propagate failure.

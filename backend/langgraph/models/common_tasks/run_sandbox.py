@@ -1,4 +1,4 @@
-"""run_sandbox — NodeTask: execute LLM-generated Python or bash inside an isolated sandbox.
+"""run_sandbox -- NodeTask: execute LLM-generated Python or bash inside an isolated sandbox.
 
 Execution runs inside Docker ``sandbox-runner-N`` containers.  Thread-ID
 sharding routes every call for the same LangGraph thread to the same
@@ -21,10 +21,10 @@ Celery layer (``_handler``):
 
 Public exports
 --------------
-``run_sandbox``      — :class:`~backend.langgraph.models.task.NodeTask` instance.
-``RunSandboxInput``  — Pydantic input model.
-``RunSandboxOutput`` — Pydantic output model.
-``HANDLERS``         — dict slice for registration in
+``run_sandbox``      -- :class:`~backend.langgraph.models.task.NodeTask` instance.
+``RunSandboxInput``  -- Pydantic input model.
+``RunSandboxOutput`` -- Pydantic output model.
+``HANDLERS``         -- dict slice for registration in
                        ``backend.langgraph.nodes.HANDLERS``.
 """
 
@@ -87,7 +87,7 @@ class RunSandboxOutput(BaseModel):
     timed_out: bool = Field(default=False, description="True if killed by timeout.")
 
 # ---------------------------------------------------------------------------
-# Celery layer — business logic
+# Celery layer -- business logic
 # ---------------------------------------------------------------------------
 
 async def _handler(payload: dict) -> dict:
@@ -111,7 +111,7 @@ async def _handler(payload: dict) -> dict:
         SandboxTimeoutError:             Execution exceeded the wall-clock limit.
         SandboxRunnerError:              Runner container unreachable.
     """
-    from backend.config import get_settings  # noqa: PLC0415 — deferred for Celery worker import order
+    from backend.config import get_settings  # noqa: PLC0415 -- deferred for Celery worker import order
     from backend.sandbox.client import execute_in_runner  # noqa: PLC0415
     from backend.sandbox.errors import SandboxUnsupportedLanguageError, SandboxNoStdoutError  # noqa: PLC0415
     from backend.sandbox.errors.codes import SANDBOX_UNSUPPORTED_LANGUAGE, SANDBOX_NO_STDOUT  # noqa: PLC0415
@@ -128,7 +128,7 @@ async def _handler(payload: dict) -> dict:
             "Use 'python' or 'bash'."
         )
 
-    # Pre-flight check — reject obvious violations before the HTTP round-trip.
+    # Pre-flight check -- reject obvious violations before the HTTP round-trip.
     validate_script(inp.script, language=inp.language)
 
     settings = get_settings()
@@ -151,7 +151,7 @@ async def _handler(payload: dict) -> dict:
     return RunSandboxOutput.model_validate(result_dict).model_dump()
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _run_sandbox_task(

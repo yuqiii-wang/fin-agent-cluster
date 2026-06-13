@@ -1,4 +1,4 @@
-"""backend.main_thread.context — per-graph-run ContextVars.
+"""backend.main_thread.context -- per-graph-run ContextVars.
 
 Values set here propagate automatically to all coroutines and async tasks
 spawned within the same asyncio.Task that runs the LangGraph graph.  This
@@ -12,7 +12,7 @@ At the start of ``_run_graph``:
     from backend.main_thread.context import set_fencing_token
     set_fencing_token(acquired_token)
 
-Deep inside lifecycle write calls (upsert_node, create_task, …):
+Deep inside lifecycle write calls (upsert_node, create_task, ...):
 
     from backend.main_thread.context import get_fencing_token
     token = get_fencing_token()  # returns the token set by the owning graph run
@@ -25,7 +25,7 @@ from contextvars import ContextVar
 # Fencing token for the current graph run.  Incremented atomically in Redis
 # on every lock acquisition or steal.  Zombie writers hold an older (smaller)
 # token; DB guards reject their writes by comparing the token in every write.
-# Default 0 means "no active graph run" — treated as older than any real token.
+# Default 0 means "no active graph run" -- treated as older than any real token.
 _fencing_token: ContextVar[int] = ContextVar("fencing_token", default=0)
 
 
@@ -46,7 +46,7 @@ def get_fencing_token() -> int:
     """Return the fencing token for this graph-run context.
 
     Returns 0 when called outside a graph run (e.g. from a Celery worker),
-    which is intentional — Celery workers do not need fencing because their
+    which is intentional -- Celery workers do not need fencing because their
     task rows are addressed by unique UUID task_id.
 
     Returns:

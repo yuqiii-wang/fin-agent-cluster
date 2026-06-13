@@ -1,4 +1,4 @@
-"""Celery task configuration — broker DBs, worker settings, and queue helpers.
+"""Celery task configuration -- broker DBs, worker settings, and queue helpers.
 
 All on-demand tasks that carry a ``thread_id`` (completion and stream workers)
 are dispatched to a queue determined by ``SHA-256(thread_id) % shard_count``
@@ -8,9 +8,9 @@ worker, improving cache locality and reducing cross-worker state contention.
 Shard routing
 -------------
 The Celery **broker** is always pinned to shard 0 of the Redis cluster (a
-Celery infrastructure constraint — the broker URL is configured once at
+Celery infrastructure constraint -- the broker URL is configured once at
 process start and cannot vary per task).  Within that broker, named queues
-act as logical shards: ``celery_ondemand_0``, ``celery_ondemand_1``, …
+act as logical shards: ``celery_ondemand_0``, ``celery_ondemand_1``, ...
 
 Workers listen on all ``celery_ondemand_*`` queues; tasks land on the queue
 whose index matches ``SHA-256(thread_id) % n_shards``.
@@ -46,7 +46,7 @@ CELERY_WORKER_CONFIG: dict = {
     # Keep retrying broker connection attempts during worker startup so
     # Celery 6 does not change current reconnect behavior.
     "broker_connection_retry_on_startup": True,
-    # Process one task at a time — avoids overloading a single worker with
+    # Process one task at a time -- avoids overloading a single worker with
     # concurrent LLM calls that are already async internally.
     "worker_prefetch_multiplier": 1,
     # Acknowledge only after successful return so failed tasks can be retried.
@@ -77,12 +77,12 @@ class StreamTopicConfig:
     beat_interval: Optional[float] = field(default=None)
 
 
-#: Topics registered for beat-scheduled polling.  Currently empty — all tasks
+#: Topics registered for beat-scheduled polling.  Currently empty -- all tasks
 #: (completion and stream) are dispatched on-demand with thread_id routing.
 ACTIVE_TOPICS: list[StreamTopicConfig] = []
 
 # ---------------------------------------------------------------------------
-# On-demand queue helpers — thread_id → queue name
+# On-demand queue helpers -- thread_id -> queue name
 # ---------------------------------------------------------------------------
 
 #: Prefix used for all on-demand (completion) task queues.
@@ -104,8 +104,8 @@ def _shard(thread_id: str) -> int:
 def get_ondemand_queue(thread_id: str) -> str:
     """Return the Celery queue name for a completion task carrying *thread_id*.
 
-    Uses ``SHA-256(thread_id) % n_shards`` — the same formula as
-    :class:`~backend.db.redis.router.RedisRouter` and Centrifugo routing —
+    Uses ``SHA-256(thread_id) % n_shards`` -- the same formula as
+    :class:`~backend.db.redis.router.RedisRouter` and Centrifugo routing --
     so all layers for the same session consistently target the same shard.
 
     Args:

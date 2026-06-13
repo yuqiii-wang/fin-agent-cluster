@@ -1,4 +1,4 @@
-"""node_utils — helper mixins decomposing BaseNode's implementation.
+"""node_utils -- helper mixins decomposing BaseNode's implementation.
 
 Each mixin covers a distinct concern:
 - TypeValidationMixin  : Generic[I, O] resolution and model validation.

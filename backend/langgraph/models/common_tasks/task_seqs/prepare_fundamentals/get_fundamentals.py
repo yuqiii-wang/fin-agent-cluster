@@ -1,4 +1,4 @@
-"""get_fundamentals — NodeTask to fetch one fundamental data endpoint.
+"""get_fundamentals -- NodeTask to fetch one fundamental data endpoint.
 
 Fetches fundamental data for a single endpoint type (income_statement,
 balance_sheet, cash_flow, or key_metrics) from FMP or yfinance, caches
@@ -19,11 +19,11 @@ Celery layer (``_handler``):
 
 Public exports
 --------------
-``get_fundamentals``         — ``NodeTask`` instance.
-``GetFundamentalsInput``     — Pydantic input model.
-``GetFundamentalsOutput``    — Pydantic output model.
-``VALID_ENDPOINT_TYPES``     — Frozenset of supported endpoint type strings.
-``HANDLERS``                 — dict slice for Celery handler registration.
+``get_fundamentals``         -- ``NodeTask`` instance.
+``GetFundamentalsInput``     -- Pydantic input model.
+``GetFundamentalsOutput``    -- Pydantic output model.
+``VALID_ENDPOINT_TYPES``     -- Frozenset of supported endpoint type strings.
+``HANDLERS``                 -- dict slice for Celery handler registration.
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ class GetFundamentalsOutput(BaseModel):
     from_cache: bool = Field(default=False)
 
 # ---------------------------------------------------------------------------
-# Celery layer — business logic
+# Celery layer -- business logic
 # ---------------------------------------------------------------------------
 
 async def _handler(payload: dict) -> dict:
@@ -185,12 +185,12 @@ async def _handler(payload: dict) -> dict:
         try:
             if provider == "fmp":
                 from _shared.httpx_client import make_fmp_async_client
-                from backend.resources.stats.fmp.fundamentals_fetcher import fetch as fmp_fetch
+                from backend.resources.stats.providers.fmp.fundamentals_fetcher import fetch as fmp_fetch
                 settings = get_settings()
                 async with make_fmp_async_client(settings.FMP_API_KEY) as http:
                     json_data = await fmp_fetch(symbol, endpoint_type, http)
             else:
-                from backend.resources.stats.yfinance.fundamentals_fetcher import fetch as yf_fetch
+                from backend.resources.stats.providers.yfinance.fundamentals_fetcher import fetch as yf_fetch
                 json_data = await yf_fetch(symbol, endpoint_type)
 
         except ValueError as exc:
@@ -229,7 +229,7 @@ async def _handler(payload: dict) -> dict:
     )
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _get_fundamentals_task(

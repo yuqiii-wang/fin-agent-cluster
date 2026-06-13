@@ -1,6 +1,6 @@
-"""backend.db.redis.session.thread_user_store — thread-to-user mapping cache.
+"""backend.db.redis.session.thread_user_store -- thread-to-user mapping cache.
 
-Caches ``thread_id → user_id`` in Redis (shard 0, control plane) so the
+Caches ``thread_id -> user_id`` in Redis (shard 0, control plane) so the
 ``has_app_viewers`` presence check can resolve the owning user without
 a DB round-trip on every SSE publish.
 

@@ -1,7 +1,7 @@
 """Logging filters for the Celery / streaming layer.
 
 Provides :class:`CeleryTaskSummaryFilter` which suppresses the per-invocation
-"Task … received / succeeded" and "Scheduler: Sending due task" noise and
+"Task ... received / succeeded" and "Scheduler: Sending due task" noise and
 replaces it with a 5-minute summary line on the console handler.
 """
 
@@ -59,7 +59,7 @@ class CeleryTaskSummaryFilter(logging.Filter):
             if _HEARTBEAT_PAT.search(msg):
                 task_name = "missed-heartbeat"
             else:
-                return True  # unrelated message — always pass
+                return True  # unrelated message -- always pass
         else:
             task_name = m.group(1) or m.group(2) or m.group(3) or "unknown"
         with self._lock:

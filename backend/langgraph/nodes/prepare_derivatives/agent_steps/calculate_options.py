@@ -1,4 +1,4 @@
-"""calculate_options.py — Step 5: aggregate the options chain into stats tables.
+"""calculate_options.py -- Step 5: aggregate the options chain into stats tables.
 
 Reads the structured options JSON produced by ``step_study_web_content``
 (``sctx.g.json_input``) and runs the ``calculate_option_stats`` NodeTask, which
@@ -38,7 +38,17 @@ async def step_calculate_options(sctx: DerivativesStepContext) -> None:
     g = sctx.g
     json_input = g.json_input
 
-    if not json_input or json_input.get("data_type") != "options":
+    if not json_input or not (
+        isinstance(json_input.get("calls"), list)
+        or isinstance(json_input.get("puts"), list)
+        or (
+            isinstance(json_input.get("content"), dict)
+            and (
+                isinstance(json_input["content"].get("calls"), list)
+                or isinstance(json_input["content"].get("puts"), list)
+            )
+        )
+    ):
         logger.error(
             "[PD-005] json_input missing or not options, skipping calculate_options symbol=%r",
             g.symbol,
@@ -52,7 +62,7 @@ async def step_calculate_options(sctx: DerivativesStepContext) -> None:
     options = calls_norm + puts_norm
     if not options:
         raise RuntimeError(
-            f"[PD-005] no contracts to aggregate symbol={g.symbol!r} — task failed"
+            f"[PD-005] no contracts to aggregate symbol={g.symbol!r} -- task failed"
         )
 
     await sctx.run_task(

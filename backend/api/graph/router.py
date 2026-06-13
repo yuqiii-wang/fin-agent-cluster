@@ -1,9 +1,9 @@
-"""backend.api.graph — graph topology inspection endpoints.
+"""backend.api.graph -- graph topology inspection endpoints.
 
 Routes
 ------
-    GET  /api/v1/graph/topology    — full static node/edge topology (no auth required)
-    GET  /api/v1/graph/node-metas  — per-node UI metadata for the preferences panel
+    GET  /api/v1/graph/topology    -- full static node/edge topology (no auth required)
+    GET  /api/v1/graph/node-metas  -- per-node UI metadata for the preferences panel
 """
 
 from __future__ import annotations

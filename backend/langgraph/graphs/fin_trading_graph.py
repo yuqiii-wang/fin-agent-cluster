@@ -1,4 +1,4 @@
-"""Fin-trading graph — production graph with a single query node (initial version).
+"""Fin-trading graph -- production graph with a single query node (initial version).
 
 This is the production graph used when ``Settings.TEST_MODE`` is ``False``.
 The graph will be expanded with more nodes as the fin-trading pipeline is
@@ -7,9 +7,9 @@ to establish the scaffold.
 
 Graph topology (current)
 -------------------------
-  START → query_node → END
+  START -> query_node -> END
 
-Thread → Node → Task hierarchy
+Thread -> Node -> Task hierarchy
 -------------------------------
 Each LangGraph node function:
   1. Calls ``upsert_node`` to register itself in ``fin_agents.nodes``.
@@ -17,13 +17,13 @@ Each LangGraph node function:
   3. Each ``@task`` calls ``create_task``, delegates to a Celery worker,
      then calls ``complete_task``.
   4. ``complete_task`` auto-calls ``complete_node`` when all tasks in the
-     node are terminal — emitting a ``node_status`` SSE event to the UI.
+     node are terminal -- emitting a ``node_status`` SSE event to the UI.
 
 Persistence
 -----------
-  fin_agents.nodes       — one row per node execution
-  fin_agents.tasks       — one row per task execution
-  fin_agents.checkpoints — LangGraph checkpoint (via AsyncPostgresSaver)
+  fin_agents.nodes       -- one row per node execution
+  fin_agents.tasks       -- one row per task execution
+  fin_agents.checkpoints -- LangGraph checkpoint (via AsyncPostgresSaver)
 """
 
 from __future__ import annotations
@@ -41,7 +41,8 @@ from backend.langgraph.nodes.prepare_index import prepare_index_node
 from backend.langgraph.nodes.prepare_news import prepare_news_node
 from backend.langgraph.nodes.prepare_industry_news import prepare_industry_news_node
 from backend.langgraph.nodes.prepare_macro_news import prepare_macro_news_node
-from backend.langgraph.nodes.prepare_derivatives import prepare_derivatives_node
+from backend.langgraph.nodes.prepare_options import prepare_options_node
+from backend.langgraph.nodes.prepare_futures import prepare_futures_node
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,8 @@ def build_graph_builder() -> StateGraph:
     builder.add_node("prepare_news", prepare_news_node)
     builder.add_node("prepare_industry_news", prepare_industry_news_node)
     builder.add_node("prepare_macro_news", prepare_macro_news_node)
-    builder.add_node("prepare_derivatives", prepare_derivatives_node)
+    builder.add_node("prepare_options", prepare_options_node)
+    builder.add_node("prepare_futures", prepare_futures_node)
 
     builder.add_edge(START, "query_node")
     builder.add_edge("query_node", "prepare_peers")
@@ -74,14 +76,16 @@ def build_graph_builder() -> StateGraph:
     builder.add_edge("query_node", "prepare_news")
     builder.add_edge("query_node", "prepare_industry_news")
     builder.add_edge("query_node", "prepare_macro_news")
-    builder.add_edge("query_node", "prepare_derivatives")
+    builder.add_edge("query_node", "prepare_options")
+    builder.add_edge("query_node", "prepare_futures")
     builder.add_edge("prepare_peers", END)
     builder.add_edge("prepare_macro_stats", END)
     builder.add_edge("prepare_index", END)
     builder.add_edge("prepare_news", END)
     builder.add_edge("prepare_industry_news", END)
     builder.add_edge("prepare_macro_news", END)
-    builder.add_edge("prepare_derivatives", END)
+    builder.add_edge("prepare_options", END)
+    builder.add_edge("prepare_futures", END)
 
     return builder
 
@@ -95,7 +99,7 @@ def build_graph() -> StateGraph:
     return build_graph_builder().compile()
 
 
-# Module-level compiled graph — import and use directly, or call build_graph()
+# Module-level compiled graph -- import and use directly, or call build_graph()
 # to get a fresh instance with a custom checkpointer.
 fin_trading_graph = build_graph()
 

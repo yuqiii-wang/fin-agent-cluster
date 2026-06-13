@@ -1,4 +1,4 @@
-"""analyze_query — NodeTask for query_node.
+"""analyze_query -- NodeTask for query_node.
 
 Execution layers
 ----------------
@@ -14,8 +14,8 @@ Celery layer (``stream_task.run_stream``):
 
 Public export
 -------------
-``analyze_query``          — ``NodeTask`` instance used by ``QueryNode.build_chain``.
-``STREAM_PROMPT_BUILDERS`` — dict slice ``{"analyze_query": _build_analyze_query_prompt}``.
+``analyze_query``          -- ``NodeTask`` instance used by ``QueryNode.build_chain``.
+``STREAM_PROMPT_BUILDERS`` -- dict slice ``{"analyze_query": _build_analyze_query_prompt}``.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ _ANALYZE_QUERY_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 # ---------------------------------------------------------------------------
-# Streaming prompt builder — imported by stream_task.py
+# Streaming prompt builder -- imported by stream_task.py
 # ---------------------------------------------------------------------------
 
 def _build_analyze_query_prompt(payload: dict) -> list[BaseMessage]:
@@ -98,7 +98,7 @@ def _build_analyze_query_prompt(payload: dict) -> list[BaseMessage]:
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_analyze_query_prompt}
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _analyze_query_task(

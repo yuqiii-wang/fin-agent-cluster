@@ -28,7 +28,7 @@ async def pause_node(
     pauses (auto-resumed on restart) from user-initiated pauses (require
     explicit Continue action).
 
-    Only transitions nodes that are currently ``'running'`` — idempotent if
+    Only transitions nodes that are currently ``'running'`` -- idempotent if
     the node is already paused or terminal.
 
     Args:

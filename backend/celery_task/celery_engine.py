@@ -3,13 +3,13 @@
 Workers batch-consume each Redis Stream topic via consumer groups.  The beat
 scheduler re-enqueues polling tasks at a fixed interval.
 
-Broker: ``DATABASE_REDIS_URL`` DB 1 — Backend: ``DATABASE_REDIS_URL`` DB 2
+Broker: ``DATABASE_REDIS_URL`` DB 1 -- Backend: ``DATABASE_REDIS_URL`` DB 2
 """
 
 from __future__ import annotations
 
 from celery import Celery
-from celery.schedules import crontab  # noqa: F401 — available for callers
+from celery.schedules import crontab  # noqa: F401 -- available for callers
 from celery.signals import after_setup_logger, after_setup_task_logger, worker_init
 
 from backend.config import get_settings
@@ -21,7 +21,7 @@ from backend.celery_task.config import (
 )
 from backend.celery_task.log_filters import CeleryTaskSummaryFilter
 
-# One shared filter instance per process — keeps counts consistent across
+# One shared filter instance per process -- keeps counts consistent across
 # the celery logger and the task logger.
 _task_summary_filter = CeleryTaskSummaryFilter()
 
@@ -77,7 +77,7 @@ def create_celery_engine() -> Celery:
     """Build and configure the Celery application from :data:`ACTIVE_TOPICS`.
 
     The Celery **broker** and **backend** are pinned to shard 0 of the Redis
-    cluster — this is a Celery infrastructure constraint (the broker URL is
+    cluster -- this is a Celery infrastructure constraint (the broker URL is
     set once at process start and cannot vary per task).
 
     On-demand tasks that carry a ``thread_id`` (completion and stream workers)
@@ -90,7 +90,7 @@ def create_celery_engine() -> Celery:
     """
     settings = get_settings()
 
-    # Broker/backend are pinned to shard 0 — Celery infrastructure constraint.
+    # Broker/backend are pinned to shard 0 -- Celery infrastructure constraint.
     # On-demand task routing by thread_id is handled in task_delegation.py via
     # get_ondemand_queue(thread_id), which selects from celery_ondemand_{0..n}.
     from backend.db.redis.router import get_redis_router  # noqa: PLC0415
@@ -119,7 +119,7 @@ def create_celery_engine() -> Celery:
         include=_include,
     )
 
-    # Build beat schedule from active topics — only include topics with a
+    # Build beat schedule from active topics -- only include topics with a
     # beat_interval set (on-demand tasks like invoke_llm are excluded).
     _beat_schedule = {
         f"poll-{topic.human_key}": {

@@ -1,10 +1,10 @@
-"""calculate_futures_stats — business logic for computing futures technical indicators.
+"""calculate_futures_stats -- business logic for computing futures technical indicators.
 
 Placeholder module for futures-specific calculation logic.  Not yet implemented.
 
 Public exports
 --------------
-(none — stub only)
+(none -- stub only)
 """
 
 from __future__ import annotations

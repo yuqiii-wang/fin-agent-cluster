@@ -1,4 +1,4 @@
-"""study_web_content — NodeTask: LLM-stream generation of a Python transform script.
+"""study_web_content -- NodeTask: LLM-stream generation of a Python transform script.
 
 Streams the Markdown content from a crawled financial page to the LLM and asks
 it to write a self-contained Python script that reads the Markdown from stdin
@@ -18,10 +18,10 @@ Outputs
     LLM's brief rationale for what data was found and how the script extracts it.
 
 ``has_popup``
-    ``True`` when the LLM determined the page cannot yield financial data — blocked by a
+    ``True`` when the LLM determined the page cannot yield financial data -- blocked by a
     pop-up/consent/GDPR overlay, contains only privacy/cookie/ads content, is empty or very
     short, or is any other access barrier.  When ``True`` the pipeline triggers the barrier-clear
-    flow (``propose_playwright_script`` → sandbox execution) and retries.
+    flow (``propose_playwright_script`` -> sandbox execution) and retries.
 
 Failure behaviour
 -----------------
@@ -42,11 +42,11 @@ Celery layer (``stream_task.run_stream``):
 
 Public exports
 --------------
-``study_web_content``       — ``NodeTask`` instance.
-``StudyWebContentInput``    — Pydantic input model.
-``StudyWebContentOutput``   — Pydantic output model.
-``STREAM_PROMPT_BUILDERS``  — dict slice for ``stream_task._get_stream_prompt_builders``.
-``HANDLERS``                — empty dict (streaming task; no completion handler).
+``study_web_content``       -- ``NodeTask`` instance.
+``StudyWebContentInput``    -- Pydantic input model.
+``StudyWebContentOutput``   -- Pydantic output model.
+``STREAM_PROMPT_BUILDERS``  -- dict slice for ``stream_task._get_stream_prompt_builders``.
+``HANDLERS``                -- empty dict (streaming task; no completion handler).
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ Additionally, inspect the page content BEFORE writing the script:
 - Set "has_popup" to true in ANY of the following cases:
   1. A pop-up overlay, cookie consent banner, GDPR dialog, or advertisement wall dominates the
      page and prevents access to actual content.
-  2. The page contains no meaningful financial data relevant to the objective — only privacy
+  2. The page contains no meaningful financial data relevant to the objective -- only privacy
      notices, cookie policies, terms-of-service, or advertisements with no financial content.
   3. The page is entirely empty or has very short content (<300 chars after stripping whitespace)
      that contains no financial data.
@@ -94,7 +94,7 @@ Additionally, inspect the page content BEFORE writing the script:
 - Set "has_popup" to false ONLY if the page contains real financial content relevant to the
   objective.
 
-Respond ONLY with a valid JSON object — no preamble, no explanation outside the JSON.
+Respond ONLY with a valid JSON object -- no preamble, no explanation outside the JSON.
 
 Schema:
 {{{{
@@ -108,7 +108,7 @@ Rules for transform_script:
 - Read the full Markdown from sys.stdin (e.g. text = sys.stdin.read()).
 - Output exactly ONE JSON object to stdout via print(json.dumps(...)).
 - The JSON output schema for the script\'s stdout must be:\n{{output_json_schema}}
-- Handle missing or malformed data gracefully — use empty lists/dicts rather than raising.
+- Handle missing or malformed data gracefully -- use empty lists/dicts rather than raising.
 - Do NOT make any network calls, file I/O, or subprocess calls.
 {{additional_context}}"""
 
@@ -166,7 +166,7 @@ class StudyWebContentInput(BaseModel):
             "Guidance from a prior failed attempt (failure reason + recovery reasoning) "
             "carried by the agent step loop on a regeneration retry.  When set, it is "
             "injected into the prompt so the LLM rewrites the script to fix the issue. "
-            "Contains no concrete values — the LLM must still extract correct data itself."
+            "Contains no concrete values -- the LLM must still extract correct data itself."
         ),
     )
 
@@ -184,7 +184,7 @@ class StudyWebContentOutput(BaseModel):
         has_popup:        ``True`` when the LLM determined the page is dominated by a
                           cookie-consent / GDPR / advertisement overlay rather than
                           real financial content.  When ``True`` the pipeline triggers
-                          ``propose_playwright_script`` → sandbox execution → retry.
+                          ``propose_playwright_script`` -> sandbox execution -> retry.
         from_cache:       ``True`` when served from the ``llm_responses`` prompt-hash cache.
     """
 
@@ -201,7 +201,7 @@ class StudyWebContentOutput(BaseModel):
         description=(
             "True when the page cannot yield financial data: blocked by a pop-up/consent/GDPR overlay, "
             "contains only privacy/cookie/ads content, is empty/very short, or is any other access barrier. "
-            "When True the pipeline triggers propose_playwright_script → sandbox execution → retry."
+            "When True the pipeline triggers propose_playwright_script -> sandbox execution -> retry."
         ),
     )
     from_cache: bool = Field(default=False, description="True when served from llm_responses prompt-hash cache.")
@@ -224,7 +224,7 @@ def _build_study_prompt(payload: dict) -> list[BaseMessage]:
     Returns:
         LangChain message list (SystemMessage + HumanMessage).
     """
-    import json as _json  # noqa: PLC0415 — local to avoid top-level shadowing
+    import json as _json  # noqa: PLC0415 -- local to avoid top-level shadowing
     inp = StudyWebContentInput.model_validate(payload)
 
     schema_text = _json.dumps(inp.output_json_schema, indent=2)
@@ -243,11 +243,11 @@ def _build_study_prompt(payload: dict) -> list[BaseMessage]:
         additional_context_text = f"\n\n{snippets}"
 
     # On a regeneration retry, prepend the failure guidance so the LLM fixes the
-    # prior mistake.  Contains no concrete values — only the failure reason and
+    # prior mistake.  Contains no concrete values -- only the failure reason and
     # recovery reasoning.
     if inp.failure_context:
         additional_context_text += (
-            "\n\nPREVIOUS ATTEMPT FAILED — you MUST address this when rewriting the "
+            "\n\nPREVIOUS ATTEMPT FAILED -- you MUST address this when rewriting the "
             f"script:\n{inp.failure_context}"
         )
 
@@ -359,7 +359,7 @@ def _parse_study_answer(
 
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task
+# LangGraph layer -- @task
 # ---------------------------------------------------------------------------
 
 

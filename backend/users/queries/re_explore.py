@@ -1,4 +1,4 @@
-"""backend.users.queries.re_explore — re_explore_node handler."""
+"""backend.users.queries.re_explore -- re_explore_node handler."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ async def re_explore_node(
     to the snapshot where the parent subgraph is in ``next``.
 
     For topology-only conditional nodes (``node_id`` starts with ``"topology-"``)
-    the node has never run — it was bypassed by the routing decision.  In this
+    the node has never run -- it was bypassed by the routing decision.  In this
     case the function forks from the checkpoint just before the routing source
     node ran, so the routing decision can be made again.
 

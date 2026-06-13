@@ -1,4 +1,4 @@
-"""backend.langgraph.lifecycle.errors — lifecycle error codes and exception types."""
+"""backend.langgraph.lifecycle.errors -- lifecycle error codes and exception types."""
 
 from __future__ import annotations
 

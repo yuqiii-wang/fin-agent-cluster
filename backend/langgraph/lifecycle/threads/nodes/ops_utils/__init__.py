@@ -1,4 +1,4 @@
-"""ops_utils — internal implementation modules for node lifecycle operations."""
+"""ops_utils -- internal implementation modules for node lifecycle operations."""
 
 from backend.langgraph.lifecycle.threads.nodes.ops_utils.cancel import cancel_node
 from backend.langgraph.lifecycle.threads.nodes.ops_utils.complete import complete_node

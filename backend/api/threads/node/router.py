@@ -1,11 +1,11 @@
-"""backend.api.threads.node — node-level API endpoints.
+"""backend.api.threads.node -- node-level API endpoints.
 
 Routes (all mounted on the parent ``/threads`` router):
 
-    GET  /api/v1/threads/{thread_id}/nodes                          — list all node executions
-    POST /api/v1/threads/{thread_id}/nodes/{node_id}/cancel         — cancel a node
-    POST /api/v1/threads/{thread_id}/nodes/{node_id}/re-explore     — fork at pre-node checkpoint
-    POST /api/v1/threads/{thread_id}/nodes/{node_id}/invalidate-cache — zero out task cache TTLs
+    GET  /api/v1/threads/{thread_id}/nodes                          -- list all node executions
+    POST /api/v1/threads/{thread_id}/nodes/{node_id}/cancel         -- cancel a node
+    POST /api/v1/threads/{thread_id}/nodes/{node_id}/re-explore     -- fork at pre-node checkpoint
+    POST /api/v1/threads/{thread_id}/nodes/{node_id}/invalidate-cache -- zero out task cache TTLs
 """
 
 from __future__ import annotations

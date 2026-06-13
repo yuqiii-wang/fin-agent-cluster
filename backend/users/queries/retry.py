@@ -1,4 +1,4 @@
-"""backend.users.queries.retry — Business logic for retrying a completed/failed task.
+"""backend.users.queries.retry -- Business logic for retrying a completed/failed task.
 
 Retry modes
 -----------
@@ -157,11 +157,11 @@ async def retry_task(thread_id: str, task_id: str, mode: str) -> TaskInfo:
             status_code=409,
             detail=(
                 f"[{TASK_RETRY_NOT_RETRYABLE}] task_id={task_id} "
-                "could not be reset — may already be running"
+                "could not be reset -- may already be running"
             ),
         )
 
-    # 4a. If the task was paused, also reset the node from paused → running.
+    # 4a. If the task was paused, also reset the node from paused -> running.
     if task_row["status"] == "paused" and node_id:
         from backend.langgraph.lifecycle.threads.nodes.ops import resume_node  # noqa: PLC0415
         await resume_node(thread_id, node_id, node_name)
@@ -272,7 +272,7 @@ async def _run_retry_background(
     except Exception as exc:
         from backend.langgraph.lifecycle.errors import TaskPausedError
         if isinstance(exc, TaskPausedError):
-            # Task was paused again during retry — lifecycle already handled by
+            # Task was paused again during retry -- lifecycle already handled by
             # pause_task_by_uuid; nothing more to do here.
             return
         logger.error(
@@ -395,7 +395,7 @@ async def retry_fresh_task(thread_id: str, task_id: str) -> TaskInfo:
         task_id:   Task governance UUID.
 
     Returns:
-        Updated :class:`~backend.users.schemas.TaskInfo` — either ``paused``
+        Updated :class:`~backend.users.schemas.TaskInfo` -- either ``paused``
         (restart pending) or ``running`` (restart already dispatched).
 
     Raises:
@@ -419,7 +419,7 @@ async def retry_fresh_task(thread_id: str, task_id: str) -> TaskInfo:
     status: str = task_row["status"]
 
     if status == "running":
-        # Step 1: pause immediately — marks DB as 'paused' and emits SSE so
+        # Step 1: pause immediately -- marks DB as 'paused' and emits SSE so
         # the frontend learns the new status.  The Redis pause flag signals
         # the Celery worker to stop gracefully.
         await pause_task_by_uuid(thread_id, task_id)
@@ -427,7 +427,7 @@ async def retry_fresh_task(thread_id: str, task_id: str) -> TaskInfo:
         # Step 2: capture the Celery result AFTER pausing so we know which
         # result handle to watch.  The handle may already be None if the
         # worker happened to finish naturally between our DB read and the
-        # pause call — in that case the background task skips the wait.
+        # pause call -- in that case the background task skips the wait.
         registry = get_thread_registry()
         celery_result = registry.get_celery_result(task_id)
 
@@ -505,7 +505,7 @@ async def retry_restart_task(thread_id: str, task_id: str) -> TaskInfo:
     """Restart a terminal task from scratch, dropping all existing output.
 
     A lightweight alternative to :func:`retry_fresh_task` that performs no
-    pause coordination — the task must already be in a retryable terminal
+    pause coordination -- the task must already be in a retryable terminal
     state (``completed`` / ``failed`` / ``cancelled`` / ``paused``).
 
     Intended for non-streaming completion tasks where there is no Celery

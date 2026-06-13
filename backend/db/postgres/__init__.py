@@ -6,11 +6,11 @@ uses Redis Pub/Sub (see backend.db.redis.lifecycle.subscriber).
 
 Read / write routing
 --------------------
-* ``raw_conn()`` → primary (write pool)
-* ``raw_conn(readonly=True)`` → replica read pool (falls back to primary when
+* ``raw_conn()`` -> primary (write pool)
+* ``raw_conn(readonly=True)`` -> replica read pool (falls back to primary when
   no replica is configured).
-* ``get_session_factory()`` → primary session factory
-* ``get_read_session_factory()`` → replica session factory (or primary fallback)
+* ``get_session_factory()`` -> primary session factory
+* ``get_read_session_factory()`` -> replica session factory (or primary fallback)
 """
 
 from backend.db.postgres.base import Base

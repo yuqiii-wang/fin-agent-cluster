@@ -1,4 +1,4 @@
-"""backend.langgraph.agent.error_log.context — current-thread binding for log capture.
+"""backend.langgraph.agent.error_log.context -- current-thread binding for log capture.
 
 The :class:`ContextVar` set here is read by :class:`ThreadErrorLogHandler` at
 emit time so every WARNING+ log record produced inside a graph run (or a Celery
@@ -7,10 +7,10 @@ threading the id through every call site.
 
 Binding points
 --------------
-* Graph process — ``backend.main_thread.executor._run_graph`` binds the id right
+* Graph process -- ``backend.main_thread.executor._run_graph`` binds the id right
   after stamping the fencing token, so all coroutines spawned by the graph
   inherit it (asyncio copies the context when creating sub-tasks).
-* Celery worker — the streaming task entrypoints bind it before ``asyncio.run``
+* Celery worker -- the streaming task entrypoints bind it before ``asyncio.run``
   so logs emitted while streaming carry the id in that process too.
 """
 

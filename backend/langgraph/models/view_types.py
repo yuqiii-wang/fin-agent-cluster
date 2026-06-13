@@ -2,8 +2,8 @@
 
 DB ENUMs
 --------
-``fin_agents.task_view_types``  — used in ``fin_agents.tasks.view_type``
-``fin_agents.node_view_types``  — used in ``fin_agents.nodes.view_type``
+``fin_agents.task_view_types``  -- used in ``fin_agents.tasks.view_type``
+``fin_agents.node_view_types``  -- used in ``fin_agents.nodes.view_type``
 """
 
 from __future__ import annotations

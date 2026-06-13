@@ -1,11 +1,11 @@
-"""backend.auth — authentication domain package.
+"""backend.auth -- authentication domain package.
 
 Manages authentication concerns:
 
-* :mod:`~backend.auth.jwt`    — HS256 JWT encoding + Centrifugo token generation.
-* :mod:`~backend.auth.guest`  — guest user creation and bearer-token validation.
-* :mod:`~backend.auth.schemas` — Pydantic response models for auth endpoints.
-* :mod:`~backend.auth.errors` — error code constants.
+* :mod:`~backend.auth.jwt`    -- HS256 JWT encoding + Centrifugo token generation.
+* :mod:`~backend.auth.guest`  -- guest user creation and bearer-token validation.
+* :mod:`~backend.auth.schemas` -- Pydantic response models for auth endpoints.
+* :mod:`~backend.auth.errors` -- error code constants.
 
 The FastAPI router lives in :mod:`backend.api.auth.router`.
 """

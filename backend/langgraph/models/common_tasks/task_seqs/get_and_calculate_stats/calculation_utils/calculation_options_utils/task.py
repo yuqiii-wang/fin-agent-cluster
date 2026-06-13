@@ -1,4 +1,4 @@
-"""task — LangGraph @task orchestration and NodeTask registration for options stats.
+"""task -- LangGraph @task orchestration and NodeTask registration for options stats.
 
 Provides:
 - ``_calculate_option_stats_task``: LangGraph ``@task`` delegating to Celery.

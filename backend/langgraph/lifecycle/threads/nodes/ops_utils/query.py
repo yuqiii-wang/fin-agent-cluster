@@ -22,7 +22,7 @@ async def read_node_output(node_id: str) -> dict:
     an empty dict when the node is still in-flight, failed, or cancelled so
     that callers do not proceed on an incomplete predecessor.
 
-    For Mirror nodes the stored output is ``{"task_id": "..."}`` — this
+    For Mirror nodes the stored output is ``{"task_id": "..."}`` -- this
     function transparently resolves the reference by fetching the
     corresponding row from ``fin_agents.task_executions``.
 
@@ -88,7 +88,7 @@ async def get_latest_sibling_node_version(
     """Return the latest completed version of a parallel sibling node.
 
     Used by the parallel sibling shortcut.  The sibling's latest completed
-    version is independent of the forked node's ``fork_source_version`` —
+    version is independent of the forked node's ``fork_source_version`` --
     it reflects all re-explores of the sibling that have happened so far,
     regardless of which other parallel node triggered the current fork.
 

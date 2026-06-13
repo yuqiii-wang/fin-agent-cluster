@@ -1,10 +1,10 @@
-"""llm_orchestration_on_failure — NodeTask: LLM-driven recovery decision after a step failure.
+"""llm_orchestration_on_failure -- NodeTask: LLM-driven recovery decision after a step failure.
 
 When an AGENT node step raises, the generic step runner invokes this task to
 study the failure and decide how to recover.  Rather than reading every
 historical task output, the task assembles a small, bounded diagnostic context:
 
-* Completed-task descriptors — ``task_id`` / ``task_name`` / ``description`` only
+* Completed-task descriptors -- ``task_id`` / ``task_name`` / ``description`` only
   (no outputs), so the LLM knows what already ran.
 * The *last failed* task output, truncated to the top 1k characters.
 * This thread's recent WARNING+ logs (see
@@ -14,13 +14,13 @@ historical task output, the task assembles a small, bounded diagnostic context:
 
 That context is streamed to the LLM (single phase), which proposes either:
 
-    * ``"retry_from_step"`` — regenerate an earlier LLM *streaming* step (chosen
+    * ``"retry_from_step"`` -- regenerate an earlier LLM *streaming* step (chosen
       from ``retry_candidates``).  No concrete values are injected; instead the
       failure reason and the decision's ``reasoning`` are forwarded to the
       regenerated streaming task so it can correct its output (e.g. rewrite an
       extraction script).  The new failure-context changes the task input hash so
       the retried task runs fresh (cache is bypassed naturally).
-    * ``"fail"``            — the failure is unrecoverable.
+    * ``"fail"``            -- the failure is unrecoverable.
 
 Execution layers
 ----------------
@@ -34,11 +34,11 @@ Celery layer (``STREAM_PROMPT_BUILDERS``):
 
 Public exports
 --------------
-``llm_orchestration_on_failure``   — ``NodeTask`` instance.
-``LlmOrchestrationInput``          — Pydantic input model.
-``LlmOrchestrationOutput``         — Pydantic output (decision) model.
-``STREAM_PROMPT_BUILDERS``         — dict slice for the Celery stream prompt registry.
-``HANDLERS``                       — handler slice (streaming task; raises if called directly).
+``llm_orchestration_on_failure``   -- ``NodeTask`` instance.
+``LlmOrchestrationInput``          -- Pydantic input model.
+``LlmOrchestrationOutput``         -- Pydantic output (decision) model.
+``STREAM_PROMPT_BUILDERS``         -- dict slice for the Celery stream prompt registry.
+``HANDLERS``                       -- handler slice (streaming task; raises if called directly).
 """
 
 from __future__ import annotations
@@ -141,14 +141,14 @@ def _truncate(text: str, cap: int) -> str:
     """Return *text* truncated to *cap* characters with an elision marker."""
     if len(text) <= cap:
         return text
-    return text[:cap] + " …[truncated]"
+    return text[:cap] + " ...[truncated]"
 
 def _format_descriptors(descriptors: list[dict[str, Any]]) -> str:
     """Render completed-task descriptors as a bullet list for the LLM."""
     if not descriptors:
         return "(none)"
     return "\n".join(
-        f"- {d['task_id']} — {d['task_name']}: {d.get('description') or ''}"
+        f"- {d['task_id']} -- {d['task_name']}: {d.get('description') or ''}"
         for d in descriptors
     )
 
@@ -192,13 +192,13 @@ regenerates its output from scratch, and your "reasoning" plus the failure reaso
 are handed to that task so it can fix the mistake (e.g. rewrite the script).
 
 You CANNOT inject concrete values.  Do NOT invent or hallucinate any numbers,
-fields, or data — the regenerated task must derive correct values itself from
+fields, or data -- the regenerated task must derive correct values itself from
 the source content.  Your job is only to (a) pick which earlier streaming step to
 regenerate and (b) explain, in "reasoning", what went wrong and what to fix.
 
 If no candidate could plausibly fix the failure, fail.
 
-Return ONLY a JSON object — no prose:
+Return ONLY a JSON object -- no prose:
 {{
   "action": "retry_from_step" | "fail",
   "retry_from_step": "<one of the RETRY CANDIDATES names, or null when action is fail>",
@@ -224,7 +224,7 @@ RETRY CANDIDATES: {retry_candidates}
 CONTEXT:
 {context_summary}
 
-COMPLETED TASKS (id — name: description):
+COMPLETED TASKS (id -- name: description):
 {descriptors}
 
 LAST FAILED TASK OUTPUT (truncated):
@@ -313,7 +313,7 @@ def _parse_decision(answer_dict: dict[str, Any], retry_candidates: list[str]) ->
     )
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task
+# LangGraph layer -- @task
 # ---------------------------------------------------------------------------
 
 async def _llm_orchestration_on_failure_task(
@@ -321,8 +321,8 @@ async def _llm_orchestration_on_failure_task(
 ) -> TaskOutput[LlmOrchestrationOutput]:
     """LangGraph @task: decide how to recover from a failed agent step.
 
-    Assembles a bounded diagnostic context — completed-task descriptors, the
-    truncated last-failed output, and the thread's deduplicated WARNING+ logs —
+    Assembles a bounded diagnostic context -- completed-task descriptors, the
+    truncated last-failed output, and the thread's deduplicated WARNING+ logs --
     then streams it to the LLM and parses a structured recovery decision.
 
     Args:
@@ -358,7 +358,7 @@ async def _llm_orchestration_on_failure_task(
         json.dumps(failed_output_payload, indent=2, default=str), char_cap
     )
 
-    # This thread's deduplicated WARNING+ logs (each already ≤ char_cap).
+    # This thread's deduplicated WARNING+ logs (each already <= char_cap).
     thread_logs = [
         e.model_dump(mode="json") for e in await get_thread_logs(ctx.thread_id)
     ]

@@ -10,8 +10,8 @@ Thread (thread_id)
 Design intent
 -------------
 ``NodeContext`` is the minimal identity carrier that every lifecycle call
-(upsert_node, complete_node, create_task …) needs.  ``TaskContext`` extends
-it so the full thread → node → task chain is available at the task layer
+(upsert_node, complete_node, create_task ...) needs.  ``TaskContext`` extends
+it so the full thread -> node -> task chain is available at the task layer
 without needing to pass multiple IDs separately.
 
 ``TaskInput[T]`` separates identity (``ctx``) from biz payload (``content``).
@@ -22,7 +22,7 @@ Agent upgrade path
 ------------------
 In agent mode, the LLM receives ``content`` as its tool input and produces
 ``TaskOutput[T].content`` as the tool output.  ``ctx`` is bound at
-invocation time by ``BaseNode.run_task()`` — invisible to the LLM but always
+invocation time by ``BaseNode.run_task()`` -- invisible to the LLM but always
 present for tracing and persistence.
 """
 
@@ -61,7 +61,7 @@ class BaseTaskInput(BaseModel):
 
 
 class NodeContext(BaseModel):
-    """Thread → Node identity.  Passed to all lifecycle calls and run_task()."""
+    """Thread -> Node identity.  Passed to all lifecycle calls and run_task()."""
 
     # Allow mutation so BaseNode.__call__ can accumulate task_ids after tasks start.
     model_config = ConfigDict(frozen=False)
@@ -91,7 +91,7 @@ class TaskInput(BaseModel, Generic[T]):
     """Typed input envelope for a @task.
 
     Attributes:
-        ctx:    Full thread → node → task identity chain.
+        ctx:    Full thread -> node -> task identity chain.
         content: Biz-specific input; type is fixed by the concrete subclass.
         memory: In-flight agent memory accumulated by the enclosing agent node
                 across its execution loop.  Empty list on the first iteration.
@@ -110,7 +110,7 @@ class TaskOutput(BaseModel, Generic[T]):
     """Typed output envelope from a @task.  Mirrors TaskInput for traceability.
 
     Attributes:
-        ctx:      Same TaskContext that was passed in — carries origin identity.
+        ctx:      Same TaskContext that was passed in -- carries origin identity.
         content:  Biz-specific result; type is fixed by the concrete subclass.
         thinking: Chain-of-thought text captured from streaming tasks.  Set by
                   streaming ``@task`` functions so the agent loop can store it

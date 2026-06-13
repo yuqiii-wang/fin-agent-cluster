@@ -1,4 +1,4 @@
-"""calculate_corr — common NodeTask to compute pairwise Pearson correlation of close prices.
+"""calculate_corr -- common NodeTask to compute pairwise Pearson correlation of close prices.
 
 Fetches close-price series for a list of equity symbols from
 ``fin_markets.quant_stats`` and computes the full Pearson correlation matrix
@@ -6,7 +6,7 @@ using ``pandas``.
 
 Design notes
 ------------
-* Only symbols with sufficient data (≥ 2 overlapping bars after alignment) are
+* Only symbols with sufficient data (>= 2 overlapping bars after alignment) are
   included; missing symbols are listed in :attr:`CalculateCorrOutput.skipped_symbols`.
 * Close-price series are **inner-joined** by ``bar_time`` so only bars present
   for all symbols contribute to the correlation.  This prevents misaligned data
@@ -29,8 +29,8 @@ Celery layer (``_handler``):
 
 Public exports
 --------------
-``calculate_corr``  — ``NodeTask`` instance.
-``HANDLERS``        — dict slice for ``backend.langgraph.nodes.HANDLERS``.
+``calculate_corr``  -- ``NodeTask`` instance.
+``HANDLERS``        -- dict slice for ``backend.langgraph.nodes.HANDLERS``.
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ class CalculateCorrOutput(BaseModel):
     """Output from the calculate_corr task.
 
     Attributes:
-        matrix:            Nested dict ``{symbol → {symbol → correlation}}``.
+        matrix:            Nested dict ``{symbol -> {symbol -> correlation}}``.
                            Pearson correlation coefficients in [-1.0, 1.0] on close prices.
         indicator_matrices: Per-indicator Pearson matrices keyed by column name
                            (``"sma_20"``, ``"sma_50"``, ``"ema_12"``, ``"ema_26"``).
@@ -110,7 +110,7 @@ class CalculateCorrOutput(BaseModel):
     matrix: dict[str, dict[str, float]]
     indicator_matrices: dict[str, dict[str, dict[str, float]]] = Field(
         default_factory=dict,
-        description="Per-indicator Pearson matrices: {indicator → {symbol → {symbol → r}}}.",
+        description="Per-indicator Pearson matrices: {indicator -> {symbol -> {symbol -> r}}}.",
     )
     included_symbols: list[str]
     skipped_symbols: list[str]
@@ -177,7 +177,7 @@ async def _fetch_sma_ema_series(
 ) -> dict[str, pd.Series]:
     """Query SMA/EMA indicator values for *symbol* from ``quant_stats``.
 
-    Returns a dict of column name → Series (indexed by bar_time, named *symbol*).
+    Returns a dict of column name -> Series (indexed by bar_time, named *symbol*).
     Bars where an indicator is ``NULL`` (not yet computed due to insufficient history)
     are stored as ``NaN`` and will be dropped during inner-join alignment.
 
@@ -210,7 +210,7 @@ async def _fetch_sma_ema_series(
     }
 
 # ---------------------------------------------------------------------------
-# Celery layer — business logic
+# Celery layer -- business logic
 # ---------------------------------------------------------------------------
 
 async def _handler(payload: dict) -> dict:
@@ -239,7 +239,7 @@ async def _handler(payload: dict) -> dict:
 
     if len(close_map) < 2:
         logger.warning(
-            "[%s] Fewer than 2 symbols have bar data for granularity=%r; skipped=%s — returning empty corr",
+            "[%s] Fewer than 2 symbols have bar data for granularity=%r; skipped=%s -- returning empty corr",
             STATS_TASK_CORR_INSUFFICIENT_DATA, inp.granularity, skipped_symbols,
         )
         return CalculateCorrOutput(
@@ -250,7 +250,7 @@ async def _handler(payload: dict) -> dict:
     matrix, bar_count = compute_pearson_matrix(close_map, inp.window_bars)
     if not matrix:
         logger.warning(
-            "[%s] Only %d aligned bar(s) after inner-join; need at least %d — returning empty corr",
+            "[%s] Only %d aligned bar(s) after inner-join; need at least %d -- returning empty corr",
             STATS_TASK_CORR_INSUFFICIENT_DATA, bar_count, _MIN_BARS_FOR_CORR,
         )
         return CalculateCorrOutput(
@@ -259,7 +259,7 @@ async def _handler(payload: dict) -> dict:
         ).model_dump()
 
     # --- SMA/EMA indicator Pearson correlations ---
-    # For each indicator column build a {symbol → Series} map, then compute
+    # For each indicator column build a {symbol -> Series} map, then compute
     # the Pearson matrix.  Indicators with insufficient non-NaN overlap are
     # silently omitted (early bars lack enough history to compute SMA_200 etc.).
     indicator_matrices: dict[str, dict[str, dict[str, float]]] = {}
@@ -295,7 +295,7 @@ async def _handler(payload: dict) -> dict:
     ).model_dump()
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _calculate_corr_task(

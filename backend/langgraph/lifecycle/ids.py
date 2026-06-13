@@ -5,12 +5,12 @@ version) triple always produces the same UUID string.  This guarantees that
 nodes within a branch are consistently identified and that different fork
 versions of the same logical node produce distinct IDs.
 
-Task IDs are **unique** (UUID4) — each @task invocation gets a fresh ID.
+Task IDs are **unique** (UUID4) -- each @task invocation gets a fresh ID.
 
 Fork versioning
 ---------------
 ``fork_generation`` is stored in ``GraphState`` and starts at 1 for the
-original run.  Re-exploring (forking) a node increments it to 2, 3, … so
+original run.  Re-exploring (forking) a node increments it to 2, 3, ... so
 that every node executed in the new branch gets a distinct ``node_id`` from
 all prior branches, while nodes that were already checkpointed before the
 fork point keep their original IDs (they do not re-execute).
@@ -35,7 +35,7 @@ def strip_node_suffix(name: str) -> str:
     """
     return _SUFFIX_RE.sub("", name)
 
-# UUID5 namespace (URL namespace — arbitrary but stable across processes).
+# UUID5 namespace (URL namespace -- arbitrary but stable across processes).
 _NODE_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 

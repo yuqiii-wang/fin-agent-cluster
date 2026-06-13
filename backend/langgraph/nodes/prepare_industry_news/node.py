@@ -1,10 +1,10 @@
-"""PrepareIndustryNewsNode — Workflow node that fetches and digests industry/sector news.
+"""PrepareIndustryNewsNode -- Workflow node that fetches and digests industry/sector news.
 
 Hierarchy
 ---------
 Thread
   └── prepare_industry_news  (Workflow)
-        └── get_and_digest_news  (TaskSeq → get_news + digest_news)  [×1]
+        └── get_and_digest_news  (TaskSeq -> get_news + digest_news)  [×1]
 
 Node design
 -----------
@@ -12,9 +12,9 @@ The node reads ``stock_name`` from the ``query_node`` output to anchor the news
 search to a relevant industry/sector context, then runs the
 ``get_and_digest_news`` pipeline to:
 
-1. ``get_news``    — fetch latest industry/sector news via FMP and web-search
+1. ``get_news``    -- fetch latest industry/sector news via FMP and web-search
                      snippets via DDGS, cache result in ``fin_markets.input_raw``.
-2. ``digest_news`` — enrich each article with LLM completion (ARK/Doubao),
+2. ``digest_news`` -- enrich each article with LLM completion (ARK/Doubao),
                      embed the AI summary, and upsert to ``fin_markets.news_stats``.
 
 Default topics: ``["industry", "sector", "competition", "regulation", "supply chain"]``.
@@ -22,7 +22,7 @@ Default lookback: 7 calendar days before the run date.
 
 Predecessor
 -----------
-``query_node`` — must be completed before ``prepare_industry_news`` starts.
+``query_node`` -- must be completed before ``prepare_industry_news`` starts.
 Runs in parallel with ``prepare_peers``, ``prepare_macro_stats``, ``prepare_index``,
 ``prepare_news``, and ``prepare_macro_news``.
 """
@@ -88,7 +88,7 @@ class PrepareIndustryNewsNode(BaseNode[PrepareIndustryNewsInput, PrepareIndustry
     _prev_node_names: ClassVar[list[str]] = ["query_node"]
 
     async def build_input(self, state: GraphState) -> PrepareIndustryNewsInput:
-        """Construct node input — resolves stock symbol from query_node output.
+        """Construct node input -- resolves stock symbol from query_node output.
 
         Args:
             state: Current GraphState.
@@ -134,7 +134,7 @@ class PrepareIndustryNewsNode(BaseNode[PrepareIndustryNewsInput, PrepareIndustry
         """
         async def _run(node_input: PrepareIndustryNewsInput) -> dict:
             # Step 1: propose industry-specific topics via LLM.
-            # Soft failure — if the proposal task raises, fall back to an empty
+            # Soft failure -- if the proposal task raises, fall back to an empty
             # topic list so get_news still runs (symbol-only search).
             topics: list[str] = []
             try:
@@ -196,7 +196,7 @@ class PrepareIndustryNewsNode(BaseNode[PrepareIndustryNewsInput, PrepareIndustry
         )
 
     def get_state_updates(self, output: PrepareIndustryNewsOutput) -> dict[str, Any]:
-        """No GraphState updates — output stored in node_executions via lifecycle.
+        """No GraphState updates -- output stored in node_executions via lifecycle.
 
         Args:
             output: Completed node output.

@@ -2,9 +2,9 @@
 
 Error code prefixes
 -------------------
-``PG_POOL_``          — Connection pool lifecycle errors.
-``PG_CHECKPOINTER_``  — LangGraph checkpointer setup errors.
-``PG_QUERY_``         — Query execution failures.
+``PG_POOL_``          -- Connection pool lifecycle errors.
+``PG_CHECKPOINTER_``  -- LangGraph checkpointer setup errors.
+``PG_QUERY_``         -- Query execution failures.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ PG_POOL_NOT_OPENED = "PG_POOL_NOT_OPENED"
 #: Checkpointer timed out waiting for the distributed setup lock.
 PG_CHECKPOINTER_TIMEOUT = "PG_CHECKPOINTER_TIMEOUT"
 
-#: Checkpointer lock was released but the sentinel key or flag was not set —
+#: Checkpointer lock was released but the sentinel key or flag was not set --
 #: setup did not complete successfully.
 PG_CHECKPOINTER_SETUP_FAILED = "PG_CHECKPOINTER_SETUP_FAILED"
 

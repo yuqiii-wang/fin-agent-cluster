@@ -1,4 +1,4 @@
-"""PrepareDerivativesNode — Agent node that fetches derivatives market knowledge
+"""PrepareDerivativesNode -- Agent node that fetches derivatives market knowledge
 and calculates OHLCV stats for the queried equity symbol.
 
 Hierarchy
@@ -7,30 +7,30 @@ Thread
   └── prepare_derivatives  (Agent)
         ├── load_markdown  (propose_web_knowledge_urls + load_md_from_url:
         │                   crawl_url + html_to_markdown)
-        ├── study_web      (study_web_content + run_sandbox — LLM streaming step)
-        └── get_and_calculate_stats  (TaskSeq → get_stats + calculate_stats)
+        ├── study_web      (study_web_content + run_sandbox -- LLM streaming step)
+        └── get_and_calculate_stats  (TaskSeq -> get_stats + calculate_stats)
 
 Node design
 -----------
 The node reads the stock symbol from ``query_node`` output and runs sequential
 steps for that symbol:
 
-1. ``load_markdown`` — proposes one or more financial data URLs for the equity
+1. ``load_markdown`` -- proposes one or more financial data URLs for the equity
    symbol, then crawls each URL and converts the HTML to Markdown.
-2. ``study_web`` — the LLM *streaming* step: generates a Python transform script
+2. ``study_web`` -- the LLM *streaming* step: generates a Python transform script
    per page and executes it in a sandbox to produce structured options JSON.
    Calls/puts from all pages are merged and deduplicated.  On a later-step
    failure the agent loop regenerates this step with failure-context guidance.
-3. ``get_and_calculate_stats`` — ingests the merged options JSON and computes
+3. ``get_and_calculate_stats`` -- ingests the merged options JSON and computes
    technical indicators for the underlying equity symbol; persists rows to
    ``fin_markets.quant_stats``.
-3. ``calculate_options`` — upserts each call/put contract into
+3. ``calculate_options`` -- upserts each call/put contract into
    ``fin_markets.quant_options_stats`` and aggregates per expiry into
    ``fin_markets.quant_derivative_stats``.
 
 Predecessor
 -----------
-``query_node`` — must be completed before ``prepare_derivatives`` starts.
+``query_node`` -- must be completed before ``prepare_derivatives`` starts.
 Runs in parallel with ``prepare_peers``, ``prepare_macro_stats``, ``prepare_index``,
 ``prepare_news``, ``prepare_industry_news``, and ``prepare_macro_news``.
 """
@@ -130,7 +130,7 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
     _agent_max_iterations: ClassVar[int] = 2
 
     async def build_input(self, state: GraphState) -> PrepareDerivativesInput:
-        """Construct node input — reads stock_symbol from query_node output.
+        """Construct node input -- reads stock_symbol from query_node output.
 
         Args:
             state: Current GraphState.
@@ -291,7 +291,7 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
         summary = results.get(_SUMMARY_KEY)
         if summary is None:
             raise RuntimeError(
-                "PD-005: derivatives summary missing from agent results — "
+                "PD-005: derivatives summary missing from agent results -- "
                 "_build_final_output did not complete."
             )
         data: dict = summary.content
@@ -300,7 +300,7 @@ class PrepareDerivativesNode(BaseNode[PrepareDerivativesInput, PrepareDerivative
         )
 
     def get_state_updates(self, output: PrepareDerivativesOutput) -> dict[str, Any]:
-        """No GraphState updates — output stored in node_executions via lifecycle.
+        """No GraphState updates -- output stored in node_executions via lifecycle.
 
         Args:
             output: Completed node output.

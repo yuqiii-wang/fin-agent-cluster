@@ -11,11 +11,11 @@ the same container so that files written by one task can be read by the next.
 
 Error mapping
 -------------
-HTTP 422 from runner    → ``SandboxSecurityError`` or ``SandboxUnsupportedLanguageError``
-HTTP connect failure    → ``SandboxRunnerError``
-HTTP timeout            → ``SandboxTimeoutError``
-``timed_out=True`` body → ``SandboxTimeoutError``
-Other HTTP error        → ``SandboxRunnerError``
+HTTP 422 from runner    -> ``SandboxSecurityError`` or ``SandboxUnsupportedLanguageError``
+HTTP connect failure    -> ``SandboxRunnerError``
+HTTP timeout            -> ``SandboxTimeoutError``
+``timed_out=True`` body -> ``SandboxTimeoutError``
+Other HTTP error        -> ``SandboxRunnerError``
 """
 
 from __future__ import annotations

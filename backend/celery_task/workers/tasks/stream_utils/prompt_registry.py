@@ -1,6 +1,6 @@
 """Prompt builder registry for streaming Celery tasks.
 
-Maps task_name → callable(payload: dict) -> list[BaseMessage].
+Maps task_name -> callable(payload: dict) -> list[BaseMessage].
 Tasks that run via delegate_stream register their prompt builders here.
 Populated lazily on first use to avoid circular imports at module load time.
 """

@@ -1,15 +1,15 @@
-"""centrifugo.client — HTTP API client for publishing events to Centrifugo.
+"""centrifugo.client -- HTTP API client for publishing events to Centrifugo.
 
 Architecture
 ------------
 Centrifugo is split into two tiers:
 
-1. **Token-streaming tier** — centrifugo-llm-0 + centrifugo-llm-1.
+1. **Token-streaming tier** -- centrifugo-llm-0 + centrifugo-llm-1.
    Each node backs a dedicated Redis shard.  LLM tokens flow here via Centrifugo's
    built-in Redis Stream consumer (``fin:llm:tokens``).  FastAPI does NOT publish
    to these nodes directly.
 
-2. **SSE lifecycle tier** — centrifugo-sse-0 + centrifugo-sse-1.
+2. **SSE lifecycle tier** -- centrifugo-sse-0 + centrifugo-sse-1.
    All lifecycle events published by FastAPI (started, completed, done, query_*,
    node_*, stream_*) are sent to the shard determined by SHA-256(thread_id) % 2.
    Each shard has its own dedicated Redis backend.
@@ -19,15 +19,15 @@ never raised, so a transient Centrifugo outage does not crash the graph.
 
 Public API
 ----------
-:func:`get_shard_index`      — deterministic shard index (0 or 1) for a thread_id.
+:func:`get_shard_index`      -- deterministic shard index (0 or 1) for a thread_id.
                                Used by the auth endpoint to return the correct
                                token-stream WebSocket URL to the frontend.
-:func:`get_sse_shard_index`  — deterministic SSE shard index (0 or 1) for a thread_id.
+:func:`get_sse_shard_index`  -- deterministic SSE shard index (0 or 1) for a thread_id.
                                Used by the auth endpoint and publish functions.
-:func:`publish_thread_event` — thread-level events → centrifugo-sse-{shard}.
-:func:`publish_node_event`   — node-level events → centrifugo-sse-{shard}.
-:func:`publish_task_event`   — task-level events → centrifugo-sse-{shard}.
-:func:`publish_stream_event` — stream-level events → centrifugo-sse-{shard}.
+:func:`publish_thread_event` -- thread-level events -> centrifugo-sse-{shard}.
+:func:`publish_node_event`   -- node-level events -> centrifugo-sse-{shard}.
+:func:`publish_task_event`   -- task-level events -> centrifugo-sse-{shard}.
+:func:`publish_stream_event` -- stream-level events -> centrifugo-sse-{shard}.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ def _get_sse_http_client(shard: int) -> AsyncClient:
     if existing is not None and not existing.is_closed and cached_loop is current_loop:
         return existing
 
-    # Loop changed (Celery asyncio.run recycled the loop) or first access —
+    # Loop changed (Celery asyncio.run recycled the loop) or first access --
     # create a fresh client bound to the current loop.
     _sse_http_clients[shard] = make_centrifugo_sse_async_client()
     _sse_http_client_loops[shard] = current_loop
@@ -129,12 +129,12 @@ def get_sse_shard_index(thread_id: str) -> int:
 
 
 async def _publish_to_sse_channel(thread_id: str, payload: dict[str, Any]) -> None:
-    """HTTP transport — publish *payload* to the ``thread:{thread_id}`` channel on centrifugo-sse-{shard}.
+    """HTTP transport -- publish *payload* to the ``thread:{thread_id}`` channel on centrifugo-sse-{shard}.
 
     The shard is determined by SHA-256(thread_id) % len(CENTRIFUGO_SSE_NODES), matching
     the shard the frontend subscribes to via the /auth/centrifugo/sse-notification endpoint.
 
-    Errors are logged at WARNING level and never raised — a transient
+    Errors are logged at WARNING level and never raised -- a transient
     Centrifugo outage must not interrupt the LangGraph execution path.
 
     Args:
@@ -216,7 +216,7 @@ async def _publish_to_sse_channel(thread_id: str, payload: dict[str, Any]) -> No
 # ---------------------------------------------------------------------------
 # Scope-specific public API
 # All four functions publish to the ``thread:{thread_id}`` channel on centrifugo-sse.
-# The scope is semantic — it makes call-sites explicit about the lifecycle
+# The scope is semantic -- it makes call-sites explicit about the lifecycle
 # level of the event.
 # ---------------------------------------------------------------------------
 
@@ -239,7 +239,7 @@ async def publish_node_event(thread_id: str, payload: dict[str, Any]) -> None:
     """Publish a node-level lifecycle event (node_input, node_output, node_status).
 
     Node-scoped events carry timestamps derived from ``fin_agents.node_executions``
-    (``started_at`` + ``elapsed_ms``) — not from wall-clock time at emit.
+    (``started_at`` + ``elapsed_ms``) -- not from wall-clock time at emit.
     Published to centrifugo-sse via its HTTP API.
 
     Args:
@@ -253,7 +253,7 @@ async def publish_task_event(thread_id: str, payload: dict[str, Any]) -> None:
     """Publish a task-level lifecycle event (started, completed, failed, cancelled).
 
     Task-scoped events carry timestamps derived from ``fin_agents.tasks``
-    (``created_at`` / ``updated_at``) — not from wall-clock time at emit.
+    (``created_at`` / ``updated_at``) -- not from wall-clock time at emit.
     Published to centrifugo-sse via its HTTP API.
 
     Args:
@@ -290,9 +290,9 @@ async def has_app_viewers(thread_id: str) -> bool:
 
     Differs from :func:`has_thread_viewers`:
 
-    * ``has_app_viewers`` — is the user's browser open at all?  ``False`` means
+    * ``has_app_viewers`` -- is the user's browser open at all?  ``False`` means
       the browser is closed; skip all SSE publishing and LLM streaming.
-    * ``has_thread_viewers`` — is the user actively viewing *this* thread?
+    * ``has_thread_viewers`` -- is the user actively viewing *this* thread?
       ``False`` means they are on a different thread; still publish SSE (stored
       in Centrifugo history for recovery) but skip LLM token streaming.
 
@@ -310,7 +310,7 @@ async def has_app_viewers(thread_id: str) -> bool:
 
     user_id = await get_user_id_for_thread(thread_id)
     if user_id is None:
-        return True  # Cannot determine owner — safe default.
+        return True  # Cannot determine owner -- safe default.
 
     # Primary: explicit Redis flag set at query submission or viewer registration.
     if await has_app_viewer(user_id):
@@ -374,7 +374,7 @@ async def has_thread_viewers(thread_id: str) -> bool:
     # Secondary fallback: Centrifugo presence stats.
     settings = get_settings()
     if not settings.CENTRIFUGO_SSE_NODES:
-        return True  # Safe default — assume viewers present.
+        return True  # Safe default -- assume viewers present.
     shard = get_sse_shard_index(thread_id)
     try:
         base = settings.CENTRIFUGO_SSE_NODES[shard]

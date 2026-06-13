@@ -96,7 +96,7 @@ async def run_stream_compact_continue_async(
     if task_name in builders:
         base_messages = builders[task_name](payload)
     else:
-        # stream_llm path — rebuild the original messages.
+        # stream_llm path -- rebuild the original messages.
         query = payload.get("query", "")
         stats_analysis = payload.get("stats_analysis", "")
         stats_key_metrics = payload.get("stats_key_metrics", {})

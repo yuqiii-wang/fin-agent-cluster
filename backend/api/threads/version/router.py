@@ -1,9 +1,9 @@
-"""backend.api.threads.version — version graph API endpoint.
+"""backend.api.threads.version -- version graph API endpoint.
 
 Routes (all mounted on the parent ``/threads`` router):
 
     GET  /api/v1/threads/{thread_id}/version/{version_id}
-        — return the fork node and all branch nodes for a given version.
+        -- return the fork node and all branch nodes for a given version.
 
 Response structure (:class:`~backend.users.schemas.VersionGraphResponse`):
     - ``version``:        The requested fork generation.

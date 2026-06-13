@@ -1,7 +1,7 @@
-"""propose_industry_news_topics — iterative LLM streaming task for prepare_industry_news.
+"""propose_industry_news_topics -- iterative LLM streaming task for prepare_industry_news.
 
 Given a stock ticker, asks the LLM to identify the company's industry sector and
-propose 5–8 specific news topics that best capture industry-level events relevant
+propose 5-8 specific news topics that best capture industry-level events relevant
 to that company (e.g. "AI chip demand", "cloud spending", "semiconductor regulation").
 
 Execution layers
@@ -20,8 +20,8 @@ Celery layer (``stream_task.run_stream``):
 
 Public exports
 --------------
-``propose_industry_news_topics``  — ``NodeTask`` instance used by ``PrepareIndustryNewsNode``.
-``STREAM_PROMPT_BUILDERS``        — dict slice for registration in ``stream_task.py``.
+``propose_industry_news_topics``  -- ``NodeTask`` instance used by ``PrepareIndustryNewsNode``.
+``STREAM_PROMPT_BUILDERS``        -- dict slice for registration in ``stream_task.py``.
 """
 
 from __future__ import annotations
@@ -88,13 +88,13 @@ class ProposeIndustryNewsTopicsOutput(BaseModel):
 
     Attributes:
         industry: Primary industry sector the company operates in.
-        topics:   5–8 specific news topic keywords relevant to the company's industry.
+        topics:   5-8 specific news topic keywords relevant to the company's industry.
     """
 
     industry: str = Field(description="Primary industry sector of the company.")
     topics: list[str] = Field(
         default_factory=list,
-        description="5–8 industry-specific news topic keywords.",
+        description="5-8 industry-specific news topic keywords.",
     )
 
 # ---------------------------------------------------------------------------
@@ -116,14 +116,14 @@ _PROPOSE_INDUSTRY_NEWS_TOPICS_PROMPT = ChatPromptTemplate.from_messages([
      "industry news (e.g. 'AI chip demand', 'cloud spending', 'semiconductor regulation', "
      "'supply chain disruption').\n"
      "- Topics should reflect the company's competitive landscape and macro sector "
-     "drivers — not company-specific earnings or analyst coverage.\n"
+     "drivers -- not company-specific earnings or analyst coverage.\n"
      "No markdown fences, no explanation, only the JSON."),
     ("human",
      "Identify the industry and propose industry news topics for: {stock_name}"),
 ])
 
 # ---------------------------------------------------------------------------
-# Streaming prompt builder — imported by stream_task.py
+# Streaming prompt builder -- imported by stream_task.py
 # ---------------------------------------------------------------------------
 
 def _build_propose_industry_news_topics_prompt(payload: dict) -> list[BaseMessage]:
@@ -180,7 +180,7 @@ async def _propose_industry_news_topics_pg_cache(
     return ProposeIndustryNewsTopicsOutput(industry=industry, topics=topics)
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _propose_industry_news_topics_task(
@@ -239,13 +239,13 @@ async def _propose_industry_news_topics_task(
         raise
 
 # ---------------------------------------------------------------------------
-# NodeTask instance — imported by PrepareIndustryNewsNode
+# NodeTask instance -- imported by PrepareIndustryNewsNode
 # ---------------------------------------------------------------------------
 
 propose_industry_news_topics = NodeTask(
     name=_TASK_NAME,
     description=(
-        "Ask the LLM to identify the company's industry sector and propose 5–8 "
+        "Ask the LLM to identify the company's industry sector and propose 5-8 "
         "specific news topic keywords that best capture industry-level events "
         "relevant to that company."
     ),

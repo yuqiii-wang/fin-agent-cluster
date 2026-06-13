@@ -1,13 +1,13 @@
-"""backend.celery_task.workers.tasks.stream_utils — helpers for the streaming Celery tasks.
+"""backend.celery_task.workers.tasks.stream_utils -- helpers for the streaming Celery tasks.
 
 Modules
 -------
-text_utils       — extract_thinking_answer, extract_json_from_text
-llm_selection    — select_llm
-prompt_registry  — STREAM_PROMPT_BUILDERS, get_stream_prompt_builders
-stream_core      — run_stream_core, BATCH_MAX_SIZE, BATCH_FLUSH_MS
-prompt_builder   — run_stream_async (stream_llm / conclusion-node path)
-compact_continue — detect_and_compress_repetition, run_stream_compact_continue_async
+text_utils       -- extract_thinking_answer, extract_json_from_text
+llm_selection    -- select_llm
+prompt_registry  -- STREAM_PROMPT_BUILDERS, get_stream_prompt_builders
+stream_core      -- run_stream_core, BATCH_MAX_SIZE, BATCH_FLUSH_MS
+prompt_builder   -- run_stream_async (stream_llm / conclusion-node path)
+compact_continue -- detect_and_compress_repetition, run_stream_compact_continue_async
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""handler — Celery-layer persistence handler for options stats.
+"""handler -- Celery-layer persistence handler for options stats.
 
 Provides:
 - ``calculate_option_stats_handler``: persist an options chain (per-contract rows +

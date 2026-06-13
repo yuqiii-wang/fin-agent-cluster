@@ -1,4 +1,4 @@
-"""FastAPI application for financial agent cluster — main thread."""
+"""FastAPI application for financial agent cluster -- main thread."""
 
 import asyncio
 import logging
@@ -31,14 +31,14 @@ async def _check_db_conn() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage app startup and shutdown for this main thread instance."""
-    # Open shared PostgreSQL connection pools first — raw_conn() and the
+    # Open shared PostgreSQL connection pools first -- raw_conn() and the
     # checkpointer both draw from these pools; must be open before any DB call.
     from backend.db.postgres.pool import open_pools, close_pools as _close_pools
     await open_pools()
     await _check_db_conn()
     await init_db()
     # Pre-compile the unified LangGraph graph with a pooled AsyncPostgresSaver.
-    # Eliminates per-query graph rebuild (~5–20 ms) and cold PG connect (~10–50 ms).
+    # Eliminates per-query graph rebuild (~5-20 ms) and cold PG connect (~10-50 ms).
     from backend.langgraph.compiled import init_compiled_graph
     await init_compiled_graph()
 
@@ -48,12 +48,12 @@ async def lifespan(app: FastAPI):
     await warm_macro_instruments()
 
     # Pre-load market index definitions into the in-process cache so stats calculations
-    # can resolve exchange → index → currency without per-request DB round-trips.
+    # can resolve exchange -> index -> currency without per-request DB round-trips.
     from backend.db.postgres.queries.fin_markets_indexes import warm_market_indexes
     await warm_market_indexes()
 
     # Kill zombie Celery tasks from any previous process before re-dispatching
-    # recoveries — prevents stale workers running in parallel with fresh tasks.
+    # recoveries -- prevents stale workers running in parallel with fresh tasks.
     from backend.main_thread import cleanup_stale_celery_tasks
     await cleanup_stale_celery_tasks()
 

@@ -1,15 +1,15 @@
-"""PreparePeersNode — Workflow node that proposes industry peer companies for a target stock.
+"""PreparePeersNode -- Workflow node that proposes industry peer companies for a target stock.
 
 Hierarchy
 ---------
 Thread
   └── prepare_peers  (Workflow)
-        └── propose_peers   (@task → Celery Streaming)   [×1]
+        └── propose_peers   (@task -> Celery Streaming)   [×1]
 
 Node design
 -----------
 Reads ``stock_name`` from the ``query_node`` output, then runs the
-``propose_peers`` LLM streaming task to identify 3–6 peer or comparable
+``propose_peers`` LLM streaming task to identify 3-6 peer or comparable
 companies for the target stock.
 
 The output (``proposed_peers``) is persisted to ``fin_agents.node_executions``
@@ -17,10 +17,10 @@ and made available to downstream nodes.
 
 Predecessor
 -----------
-``query_node`` — must be completed before ``prepare_peers`` starts.
+``query_node`` -- must be completed before ``prepare_peers`` starts.
 Runs in parallel with ``prepare_macro_stats``, ``prepare_index``,
 ``prepare_news``, ``prepare_industry_news``, ``prepare_macro_news``,
-and ``prepare_derivatives``.
+``prepare_options``, and ``prepare_futures``.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ class PreparePeersNode(BaseNode[AnalyzePeersInput, AnalyzePeersOutput]):
         return AnalyzePeersOutput(proposed_peers=task_output.content.peers)
 
     def get_state_updates(self, output: AnalyzePeersOutput) -> dict[str, Any]:
-        """No GraphState updates — output stored in node_executions via lifecycle.
+        """No GraphState updates -- output stored in node_executions via lifecycle.
 
         Args:
             output: Completed node output.

@@ -91,7 +91,7 @@ class GraphTopologyResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Static topology — mirrors build_graph() in backend.langgraph.graph
+# Static topology -- mirrors build_graph() in backend.langgraph.graph
 #
 # Layout order of ``nodes`` determines left-to-right slot ordering in the UI.
 # Nodes sharing a ``conditional_group`` are collapsed into a single vertical
@@ -105,14 +105,20 @@ GRAPH_TOPOLOGY = GraphTopologyResponse(
         TopologyNodeDef(node_name="prepare_macro_stats",    node_type="Workflow", parallel_group="analyze_parallel"),
         TopologyNodeDef(node_name="prepare_index",    node_type="Workflow", parallel_group="analyze_parallel"),
         TopologyNodeDef(node_name="prepare_news",        node_type="Workflow", parallel_group="analyze_parallel"),
-        TopologyNodeDef(node_name="prepare_derivatives", node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_industry_news", node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_macro_news",    node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_options",       node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_futures",       node_type="Workflow", parallel_group="analyze_parallel"),
     ],
     edges=[
         TopologyEdgeDef(from_node="query_node",    to_node="prepare_peers",        kind="sequential"),
         TopologyEdgeDef(from_node="query_node",    to_node="prepare_macro_stats",  kind="sequential"),
         TopologyEdgeDef(from_node="query_node",    to_node="prepare_index",        kind="sequential"),
         TopologyEdgeDef(from_node="query_node",    to_node="prepare_news",         kind="sequential"),
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_derivatives",  kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_industry_news", kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_macro_news",   kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_options",      kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",    to_node="prepare_futures",      kind="sequential"),
     ],
 )
 
@@ -127,7 +133,7 @@ def get_compiled_topology() -> GraphTopologyResponse:
     """Extract and cache the topology from the compiled LangGraph instance.
 
     Uses ``compiled_graph.get_graph()`` (xray=False) so subgraph nodes are
-    opaque — no inner detail is revealed.  Conditional groups are inferred
+    opaque -- no inner detail is revealed.  Conditional groups are inferred
     from edges: when multiple nodes share the same conditional-edge source,
     they are assigned a ``conditional_group`` named ``{source}_route``.
 
@@ -156,7 +162,7 @@ def get_compiled_topology() -> GraphTopologyResponse:
     # Detect subgraph nodes: their underlying runnable is itself a compiled
     # LangGraph (inherits from langgraph.pregel.Pregel).  We cannot use
     # hasattr(..., 'get_graph') because every LangChain Runnable exposes that
-    # method — only a Pregel instance indicates a true compiled subgraph.
+    # method -- only a Pregel instance indicates a true compiled subgraph.
     subgraph_names: set[str] = set()
     try:
         from langgraph.pregel import Pregel as _Pregel
@@ -209,7 +215,7 @@ def get_compiled_topology() -> GraphTopologyResponse:
             )
         )
 
-    # Build a static-label lookup: (from_node, to_node) → condition_label.
+    # Build a static-label lookup: (from_node, to_node) -> condition_label.
     # The compiled DrawableEdge has no human-readable labels, so we overlay
     # them from the manually maintained GRAPH_TOPOLOGY constant.
     static_labels: dict[tuple[str, str], str] = {

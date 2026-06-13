@@ -1,7 +1,7 @@
 """Base Pydantic models for the LangGraph node/task hierarchy.
 
 Every node and task input/output should inherit from these bases so that
-the thread → node → task identity chain is always present alongside the
+the thread -> node -> task identity chain is always present alongside the
 biz-specific ``content`` payload.
 
 Hierarchy reminder
@@ -67,7 +67,7 @@ def _content_to_dict(content: Any) -> dict[str, Any]:
 class BaseTaskInput(BaseModel, Generic[T]):
     """Envelope for all @task inputs.
 
-    Carries the full thread → node → task identity so that every handler
+    Carries the full thread -> node -> task identity so that every handler
     has access to its location in the hierarchy without needing to accept
     the raw ``GraphState`` dict.
 
@@ -116,7 +116,7 @@ class BaseTaskOutput(BaseModel, Generic[T]):
 class BaseNodeInput(BaseModel, Generic[T]):
     """Envelope for all node inputs.
 
-    Carries the thread → node identity so that node logic always has the
+    Carries the thread -> node identity so that node logic always has the
     full context without reaching into raw ``GraphState`` keys.
 
     Attributes:

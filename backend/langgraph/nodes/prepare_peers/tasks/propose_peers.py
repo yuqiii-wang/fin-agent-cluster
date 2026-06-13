@@ -1,4 +1,4 @@
-"""propose_peers — LLM streaming task that proposes peer companies for a target stock.
+"""propose_peers -- LLM streaming task that proposes peer companies for a target stock.
 
 The LLM receives the stock name and returns a JSON object with a list of peer
 ticker symbols and brief reasoning.
@@ -16,10 +16,10 @@ Celery layer (``stream_task.run_stream``):
 
 Public exports
 --------------
-``propose_peers``             — ``NodeTask`` instance used by ``PreparePeersNode``.
-``ProposePeersInput``         — Pydantic input model.
-``ProposePeersOutput``        — Pydantic output model.
-``STREAM_PROMPT_BUILDERS``    — dict slice for registration in ``stream_task.py``.
+``propose_peers``             -- ``NodeTask`` instance used by ``PreparePeersNode``.
+``ProposePeersInput``         -- Pydantic input model.
+``ProposePeersOutput``        -- Pydantic output model.
+``STREAM_PROMPT_BUILDERS``    -- dict slice for registration in ``stream_task.py``.
 """
 
 from __future__ import annotations
@@ -79,14 +79,14 @@ class ProposePeersOutput(BaseModel):
 _PROPOSE_PEERS_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You are a financial research assistant. "
-     "Given a stock ticker or company name, identify 3–6 peer or comparable companies "
+     "Given a stock ticker or company name, identify 3-6 peer or comparable companies "
      "that trade on the same or a closely related exchange.\n\n"
      "Selection criteria:\n"
      "- Same primary industry or sub-sector\n"
      "- Similar market capitalisation range\n"
      "- Listed on the same regional exchange or a major global exchange\n"
      "- Companies frequently cited as competitors or comparables in analyst reports\n\n"
-     "Respond ONLY with valid JSON — no preamble, no explanation outside the JSON:\n"
+     "Respond ONLY with valid JSON -- no preamble, no explanation outside the JSON:\n"
      '{{ "peers": ["TICKER1", "TICKER2", ...], "reasoning": "<1-3 sentences>" }}'),
     ("human", "Propose peer companies for: {stock_name}"),
 ])
@@ -110,7 +110,7 @@ def _build_propose_peers_prompt(payload: dict) -> list[BaseMessage]:
 STREAM_PROMPT_BUILDERS: dict = {_TASK_NAME: _build_propose_peers_prompt}
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _propose_peers_task(
@@ -172,7 +172,7 @@ async def _propose_peers_task(
 
 propose_peers = NodeTask(
     name=_TASK_NAME,
-    description="Propose 3–6 peer or comparable companies for the target stock using LLM.",
+    description="Propose 3-6 peer or comparable companies for the target stock using LLM.",
     input_type=ProposePeersInput,
     output_type=ProposePeersOutput,
     task_fn=_propose_peers_task,

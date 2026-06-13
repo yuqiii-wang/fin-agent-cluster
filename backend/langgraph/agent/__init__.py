@@ -1,4 +1,4 @@
-"""backend.langgraph.agent — custom agent execution, capabilities, and lifecycle."""
+"""backend.langgraph.agent -- custom agent execution, capabilities, and lifecycle."""
 
 from __future__ import annotations
 

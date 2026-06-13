@@ -30,4 +30,4 @@ class WebStockOutput(BaseModel):
 
     url: str = Field(default="", description="Canonical URL of the fetched page.")
     title: str = Field(default="", description="Page title.")
-    content: str = Field(default="", description="Plain-text extract of the page (≤2 000 chars).")
+    content: str = Field(default="", description="Plain-text extract of the page (<=2 000 chars).")

@@ -1,12 +1,12 @@
-"""Quant — quantitative analysis layer.
+"""Quant -- quantitative analysis layer.
 
 Sub-packages
 ------------
-stats                  — pandas-based OHLCV computation utilities (DataFrame conversion,
+stats                  -- pandas-based OHLCV computation utilities (DataFrame conversion,
                          metric calculations, indicator computation, Pearson correlation).
                          Market data models and HTTP clients live in :mod:`backend.resources.stats`.
-instrument_types       — instrument type literals and symbol-to-type resolution.
-field_name_conversion  — generic field-name normalisation to snake_case; percent-string coercion.
+instrument_types       -- instrument type literals and symbol-to-type resolution.
+field_name_conversion  -- generic field-name normalisation to snake_case; percent-string coercion.
 """
 
 from __future__ import annotations

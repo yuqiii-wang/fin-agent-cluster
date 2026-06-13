@@ -1,4 +1,4 @@
-"""calculate_fundamental_stats — NodeTask wrapping the fundamental aggregation handler.
+"""calculate_fundamental_stats -- NodeTask wrapping the fundamental aggregation handler.
 
 Routes the aggregated multi-endpoint payload to
 :func:`~calculation_utils.calculate_fundamental_stats.calculate_fundamental_stats_handler`
@@ -16,10 +16,10 @@ Celery layer (``_handler``):
 
 Public exports
 --------------
-``calculate_fundamental_stats``      — ``NodeTask`` instance.
-``CalculateFundamentalStatsInput``   — Pydantic input model.
-``CalculateFundamentalStatsOutput``  — Pydantic output model.
-``HANDLERS``                         — dict slice for Celery handler registration.
+``calculate_fundamental_stats``      -- ``NodeTask`` instance.
+``CalculateFundamentalStatsInput``   -- Pydantic input model.
+``CalculateFundamentalStatsOutput``  -- Pydantic output model.
+``HANDLERS``                         -- dict slice for Celery handler registration.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from backend.langgraph.models.task import NodeTask
 _TASK_NAME = "calculate_fundamental_stats"
 
 # ---------------------------------------------------------------------------
-# Celery layer — entry dispatcher
+# Celery layer -- entry dispatcher
 # ---------------------------------------------------------------------------
 
 async def _handler(payload: dict) -> dict:
@@ -52,7 +52,7 @@ async def _handler(payload: dict) -> dict:
     return await calculate_fundamental_stats_handler(payload)
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _calculate_fundamental_stats_task(

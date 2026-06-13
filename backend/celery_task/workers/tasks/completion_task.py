@@ -1,4 +1,4 @@
-"""Celery completion worker — unified dispatcher for non-streaming handlers.
+"""Celery completion worker -- unified dispatcher for non-streaming handlers.
 
 The LangGraph ``@task`` dispatches work here via
 ``celery_engine.send_task("backend.celery_task.workers.tasks.completion_task.run_completion", ...)``.
@@ -8,24 +8,24 @@ returns, then resumes the graph with the result.
 Handlers live in ``backend.langgraph.nodes`` (assembled from each node's
 ``tasks`` sub-package).  To add a new handler, create a task module under
 ``backend/langgraph/nodes/<node_name>/tasks/`` and add the ``NodeTask``
-instance to the node's ``tasks/__init__.py`` HANDLERS slice — no changes
+instance to the node's ``tasks/__init__.py`` HANDLERS slice -- no changes
 are needed here.
 
 Task signature
 --------------
 Arguments (positional, serialised as JSON by Celery):
-    task_name  (str)  — key into ``backend.langgraph.tasks.HANDLERS``.
-    payload    (dict) — arbitrary input forwarded to the handler.
+    task_name  (str)  -- key into ``backend.langgraph.tasks.HANDLERS``.
+    payload    (dict) -- arbitrary input forwarded to the handler.
 
 Return value (stored in Redis backend):
-    dict — the result produced by the handler, ready to be merged into
+    dict -- the result produced by the handler, ready to be merged into
     :class:`~backend.langgraph.state.GraphState`.
 
 DB write
 --------
 ``persist_task_result`` is called for durability: the task row reflects the
 terminal state even if the graph runner is interrupted.  SSE is NOT emitted
-here — it is the graph runner's responsibility after ``delegate_completion``
+here -- it is the graph runner's responsibility after ``delegate_completion``
 returns.
 """
 

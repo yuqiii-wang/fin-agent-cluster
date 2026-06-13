@@ -1,4 +1,4 @@
-"""backend.langgraph.agent.tools — NodeTask-to-StructuredTool bridge layer.
+"""backend.langgraph.agent.tools -- NodeTask-to-StructuredTool bridge layer.
 
 NodeTask is the canonical task definition; this package exposes the lightweight
 ToolInfo metadata model and helpers that convert NodeTask registries into the

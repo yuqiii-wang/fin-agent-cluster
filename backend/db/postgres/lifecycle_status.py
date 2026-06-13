@@ -1,4 +1,4 @@
-"""backend.db.postgres.lifecycle_status — canonical lifecycle status groupings.
+"""backend.db.postgres.lifecycle_status -- canonical lifecycle status groupings.
 
 Single source of truth for which statuses represent an **active** (in-flight)
 lifecycle and which represent a **terminal** (ended) lifecycle, for both
@@ -14,7 +14,7 @@ Terminal (lifecycle ended, no further transitions):
     query_status : completed | failed | cancelled | wrong
     work_status  : completed | failed | cancelled | wrong
 
-Note: ``paused`` is treated as **active** for work_status — the node is
+Note: ``paused`` is treated as **active** for work_status -- the node is
 paused awaiting user continue, and the task is retryable.
 
 SQL helpers
@@ -42,7 +42,7 @@ TERMINAL_QUERY_STATUSES: frozenset[str] = frozenset(
     {QueryStatus.COMPLETED, QueryStatus.FAILED, QueryStatus.CANCELLED, QueryStatus.WRONG}
 )
 
-# SQL tuple literal for ``NOT IN`` / ``IN`` clauses — e.g.
+# SQL tuple literal for ``NOT IN`` / ``IN`` clauses -- e.g.
 #   WHERE status NOT IN {TERMINAL_QUERY_SQL}
 TERMINAL_QUERY_SQL: str = "('completed', 'failed', 'cancelled', 'wrong')"
 ACTIVE_QUERY_SQL: str = "('connecting', 'received', 'running')"
@@ -53,7 +53,7 @@ ACTIVE_QUERY_SQL: str = "('connecting', 'received', 'running')"
 
 #: Statuses meaning the node/task has started and is still in progress.
 #: ``paused`` is included because the node stays paused while a task is
-#: awaiting user continue — no worker is processing it but the lifecycle has not ended.
+#: awaiting user continue -- no worker is processing it but the lifecycle has not ended.
 ACTIVE_WORK_STATUSES: frozenset[str] = frozenset(
     {WorkStatus.PENDING, WorkStatus.RUNNING, WorkStatus.PAUSED}
 )

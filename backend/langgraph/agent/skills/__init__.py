@@ -1,4 +1,4 @@
-"""backend.langgraph.agent.skills — agent skill management."""
+"""backend.langgraph.agent.skills -- agent skill management."""
 
 from __future__ import annotations
 

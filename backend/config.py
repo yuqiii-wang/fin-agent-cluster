@@ -46,9 +46,9 @@ class Settings(BaseSettings):
     GOOGLE_EMBEDDING_DIMENSIONS: int = 768
 
     # Stats data provider: mock | yfinance | fmp
-    # mock    — in-process mock data, no external calls (default)
-    # yfinance — free Yahoo Finance via the yfinance library
-    # fmp      — Financial Modeling Prep REST API (requires FMP_API_KEY)
+    # mock    -- in-process mock data, no external calls (default)
+    # yfinance -- free Yahoo Finance via the yfinance library
+    # fmp      -- Financial Modeling Prep REST API (requires FMP_API_KEY)
     STATS_PROVIDER: str = "mock"
     ALPHAVANTAGE_API_KEY: Optional[str] = None
     FMP_API_KEY: Optional[str] = None
@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     GRAPH_QUEUE_STREAM: str = "fin:graphs:queue"
     # Redis key prefix for per-thread cancel flags (SET key 1 EX ttl).
     GRAPH_CANCEL_KEY_PREFIX: str = "fin:cancel:"
-    # TTL (seconds) for cancel flags — must exceed the longest graph run.
+    # TTL (seconds) for cancel flags -- must exceed the longest graph run.
     GRAPH_CANCEL_TTL_SECONDS: int = 600
     # Consumer group name for the graph runner stream.
     GRAPH_QUEUE_GROUP: str = "graph-runners"
@@ -143,10 +143,10 @@ class Settings(BaseSettings):
 
     # ── Per-thread error/warning log capture (agent recovery context) ─────────
     # Redis key prefix for the per-thread error/warning log store.  The thread_id
-    # is appended; the store is a Redis hash of normalized-signature → entry JSON
+    # is appended; the store is a Redis hash of normalized-signature -> entry JSON
     # used by llm_orchestration_on_failure to enrich recovery decisions.
     AGENT_ERRLOG_KEY_PREFIX: str = "fin:thread:errlog:"
-    # TTL (seconds) for a thread's error-log store — must exceed the longest run.
+    # TTL (seconds) for a thread's error-log store -- must exceed the longest run.
     AGENT_ERRLOG_TTL_SECONDS: int = 1800
     # Max number of distinct (deduplicated) log signatures retained per thread.
     AGENT_ERRLOG_MAX_ENTRIES: int = 50
@@ -157,9 +157,9 @@ class Settings(BaseSettings):
     AGENT_ERRLOG_QUEUE_MAX: int = 10000
 
     # ── Centrifugo real-time messaging ────────────────────────────────────────
-    # Internal HTTP API URLs of the two Centrifugo nodes (WSL2 → Docker via mapped ports).
+    # Internal HTTP API URLs of the two Centrifugo nodes (WSL2 -> Docker via mapped ports).
     # Comma-separated when provided via environment variable.
-    # Ordering MUST match DATABASE_REDIS_NODES: index 0 = centrifugo-llm-0 → redis-0.
+    # Ordering MUST match DATABASE_REDIS_NODES: index 0 = centrifugo-llm-0 -> redis-0.
     # These nodes are ONLY used for LLM token streaming (Redis Stream consumers).
     CENTRIFUGO_NODES: list[str] = [
         "http://127.0.0.1:8101",

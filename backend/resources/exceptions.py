@@ -39,7 +39,7 @@ class ProviderNotFoundError(Exception):
         self.symbol = symbol
         self.detail = detail
         super().__init__(
-            f"{provider} [{service}] → not found for {symbol!r}"
+            f"{provider} [{service}] -> not found for {symbol!r}"
             + (f": {detail}" if detail else "")
         )
 
@@ -47,7 +47,7 @@ class ProviderNotFoundError(Exception):
         """Return a human-readable one-line description for log output.
 
         Returns:
-            String like ``"alpha_vantage [TIME_SERIES_DAILY] → XXXX: HTTP 404 Not Found"``
+            String like ``"alpha_vantage [TIME_SERIES_DAILY] -> XXXX: HTTP 404 Not Found"``
         """
         base = f"{self.provider} [{self.service}]"
         if self.detail:

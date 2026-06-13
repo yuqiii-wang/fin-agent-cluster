@@ -1,10 +1,10 @@
 """SQL templates for ``fin_markets.quant_static_stats``.
 
-``quant_static_stats`` — financial report fundamentals per security.
+``quant_static_stats`` -- financial report fundamentals per security.
 Anchor: ``(symbol, fin_report_date)`` where ``fin_report_date IS NOT NULL``.
-  - New financial report (new ``fin_report_date``) → INSERT new row.
-  - Re-fetch of same report period → UPSERT updates the existing row.
-  - ``fin_report_date IS NULL`` (no report date available) → plain INSERT.
+  - New financial report (new ``fin_report_date``) -> INSERT new row.
+  - Re-fetch of same report period -> UPSERT updates the existing row.
+  - ``fin_report_date IS NULL`` (no report date available) -> plain INSERT.
 Optionally linked to a news article via ``news_stats_id`` / ``published_at``.
 """
 
@@ -35,8 +35,8 @@ class QuantStaticStatsSQL:
         LIMIT %s
     """
 
-    # INSERT when fin_report_date IS NULL (no report anchor — always new row).
-    # UPSERT when fin_report_date IS NOT NULL — ON CONFLICT updates all mutable
+    # INSERT when fin_report_date IS NULL (no report anchor -- always new row).
+    # UPSERT when fin_report_date IS NOT NULL -- ON CONFLICT updates all mutable
     # data columns so a re-fetch of the same period overwrites stale values.
     UPSERT = """
         INSERT INTO fin_markets.quant_static_stats (

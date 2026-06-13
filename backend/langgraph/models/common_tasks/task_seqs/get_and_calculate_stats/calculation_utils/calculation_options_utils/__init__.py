@@ -1,4 +1,4 @@
-"""calculation_options_utils — options stats calculation sub-package.
+"""calculation_options_utils -- options stats calculation sub-package.
 
 Splits calculate_option_stats into focused modules:
 - models:       Pydantic input/output models.

@@ -1,4 +1,4 @@
-"""Database initialisation — creates all application tables and the LangGraph schema."""
+"""Database initialisation -- creates all application tables and the LangGraph schema."""
 
 from backend.db.postgres.base import Base
 from backend.db.postgres.engine import get_engine

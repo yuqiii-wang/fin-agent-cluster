@@ -1,4 +1,4 @@
-"""task_seqs — reusable sequential TaskSeq pipelines for common node patterns."""
+"""task_seqs -- reusable sequential TaskSeq pipelines for common node patterns."""
 
 from __future__ import annotations
 

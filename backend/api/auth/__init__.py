@@ -1,4 +1,4 @@
-"""backend.api.auth — authentication and Centrifugo bootstrap router."""
+"""backend.api.auth -- authentication and Centrifugo bootstrap router."""
 
 from __future__ import annotations
 

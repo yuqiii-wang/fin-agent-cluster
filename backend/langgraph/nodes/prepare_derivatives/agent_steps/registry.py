@@ -1,4 +1,4 @@
-"""registry.py — Assembles the AGENT_STEPS dict for prepare_derivatives."""
+"""registry.py -- Assembles the AGENT_STEPS dict for prepare_derivatives."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from backend.langgraph.nodes.prepare_derivatives.agent_steps.study_web import (
 )
 from backend.langgraph.nodes.prepare_derivatives.models.state import DerivativesStepContext
 
-#: Mapping of step name → async step function.
+#: Mapping of step name -> async step function.
 AGENT_STEPS: dict[str, Callable[[DerivativesStepContext], Awaitable[None]]] = {
     STEP_LOAD_MARKDOWN: step_load_markdown,
     STEP_STUDY_WEB: step_study_web,

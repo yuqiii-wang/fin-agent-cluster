@@ -1,4 +1,4 @@
-"""Celery task package — worker engine, config, and task delegation.
+"""Celery task package -- worker engine, config, and task delegation.
 
 Sub-modules
 -----------

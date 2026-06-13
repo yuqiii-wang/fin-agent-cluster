@@ -1,4 +1,4 @@
-"""auth.guest — guest user creation and token validation.
+"""auth.guest -- guest user creation and token validation.
 
 Provides :func:`ensure_guest` which either validates an existing bearer token
 against the DB or creates a fresh guest account.
@@ -57,7 +57,7 @@ async def ensure_guest(token: str | None) -> tuple[GuestUser, bool]:
                 await session.commit()
                 return user, False
 
-        # Create a new guest — retry on the unlikely username collision
+        # Create a new guest -- retry on the unlikely username collision
         for _ in range(5):
             new_id = str(uuid.uuid4())
             username = _new_username()

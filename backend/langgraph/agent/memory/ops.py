@@ -3,13 +3,13 @@
 Memory entries are stored in ``fin_agents.agent_memory`` and scoped to a
 single ``node_id`` (one run of one graph node).  Two entry flavours exist:
 
-* **Task-backed** — ``task_id`` refers to a row in ``fin_agents.tasks``;
+* **Task-backed** -- ``task_id`` refers to a row in ``fin_agents.tasks``;
   ``content`` is nullable (the effective content is the referenced task's
   latest ``fin_agents.task_executions.output``).
-* **Direct** — ``task_id`` is ``None`` and ``content`` is a non-empty JSONB
+* **Direct** -- ``task_id`` is ``None`` and ``content`` is a non-empty JSONB
   payload stored directly in the memory row.
 
-All lookups are scoped to a single node — there is intentionally no
+All lookups are scoped to a single node -- there is intentionally no
 "cross-node memory" API; state propagation across nodes must go through the
 graph's own node inputs/outputs instead.
 """
@@ -80,7 +80,7 @@ async def write_memory(
 
     Args:
         thread_id:   Owning thread UUID.
-        node_id:     Owning node UUID — scope of this memory entry.
+        node_id:     Owning node UUID -- scope of this memory entry.
         name:        Stable logical name for the entry; unique within node_id.
         description: Human-readable description shown in memory listings.
         content:     Optional JSON payload for direct (non-task-backed) memory.

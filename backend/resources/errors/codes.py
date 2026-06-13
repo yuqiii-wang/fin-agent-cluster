@@ -4,7 +4,7 @@ Covers errors raised by the news and quant provider client chains.
 
 Error code prefixes
 -------------------
-``RAPI_``   — Resource API layer failures (provider chains, config, method dispatch).
+``RAPI_``   -- Resource API layer failures (provider chains, config, method dispatch).
 """
 
 from __future__ import annotations

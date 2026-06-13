@@ -1,4 +1,4 @@
-"""study_web.py — Step 2: LLM-generate extraction scripts and run them in a sandbox."""
+"""study_web.py -- Step 2: LLM-generate extraction scripts and run them in a sandbox."""
 
 from __future__ import annotations
 
@@ -35,14 +35,15 @@ def _merge_options_results(
 
     Collects calls and puts from all results.  Deduplicates by ``contract_name``
     when the field is present, but includes contracts without it.  Returns
-    ``None`` only when no run produced a parseable ``data_type='options'`` response.
+    ``None`` only when no run produced a parseable options response (any dict
+    with a ``calls`` or ``puts`` key is treated as options).
 
     Args:
         sandbox_stdouts: Non-empty stdout strings from successful sandbox runs.
         symbol:          Equity symbol for logging context.
 
     Returns:
-        Merged options dict with ``data_type='options'``, ``calls`` list, and ``puts`` list;
+        Merged options dict with ``calls`` and ``puts`` lists;
         or ``None`` if no run returned a valid options response.
     """
     seen_call_keys: set[str] = set()
@@ -58,13 +59,11 @@ def _merge_options_results(
             logger.error("[PD-003f] sandbox stdout JSON parse error symbol=%r: %s", symbol, exc)
             continue
 
-        if "data_type" not in parsed:
-            parsed["data_type"] = "options"
-
-        if parsed.get("data_type") != "options":
+        if not (
+            isinstance(parsed.get("calls"), list) or isinstance(parsed.get("puts"), list)
+        ):
             logger.error(
-                "[PD-003g] unexpected data_type=%r in sandbox output symbol=%r — skipping",
-                parsed.get("data_type"),
+                "[PD-003g] unexpected non-options output from sandbox symbol=%r -- skipping",
                 symbol,
             )
             continue
@@ -72,7 +71,7 @@ def _merge_options_results(
         any_valid_parse = True
 
         for contract in parsed.get("calls") or []:
-            key = contract.get("contract_name")
+            key = contract.get("contract_name") if isinstance(contract, dict) else None
             if key:
                 if key not in seen_call_keys:
                     seen_call_keys.add(key)
@@ -81,7 +80,7 @@ def _merge_options_results(
                 all_calls.append(contract)
 
         for contract in parsed.get("puts") or []:
-            key = contract.get("contract_name")
+            key = contract.get("contract_name") if isinstance(contract, dict) else None
             if key:
                 if key not in seen_put_keys:
                     seen_put_keys.add(key)
@@ -93,7 +92,6 @@ def _merge_options_results(
         return None
 
     return {
-        "data_type": "options",
         "calls": all_calls,
         "puts": all_puts,
     }

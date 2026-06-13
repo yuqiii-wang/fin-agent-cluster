@@ -2,7 +2,7 @@
 
 Mounted at ``/system`` under the parent API router:
 
-    GET /api/v1/system/health  — aggregate health across all FastAPI instances
+    GET /api/v1/system/health  -- aggregate health across all FastAPI instances
 """
 
 from __future__ import annotations

@@ -1,11 +1,11 @@
 """Public API for node-level lifecycle operations.
 
 Implementation is split across ``ops_utils/``:
-- upsert.py      — upsert_node, parallel snapshot sync
-- complete.py    — complete_node
-- pause_resume.py — pause_node, resume_node
-- cancel.py      — cancel_node
-- query.py       — read_node_output, append_node_task_id, get_latest_sibling_node_version
+- upsert.py      -- upsert_node, parallel snapshot sync
+- complete.py    -- complete_node
+- pause_resume.py -- pause_node, resume_node
+- cancel.py      -- cancel_node
+- query.py       -- read_node_output, append_node_task_id, get_latest_sibling_node_version
 """
 
 from backend.langgraph.lifecycle.threads.nodes.ops_utils import (  # noqa: F401

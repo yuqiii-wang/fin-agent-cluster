@@ -36,7 +36,7 @@ _SETUP_LOCK_MAX_RETRIES = 30      # 30 x 1 s = 30 s maximum wait
 async def ensure_setup() -> None:
     """Run LangGraph checkpointer table setup exactly once cluster-wide.
 
-    ``_setup_done`` is process-local — each Uvicorn/Celery worker process
+    ``_setup_done`` is process-local -- each Uvicorn/Celery worker process
     has its own copy.  The cross-process truth is held in Redis shard 0 as
     ``flag:checkpointer_setup_done``.  The lock on ``lock:checkpointer_setup``
     prevents two workers from calling ``cp.setup()`` simultaneously.
@@ -45,7 +45,7 @@ async def ensure_setup() -> None:
     ----
     1. Fast-path: process-local ``_setup_done`` (already ran in this process).
     2. Pre-lock Redis check: if the sentinel exists another process already
-       finished setup — warm the local flag and return.
+       finished setup -- warm the local flag and return.
     3. Acquire lock (retry up to 30 s).
     4. Inner Redis re-check inside the lock (double-checked locking).
     5. Run ``cp.setup()``.  ``UniqueViolation`` is logged as a warning and
@@ -53,7 +53,7 @@ async def ensure_setup() -> None:
     6. Write the Redis sentinel to mark setup done cluster-wide.
     7. Release lock unconditionally (``finally``).
     8. Post-lock safety check: verify the sentinel exists.  Raise
-       ``RuntimeError`` if not — setup must have failed.
+       ``RuntimeError`` if not -- setup must have failed.
     """
     global _setup_done
 
@@ -62,7 +62,7 @@ async def ensure_setup() -> None:
         return
 
     router = get_redis_router()
-    # Global keys always target shard 0 — not thread-routed.
+    # Global keys always target shard 0 -- not thread-routed.
     lock_client = aioredis.from_url(router.get_url_at(0), decode_responses=True)
     try:
         # --- 2. pre-lock Redis check ---
@@ -114,16 +114,16 @@ async def ensure_setup() -> None:
                     await cp.setup()
                     logger.info("[checkpointer] migrations applied successfully")
                 except UniqueViolation as exc:
-                    # Tables already exist — another process ran setup outside
+                    # Tables already exist -- another process ran setup outside
                     # the lock window (e.g. Redis was briefly unavailable).
                     # Log visibly; tables being present is a valid success state.
                     logger.warning(
-                        "[checkpointer] UniqueViolation during setup — "
+                        "[checkpointer] UniqueViolation during setup -- "
                         "migrations already applied by another process: %s",
                         exc,
                     )
 
-            # --- 6. write cross-process sentinel (no TTL — permanent) ---
+            # --- 6. write cross-process sentinel (no TTL -- permanent) ---
             await lock_client.set(_SETUP_DONE_KEY, "1")
             _setup_done = True
             logger.info("[checkpointer] _setup_done=True, sentinel written to Redis")
@@ -137,11 +137,11 @@ async def ensure_setup() -> None:
         if not sentinel:
             raise RuntimeError(
                 f"[{PG_CHECKPOINTER_SETUP_FAILED}] lock released but sentinel {_SETUP_DONE_KEY!r} "
-                "not found in Redis — setup did not complete successfully"
+                "not found in Redis -- setup did not complete successfully"
             )
         if not _setup_done:
             raise RuntimeError(
-                f"[{PG_CHECKPOINTER_SETUP_FAILED}] lock released but _setup_done is False — "
+                f"[{PG_CHECKPOINTER_SETUP_FAILED}] lock released but _setup_done is False -- "
                 "setup did not complete successfully"
             )
 

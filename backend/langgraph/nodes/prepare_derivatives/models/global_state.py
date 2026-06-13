@@ -1,4 +1,4 @@
-"""global_state.py — Cross-iteration agent state for prepare_derivatives."""
+"""global_state.py -- Cross-iteration agent state for prepare_derivatives."""
 
 from __future__ import annotations
 

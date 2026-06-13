@@ -81,13 +81,13 @@ async def complete_task(
 
     if updated == 0:
         logger.debug(
-            "[lifecycle:task] %s skipped task_id=%s task_name=%s — task already terminal",
+            "[lifecycle:task] %s skipped task_id=%s task_name=%s -- task already terminal",
             status, task_id, task_name,
         )
         return
 
     logger.debug(
-        "[lifecycle:task] %s task_id=%s task_name=%s db_ms=%.0f — emitting SSE",
+        "[lifecycle:task] %s task_id=%s task_name=%s db_ms=%.0f -- emitting SSE",
         status, task_id, task_name, (time.monotonic() - t0) * 1000,
     )
     t_sse = time.monotonic()

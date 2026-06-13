@@ -1,4 +1,4 @@
-"""agent_step_mixin.py — Generic named-step agent loop mixin for AGENT-type nodes.
+"""agent_step_mixin.py -- Generic named-step agent loop mixin for AGENT-type nodes.
 
 Provides
 --------
@@ -11,12 +11,12 @@ Provides
     subclass with ``node_type == NodeType.AGENT``.
 
     Class variables to set on the concrete node class:
-        ``agent_steps``              — ``dict[str, Callable[..., Awaitable[None]]]``
-        ``agent_step_order``         — ordered list of step names
-        ``agent_streaming_steps``    — set of step names that wrap an LLM streaming
+        ``agent_steps``              -- ``dict[str, Callable[..., Awaitable[None]]]``
+        ``agent_step_order``         -- ordered list of step names
+        ``agent_streaming_steps``    -- set of step names that wrap an LLM streaming
                                        task and can be regenerated on failure
-        ``agent_orchestration_task`` — ``NodeTask`` called after each iteration
-        ``_agent_max_iterations``    — max outer loop count (default 3)
+        ``agent_orchestration_task`` -- ``NodeTask`` called after each iteration
+        ``_agent_max_iterations``    -- max outer loop count (default 3)
 
     Hook methods the concrete class must implement (default raises ``NotImplementedError``):
         ``_create_agent_global_state(node_input) -> AgentGlobalStateBase``
@@ -107,13 +107,13 @@ class AgentStepMixin:
         ``agent_orchestration_task`` (when configured) studies the failure and
         decides:
 
-        * ``"retry_from_step"`` — regenerate an earlier LLM *streaming* step
+        * ``"retry_from_step"`` -- regenerate an earlier LLM *streaming* step
           (chosen from ``agent_streaming_steps`` that run at or before the failed
           step).  No concrete values are injected; instead a ``failure_context``
           string (failure reason + the decision's reasoning) is carried into the
           next iteration's step state so the streaming step's task regenerates
           its output with awareness of the failure.
-        * ``"fail"``            — unrecoverable; use best-available output.
+        * ``"fail"``            -- unrecoverable; use best-available output.
 
         When ``agent_orchestration_task`` is ``None``, or no earlier streaming
         step exists to regenerate, the loop stops at the first failure and builds
@@ -162,7 +162,7 @@ class AgentStepMixin:
             # Reset to the first step; orchestration may override below.
             start_step = step_order[0]
 
-            # All steps succeeded — the iteration is done.
+            # All steps succeeded -- the iteration is done.
             if failed_step is None:
                 break
 
@@ -180,7 +180,7 @@ class AgentStepMixin:
             ):
                 break
 
-            # A step failed and retries remain — ask the orchestration task to
+            # A step failed and retries remain -- ask the orchestration task to
             # study the failure and pick an earlier streaming step to regenerate.
             orch_input = self._build_orchestration_input(
                 global_state, step_state, failed_step, failure_reason,
@@ -207,7 +207,7 @@ class AgentStepMixin:
                 if not retry_step or retry_step not in retry_candidates:
                     logger.error(
                         "[AP-007] orchestration retry_from_step=%r not a valid candidate "
-                        "%r iter=%d — stopping",
+                        "%r iter=%d -- stopping",
                         retry_step,
                         retry_candidates,
                         iteration,
@@ -260,12 +260,12 @@ class AgentStepMixin:
         parts += [
             "",
             "Regenerate your output to fix this. Extract correct values from the "
-            "source content — do NOT invent or hallucinate any numbers or fields.",
+            "source content -- do NOT invent or hallucinate any numbers or fields.",
         ]
         return "\n".join(parts)
 
     # ------------------------------------------------------------------
-    # Required hooks — concrete classes must implement all of these
+    # Required hooks -- concrete classes must implement all of these
     # ------------------------------------------------------------------
 
     async def _create_agent_global_state(self, node_input: Any) -> AgentGlobalStateBase:

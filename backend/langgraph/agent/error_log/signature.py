@@ -5,7 +5,7 @@ noise:
 
 * :func:`clean_message` reduces a raw log record to a single line plus, when an
   exception is attached, only the exception *type and message* (never the full
-  traceback) — so long stack traces never reach the store.
+  traceback) -- so long stack traces never reach the store.
 * :func:`make_signature` normalizes a cleaned message into a dedup key by
   collapsing whitespace and replacing run-specific numbers (iteration counts,
   hex ids, timestamps) with a placeholder, so near-identical records collapse
@@ -23,7 +23,7 @@ import re
 _DIGIT_TOKEN_RE = re.compile(r"\b\w*\d\w*\b")
 _WS_RE = re.compile(r"\s+")
 
-# Signature length cap — enough to distinguish distinct messages cheaply.
+# Signature length cap -- enough to distinguish distinct messages cheaply.
 _SIGNATURE_LEN = 200
 
 
@@ -32,7 +32,7 @@ def clean_message(record: logging.LogRecord, *, char_cap: int) -> str:
 
     Keeps only the first line of the formatted message and, when the record
     carries exception info, appends the exception type and first line of its
-    string form — deliberately omitting the multi-line traceback so the store
+    string form -- deliberately omitting the multi-line traceback so the store
     never accumulates long stack traces.
 
     Args:

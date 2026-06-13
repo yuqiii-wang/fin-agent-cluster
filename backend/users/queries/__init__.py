@@ -1,4 +1,4 @@
-"""backend.users.queries — business logic for thread query operations.
+"""backend.users.queries -- business logic for thread query operations.
 
 Provides helpers called by :mod:`backend.api.threads.router` to submit,
 acknowledge, cancel, resume, and inspect query threads.

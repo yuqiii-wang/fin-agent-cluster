@@ -180,7 +180,7 @@ async def upsert_node(
         )
 
     logger.debug(
-        "[lifecycle:node] running node_id=%s node_name=%s db_ms=%.0f — emitting SSE",
+        "[lifecycle:node] running node_id=%s node_name=%s db_ms=%.0f -- emitting SSE",
         node_id, node_name, (time.monotonic() - t0) * 1000,
     )
     t_sse = time.monotonic()

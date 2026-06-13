@@ -1,4 +1,4 @@
-"""extraction_schema.py — Shared objective, output schema and extraction rules
+"""extraction_schema.py -- Shared objective, output schema and extraction rules
 for the prepare_derivatives web-knowledge steps (``load_markdown`` + ``study_web``)."""
 
 from __future__ import annotations
@@ -43,10 +43,6 @@ _CONTRACT_SCHEMA: dict = {
 DERIVATIVES_OUTPUT_SCHEMA: dict = {
     "type": "object",
     "properties": {
-        "data_type": {
-            "type": "string",
-            "description": "Must always be 'options'.",
-        },
         "symbol": {
             "type": "string",
             "description": "Equity symbol for which the options were extracted.",
@@ -66,24 +62,21 @@ DERIVATIVES_OUTPUT_SCHEMA: dict = {
             "items": _CONTRACT_SCHEMA,
         },
     },
-    "required": ["data_type", "calls", "puts"],
+    "required": ["calls", "puts"],
 }
 
 ADDITIONAL_CONTEXT: list[str] = [
-    "CRITICAL — the output JSON MUST always set data_type to 'options' "
-    "(the only supported value). "
     "Output two separate lists: 'calls' for call contracts and 'puts' for put contracts. "
     "Every entry must include contract_name (OSI format, e.g. AAPL260601C00150000) and strike. "
-    "If the page contains no extractable contracts, output empty lists for 'calls' and 'puts' "
-    "but still set data_type='options'.",
-    "FIELD EXTRACTION — many table cells contain markdown hyperlinks; extract only the "
+    "If the page contains no extractable contracts, output empty lists for 'calls' and 'puts'.",
+    "FIELD EXTRACTION -- many table cells contain markdown hyperlinks; extract only the "
     "visible label text, never the URL. "
     "Examples: "
-    "'[AAPL260601C00250000](/quote/AAPL260601C00250000/)' → contract_name = 'AAPL260601C00250000'; "
-    "'[250](/quote/AAPL/options/?straddle=false&strike=250&type=all)' → strike = 250. "
-    "NUMERIC FIELDS — strip any trailing '%' and return a plain number: "
-    "'32.32%' → pct_change = 32.32; '145.31%' → implied_volatility = 145.31. "
-    "DATE FIELDS — copy the date/time string as-is, e.g. '5/29/2026 1:16 PM'.",
+    "'[AAPL260601C00250000](/quote/AAPL260601C00250000/)' -> contract_name = 'AAPL260601C00250000'; "
+    "'[250](/quote/AAPL/options/?straddle=false&strike=250&type=all)' -> strike = 250. "
+    "NUMERIC FIELDS -- strip any trailing '%' and return a plain number: "
+    "'32.32%' -> pct_change = 32.32; '145.31%' -> implied_volatility = 145.31. "
+    "DATE FIELDS -- copy the date/time string as-is, e.g. '5/29/2026 1:16 PM'.",
 ]
 
 __all__ = [

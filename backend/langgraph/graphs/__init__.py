@@ -1,6 +1,6 @@
-"""backend.langgraph.graphs — graph definitions.
+"""backend.langgraph.graphs -- graph definitions.
 
-* ``fin_trading_graph`` — production fin-trading graph.
+* ``fin_trading_graph`` -- production fin-trading graph.
 
 Use :func:`backend.langgraph.compiled.init_compiled_graph` to compile the
 graph at startup.

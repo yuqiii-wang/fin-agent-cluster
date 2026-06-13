@@ -1,4 +1,4 @@
-"""parsers — OSI contract name parsing and value coercion helpers.
+"""parsers -- OSI contract name parsing and value coercion helpers.
 
 Provides:
 - ``parse_contract_name``: parse a full OSI option symbol into its components.

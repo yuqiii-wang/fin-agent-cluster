@@ -1,4 +1,4 @@
-"""backend.langgraph.lifecycle.cancel_flag — Redis-backed cancel flags.
+"""backend.langgraph.lifecycle.cancel_flag -- Redis-backed cancel flags.
 
 Two granularities are supported:
 
@@ -18,12 +18,12 @@ Redis shard 0.
 
 Public API
 ----------
-:func:`set_cancel_flag`          — thread-level; called by cancel_thread().
-:func:`is_cancel_flag_set`       — thread-level; polled by task_delegation.
-:func:`clear_cancel_flag`        — thread-level; called on thread completion.
-:func:`set_node_cancel_flag`     — node-level;   called by cancel_node().
-:func:`is_node_cancel_flag_set`  — node-level;   polled by task_delegation.
-:func:`clear_node_cancel_flag`   — node-level;   called on thread cleanup.
+:func:`set_cancel_flag`          -- thread-level; called by cancel_thread().
+:func:`is_cancel_flag_set`       -- thread-level; polled by task_delegation.
+:func:`clear_cancel_flag`        -- thread-level; called on thread completion.
+:func:`set_node_cancel_flag`     -- node-level;   called by cancel_node().
+:func:`is_node_cancel_flag_set`  -- node-level;   polled by task_delegation.
+:func:`clear_node_cancel_flag`   -- node-level;   called on thread cleanup.
 """
 
 from __future__ import annotations

@@ -9,7 +9,7 @@ import redis.asyncio as aioredis
 
 from backend.config import get_settings
 
-# Cache key: (shard_index, db_override) → (redis.asyncio.Redis, loop_id)
+# Cache key: (shard_index, db_override) -> (redis.asyncio.Redis, loop_id)
 # db_override=None means use the DB embedded in the URL.
 _clients: dict[tuple[int, int | None], tuple[aioredis.Redis, int]] = {}
 _init_lock: asyncio.Lock | None = None

@@ -1,12 +1,12 @@
-"""get_news — NodeTask to fetch raw news articles for a symbol/topic window.
+"""get_news -- NodeTask to fetch raw news articles for a symbol/topic window.
 
 Resolves a list of :class:`~backend.resources.news.models.NewsArticle` for the
 requested window via one of two paths:
 
-* injection      — ``json_input`` (list of article dicts) or ``text_content``
+* injection      -- ``json_input`` (list of article dicts) or ``text_content``
   handed down from a previous task; stored in ``fin_markets.input_raw`` and
   returned without any external call.
-* external fetch  — request a news provider (FMP → DDGS fallback inside
+* external fetch  -- request a news provider (FMP -> DDGS fallback inside
   :class:`NewsClient`); raw articles are cached in ``input_raw``.
 
 Execution layers
@@ -21,10 +21,10 @@ Celery layer (``_handler``):
 
 Public exports
 --------------
-``get_news``       — ``NodeTask`` instance.
-``GetNewsInput``   — Pydantic input model.
-``GetNewsOutput``  — Pydantic output model.
-``HANDLERS``       — dict slice for Celery handler registration.
+``get_news``       -- ``NodeTask`` instance.
+``GetNewsInput``   -- Pydantic input model.
+``GetNewsOutput``  -- Pydantic output model.
+``HANDLERS``       -- dict slice for Celery handler registration.
 """
 
 from __future__ import annotations
@@ -141,7 +141,7 @@ class GetNewsOutput(BaseModel):
     from_cache: bool = Field(default=False, description="True when served from cache.")
 
 # ---------------------------------------------------------------------------
-# Celery layer — business logic
+# Celery layer -- business logic
 # ---------------------------------------------------------------------------
 
 async def _persist(
@@ -236,7 +236,7 @@ async def _handler(payload: dict) -> dict:
     symbol = inp.symbol.upper() if inp.symbol else None
     ttl_seconds = get_task_cache_ttl(_TASK_NAME)
 
-    # Injection path — no external call.
+    # Injection path -- no external call.
     if inp.json_input is not None or inp.text_content:
         articles = _build_injected_articles(inp, symbol)
         cache_key = _make_cache_key(symbol, inp.topics, inp.from_dt, inp.to_dt)
@@ -249,7 +249,7 @@ async def _handler(payload: dict) -> dict:
             input_raw_id=input_raw_id, source="injected", news_articles=articles, from_cache=False,
         ).model_dump(mode="json")
 
-    # External fetch path — cache check first.
+    # External fetch path -- cache check first.
     cache_key = _make_cache_key(symbol, inp.topics, inp.from_dt, inp.to_dt)
     async with raw_conn(readonly=True) as conn:
         cur = await conn.execute(InputRawSQL.GET_CACHED, (cache_key,))
@@ -293,7 +293,7 @@ async def _handler(payload: dict) -> dict:
     ).model_dump(mode="json")
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _get_news_task(
@@ -339,7 +339,7 @@ get_news: NodeTask[GetNewsInput, GetNewsOutput] = NodeTask(
     name=_TASK_NAME,
     description=(
         "Resolve raw news articles for a symbol/topic/datetime window: fetch from a "
-        "news provider (FMP → DDGS fallback) or inject json_input/text_content from a "
+        "news provider (FMP -> DDGS fallback) or inject json_input/text_content from a "
         "previous task. The raw payload is cached in fin_markets.input_raw."
     ),
     input_type=GetNewsInput,

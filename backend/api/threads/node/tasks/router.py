@@ -1,15 +1,15 @@
-"""backend.api.threads.node.tasks — task-level API endpoints.
+"""backend.api.threads.node.tasks -- task-level API endpoints.
 
 Routes (all mounted on the parent ``/threads`` router):
 
-    GET  /api/v1/threads/{thread_id}/tasks                             — list all tasks
-    GET  /api/v1/threads/{thread_id}/tasks/{task_id}                   — single task status
-    POST /api/v1/threads/{thread_id}/tasks/{task_id}/cancel            — cancel a task
-    POST /api/v1/threads/{thread_id}/tasks/{task_id}/pause             — pause a task
-    POST /api/v1/threads/{thread_id}/tasks/{task_id}/retry             — retry a terminal task
-    POST /api/v1/threads/{thread_id}/tasks/{task_id}/retry-fresh       — pause-if-running then restart
-    POST /api/v1/threads/{thread_id}/tasks/{task_id}/retry-restart     — restart terminal task directly
-    POST /api/v1/threads/{thread_id}/tasks/{task_id}/continue          — continue a paused task
+    GET  /api/v1/threads/{thread_id}/tasks                             -- list all tasks
+    GET  /api/v1/threads/{thread_id}/tasks/{task_id}                   -- single task status
+    POST /api/v1/threads/{thread_id}/tasks/{task_id}/cancel            -- cancel a task
+    POST /api/v1/threads/{thread_id}/tasks/{task_id}/pause             -- pause a task
+    POST /api/v1/threads/{thread_id}/tasks/{task_id}/retry             -- retry a terminal task
+    POST /api/v1/threads/{thread_id}/tasks/{task_id}/retry-fresh       -- pause-if-running then restart
+    POST /api/v1/threads/{thread_id}/tasks/{task_id}/retry-restart     -- restart terminal task directly
+    POST /api/v1/threads/{thread_id}/tasks/{task_id}/continue          -- continue a paused task
 """
 
 from __future__ import annotations
@@ -129,7 +129,7 @@ async def continue_task_route(
 ) -> TaskInfo:
     """Continue a paused streaming task from where it left off.
 
-    Uses ``compact_and_continue`` mode — compresses prior thinking and
+    Uses ``compact_and_continue`` mode -- compresses prior thinking and
     resumes generation.  Only valid when the task is in ``paused`` status.
     """
     return await continue_task(thread_id, task_id)

@@ -1,6 +1,6 @@
-"""backend.db.redis.lock_manager — async distributed Redis lock.
+"""backend.db.redis.lock_manager -- async distributed Redis lock.
 
-Provides :class:`RedisLock` — a lightweight distributed lock backed by
+Provides :class:`RedisLock` -- a lightweight distributed lock backed by
 Redis ``SET NX PX`` with optional automatic TTL renewal so a slow setup
 operation does not lose the lock before it completes.
 """

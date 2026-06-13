@@ -1,4 +1,4 @@
-"""calculate_fundamental_stats — aggregate multi-endpoint fundamentals and upsert quant_static_stats.
+"""calculate_fundamental_stats -- aggregate multi-endpoint fundamentals and upsert quant_static_stats.
 
 Accepts a list of raw JSON dicts, one per fetched fundamental endpoint
 (income_statement, balance_sheet, cash_flow, key_metrics), normalises field
@@ -8,9 +8,9 @@ anchored on ``(symbol, fin_report_date)``.
 
 Public exports
 --------------
-``CalculateFundamentalStatsInput``    — Pydantic input model.
-``CalculateFundamentalStatsOutput``   — Pydantic output model.
-``calculate_fundamental_stats_handler`` — Celery-layer async handler function.
+``CalculateFundamentalStatsInput``    -- Pydantic input model.
+``CalculateFundamentalStatsOutput``   -- Pydantic output model.
+``calculate_fundamental_stats_handler`` -- Celery-layer async handler function.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 _FIELD_MAP: list[tuple[str, list[str]]] = [
     # Income statement
     ("revenue",           ["revenue",         "totalRevenue"]),
-    ("revenue_yoy",       ["revenueGrowth"]),                            # decimal → *100 below
+    ("revenue_yoy",       ["revenueGrowth"]),                            # decimal -> *100 below
     ("gross_profit",      ["grossProfit",      "grossProfits"]),
     ("operating_income",  ["operatingIncome"]),
     ("net_income",        ["netIncome"]),
@@ -60,7 +60,7 @@ _FIELD_MAP: list[tuple[str, list[str]]] = [
     ("dividend_per_share", ["dividendPerShareTTM", "dividendPerShare", "dividendRate"]),
 ]
 
-# Fields where the raw value is a decimal fraction that must be multiplied by 100 → %
+# Fields where the raw value is a decimal fraction that must be multiplied by 100 -> %
 _PERCENT_FRACTION_FIELDS = frozenset({"revenue_yoy"})
 
 
@@ -182,8 +182,8 @@ async def calculate_fundamental_stats_handler(payload: dict) -> dict:
     2. Map provider keys to canonical column names.
     3. Derive index membership from ``yf_exchange`` (or ticker suffix fallback).
     4. Upsert into ``quant_static_stats`` anchored on ``(symbol, fin_report_date)``:
-       - ``fin_report_date IS NOT NULL`` → INSERT or UPDATE existing row for same period.
-       - ``fin_report_date IS NULL``     → plain INSERT (no upsert anchor).
+       - ``fin_report_date IS NOT NULL`` -> INSERT or UPDATE existing row for same period.
+       - ``fin_report_date IS NULL``     -> plain INSERT (no upsert anchor).
 
     Args:
         payload: Serialised :class:`CalculateFundamentalStatsInput` dict.

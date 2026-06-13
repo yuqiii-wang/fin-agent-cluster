@@ -113,7 +113,7 @@ async def cancel_node(
         )
 
     # ------------------------------------------------------------------
-    # 4. SSE — tasks first, then node.
+    # 4. SSE -- tasks first, then node.
     # ------------------------------------------------------------------
     for row in cancelled_task_rows:
         await emit_task_cancelled_sse(

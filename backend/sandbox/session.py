@@ -1,4 +1,4 @@
-"""Sandbox session lifecycle — delegates to the sharded sandbox runner service.
+"""Sandbox session lifecycle -- delegates to the sharded sandbox runner service.
 
 Each agent node execution maps to a workdir inside the appropriate
 ``sandbox-runner-N`` container.  Routing uses the same SHA-256 shard pattern
@@ -11,10 +11,10 @@ This guarantees that ``start_session``, every ``run_sandbox`` task, and
 
 Lifecycle
 ---------
-``start_node_session`` — called by ``BaseNode.orchestrate`` before
+``start_node_session`` -- called by ``BaseNode.orchestrate`` before
     ``build_agent`` is invoked.  POSTs ``/session/{node_id}`` to create the
     workdir inside the container.
-``end_node_session``   — called in the ``orchestrate`` finally block.
+``end_node_session``   -- called in the ``orchestrate`` finally block.
     DELETEs ``/session/{node_id}``; errors are logged and suppressed so
     cleanup never masks the underlying node exception.
 """

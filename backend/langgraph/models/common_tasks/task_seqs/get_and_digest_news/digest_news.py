@@ -1,4 +1,4 @@
-"""digest_news — NodeTask: upsert enriched news rows to news_stats and render Markdown digest.
+"""digest_news -- NodeTask: upsert enriched news rows to news_stats and render Markdown digest.
 
 Reads raw articles from ``fin_markets.input_raw`` by ``input_raw_id`` and ``source_filter``
 (default ``"fmp"``), combines each article with pre-computed LLM summaries from
@@ -8,7 +8,7 @@ Reads raw articles from ``fin_markets.input_raw`` by ``input_raw_id`` and ``sour
 
 One-to-many relationship
 ------------------------
-One ``input_raw`` row (the get_news cache entry) → many ``news_stats`` rows
+One ``input_raw`` row (the get_news cache entry) -> many ``news_stats`` rows
 (one per article).  The Markdown output renders all ``news_stats`` rows that
 share the same ``input_raw_id``.
 
@@ -19,16 +19,16 @@ LangGraph layer (``_digest_news_task`` decorated with ``@task``):
 
 Celery layer (``_handler``):
     1. Read articles from ``input_raw`` by ``input_raw_id``.
-    2. Filter by ``source_filter`` (``"fmp"`` → ``news_articles`` list).
+    2. Filter by ``source_filter`` (``"fmp"`` -> ``news_articles`` list).
     3. For each article: upsert to ``news_stats`` using available enrichment.
     4. Query ``news_stats WHERE input_raw_id = ?`` and render Markdown.
 
 Public exports
 --------------
-``digest_news``     — ``NodeTask`` instance.
-``DigestNewsInput`` — Input model.
-``DigestNewsOutput``— Output model (includes ``markdown`` field).
-``HANDLERS``        — dict slice for registration in ``backend.langgraph.nodes.HANDLERS``.
+``digest_news``     -- ``NodeTask`` instance.
+``DigestNewsInput`` -- Input model.
+``DigestNewsOutput``-- Output model (includes ``markdown`` field).
+``HANDLERS``        -- dict slice for registration in ``backend.langgraph.nodes.HANDLERS``.
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ def _build_markdown(rows: list[Any], symbol: str | None) -> str:
     if not rows:
         return "## News Digest\n\n_No news articles found._"
 
-    header = f"## News Digest{f' — {symbol}' if symbol else ''}"
+    header = f"## News Digest{f' -- {symbol}' if symbol else ''}"
     parts = [header]
 
     for i, row in enumerate(rows, 1):
@@ -131,13 +131,13 @@ class DigestNewsInput(BaseModel):
 
     Attributes:
         input_raw_id:  PK of the ``input_raw`` row to read articles from.
-        source_filter: Provider type to process (``"fmp"`` or ``"ddgs"`` →
+        source_filter: Provider type to process (``"fmp"`` or ``"ddgs"`` ->
                        ``news_articles`` list from the raw output).  Future
                        providers can be added here.
-        summaries:     Mapping of ``url_hash`` → serialised :class:`SummaryRecord`
+        summaries:     Mapping of ``url_hash`` -> serialised :class:`SummaryRecord`
                        from ``do_summary``.  Empty when ``do_summary`` failed
                        or was skipped.
-        embeddings:    Mapping of ``url_hash`` → 768-dim embedding vector from
+        embeddings:    Mapping of ``url_hash`` -> 768-dim embedding vector from
                        ``do_emb``.  Empty when ``do_emb`` failed or was skipped.
         from_cache:    ``True`` when all upstream tasks (get_news, do_summary,
                        do_emb) were served from cache; triggers a fast-path
@@ -209,7 +209,7 @@ async def _handler(payload: dict) -> dict:
     raw_output: dict = raw_row["output"]
 
     # 2. Extract articles from input_raw output.
-    # All news providers (fmp, ddgs, mock, …) store articles under "news_articles".
+    # All news providers (fmp, ddgs, mock, ...) store articles under "news_articles".
     _KNOWN_NEWS_SOURCES = {"fmp", "ddgs", "mock"}
     if inp.source_filter not in _KNOWN_NEWS_SOURCES:
         logger.error(
@@ -324,7 +324,7 @@ async def _digest_news_task(
     inp = task_input.content
     payload = inp.model_dump(mode="json")
 
-    # Fast path — all upstream tasks from cache; reuse existing news_stats rows.
+    # Fast path -- all upstream tasks from cache; reuse existing news_stats rows.
     if inp.from_cache and inp.input_raw_id is not None:
         async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(NewsStatsSQL.GET_BY_INPUT_RAW_ID, (inp.input_raw_id,))

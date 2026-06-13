@@ -1,4 +1,4 @@
-"""propose_web_knowledge_urls — NodeTask: map an equity symbol to financial knowledge URLs.
+"""propose_web_knowledge_urls -- NodeTask: map an equity symbol to financial knowledge URLs.
 
 Given a ticker symbol, constructs the canonical URL for finding derivatives,
 options chain, and related financial market data on Yahoo Finance.
@@ -15,10 +15,10 @@ Celery layer (``_handler``):
 
 Public exports
 --------------
-``propose_web_knowledge_urls``      — ``NodeTask`` instance.
-``ProposeWebKnowledgeUrlsInput``    — Pydantic input model.
-``ProposeWebKnowledgeUrlsOutput``   — Pydantic output model.
-``HANDLERS``                        — dict slice for ``backend.langgraph.nodes.HANDLERS``.
+``propose_web_knowledge_urls``      -- ``NodeTask`` instance.
+``ProposeWebKnowledgeUrlsInput``    -- Pydantic input model.
+``ProposeWebKnowledgeUrlsOutput``   -- Pydantic output model.
+``HANDLERS``                        -- dict slice for ``backend.langgraph.nodes.HANDLERS``.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ class ProposeWebKnowledgeUrlsOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Celery layer — pure business logic
+# Celery layer -- pure business logic
 # ---------------------------------------------------------------------------
 
 
@@ -96,7 +96,7 @@ async def _handler(payload: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 

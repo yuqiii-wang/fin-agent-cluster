@@ -1,4 +1,4 @@
-"""centrifugo.errors — structured error codes for the Centrifugo integration layer."""
+"""centrifugo.errors -- structured error codes for the Centrifugo integration layer."""
 
 from backend.centrifugo_mq.errors.codes import (
     CENTRIFUGO_PUBLISH_FAILED,

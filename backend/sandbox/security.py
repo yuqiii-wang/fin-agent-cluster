@@ -8,13 +8,13 @@ and avoiding unnecessary process startup overhead.
 
 Blocked patterns
 ----------------
-1. **Path traversal** — ``../`` and ``..\\`` sequences that could reach outside
+1. **Path traversal** -- ``../`` and ``..\\`` sequences that could reach outside
    the sandbox working directory.
-2. **Sensitive absolute paths** — references to ``/proc``, ``/sys``, ``/dev``,
+2. **Sensitive absolute paths** -- references to ``/proc``, ``/sys``, ``/dev``,
    ``/etc``, ``/root``, ``/run``, ``/boot``.
-3. **Raw socket construction** — ``socket.socket``, ``AF_INET``, ``AF_UNIX``
+3. **Raw socket construction** -- ``socket.socket``, ``AF_INET``, ``AF_UNIX``
    (belt-and-suspenders; the network namespace already blocks all I/O).
-4. **Network-related top-level imports** — ``socket``, ``urllib``, ``httpx``,
+4. **Network-related top-level imports** -- ``socket``, ``urllib``, ``httpx``,
    ``requests``, ``aiohttp``, ``http.client``.  Internal Python stdlib helpers
    (``json``, ``csv``, ``pathlib``, etc.) are intentionally not blocked.
 """
@@ -31,7 +31,7 @@ __all__ = ["validate_script"]
 
 # ── Compiled rules ─────────────────────────────────────────────────────────────
 
-# ``../`` or ``..\\`` — directory traversal
+# ``../`` or ``..\\`` -- directory traversal
 _RE_PATH_TRAVERSAL = re.compile(r"\.\.[/\\]")
 
 # Sensitive absolute Linux paths that must not be accessed
@@ -73,5 +73,5 @@ def validate_script(script: str, *, language: str = "python") -> None:
     for pattern, reason in _RULES:
         if pattern.search(script):
             raise SandboxSecurityError(
-                f"[{SANDBOX_SECURITY_VIOLATION}] Script rejected — {reason}."
+                f"[{SANDBOX_SECURITY_VIOLATION}] Script rejected -- {reason}."
             )

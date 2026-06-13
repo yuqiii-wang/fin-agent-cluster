@@ -1,4 +1,4 @@
-"""centrifugo — Centrifugo real-time messaging integration.
+"""centrifugo -- Centrifugo real-time messaging integration.
 
 Publishes lifecycle and token events to Centrifugo WebSocket channels
 instead of Redis Pub/Sub / Redis Streams + SSE.
@@ -11,7 +11,7 @@ that owns the thread's session keys.  The frontend is told which
 Centrifugo WebSocket endpoint to connect to via the token endpoint:
 
     GET /api/v1/centrifugo/llm-token?thread_id=<uuid>
-    → {"ws_url": "wss://localhost:22332/centrifugo-llm-0/connection/websocket",
+    -> {"ws_url": "wss://localhost:22332/centrifugo-llm-0/connection/websocket",
        "connection_token": "<JWT>",
        "subscription_token": "<JWT>"}
 
@@ -27,13 +27,13 @@ All four publish functions route to the same ``thread:{thread_id}`` channel;
 the scope names make call-sites explicit about which lifecycle level the event
 belongs to and allow future per-scope differentiation.
 
-:func:`~backend.centrifugo.client.publish_thread_event`  — thread-level events.
-:func:`~backend.centrifugo.client.publish_node_event`    — node-level events.
-:func:`~backend.centrifugo.client.publish_task_event`    — task-level events.
-:func:`~backend.centrifugo.client.publish_stream_event`  — stream-level events.
-:func:`~backend.centrifugo.tokens.make_connection_token` — connection JWT.
-:func:`~backend.centrifugo.tokens.make_subscription_token` — subscription JWT.
-:func:`~backend.centrifugo.client.get_shard_index`       — shard index for a thread_id.
+:func:`~backend.centrifugo.client.publish_thread_event`  -- thread-level events.
+:func:`~backend.centrifugo.client.publish_node_event`    -- node-level events.
+:func:`~backend.centrifugo.client.publish_task_event`    -- task-level events.
+:func:`~backend.centrifugo.client.publish_stream_event`  -- stream-level events.
+:func:`~backend.centrifugo.tokens.make_connection_token` -- connection JWT.
+:func:`~backend.centrifugo.tokens.make_subscription_token` -- subscription JWT.
+:func:`~backend.centrifugo.client.get_shard_index`       -- shard index for a thread_id.
 """
 
 from backend.auth.jwt import make_connection_token, make_subscription_token

@@ -1,4 +1,4 @@
-"""backend.langgraph.agent.error_log.errors — error codes for the thread log store."""
+"""backend.langgraph.agent.error_log.errors -- error codes for the thread log store."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""LLM token streaming pipeline — push_token and end_stream public API."""
+"""LLM token streaming pipeline -- push_token and end_stream public API."""
 
 from __future__ import annotations
 
@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 _STREAM_PREFIX = "fin:llm:tokens"
 
-# Per-thread in-process queue — non-blocking token intake for streaming callbacks.
+# Per-thread in-process queue -- non-blocking token intake for streaming callbacks.
 _queues: dict[str, asyncio.Queue[str]] = {}
 
-# Per-thread lock — serialises concurrent end_stream / flush calls.
+# Per-thread lock -- serialises concurrent end_stream / flush calls.
 _locks: dict[str, asyncio.Lock] = {}
 
 

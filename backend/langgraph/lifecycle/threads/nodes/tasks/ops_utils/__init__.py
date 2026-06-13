@@ -1,12 +1,12 @@
-"""ops_utils — internal implementation modules for task lifecycle operations.
+"""ops_utils -- internal implementation modules for task lifecycle operations.
 
 Modules
 -------
-create       — ``create_task``
-complete     — ``complete_task``, ``persist_task_result``
-cancel_pause — ``cancel_task``, ``pause_task``, ``cleanup_zombie_tasks``
-retry        — ``reset_task_for_retry``
-queries      — ``get_task_full``, ``get_paused_task_for_node``,
+create       -- ``create_task``
+complete     -- ``complete_task``, ``persist_task_result``
+cancel_pause -- ``cancel_task``, ``pause_task``, ``cleanup_zombie_tasks``
+retry        -- ``reset_task_for_retry``
+queries      -- ``get_task_full``, ``get_paused_task_for_node``,
                ``get_existing_task_for_node``, ``get_latest_llm_response``,
                ``invalidate_node_task_caches``
 """

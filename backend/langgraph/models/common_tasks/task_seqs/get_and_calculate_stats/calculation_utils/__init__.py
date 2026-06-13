@@ -1,4 +1,4 @@
-"""calculation_utils — instrument-specific calculation handlers for get_and_calculate_stats."""
+"""calculation_utils -- instrument-specific calculation handlers for get_and_calculate_stats."""
 
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_fundamental_stats import (
     FundamentalsDataItem,

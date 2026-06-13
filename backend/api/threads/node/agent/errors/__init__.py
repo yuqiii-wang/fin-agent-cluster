@@ -1,4 +1,4 @@
-"""backend.api.threads.node.agent.errors — error codes for agent API."""
+"""backend.api.threads.node.agent.errors -- error codes for agent API."""
 
 from __future__ import annotations
 

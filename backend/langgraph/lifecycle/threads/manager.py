@@ -4,7 +4,7 @@ Holds one ``asyncio.Event`` (cancel token) per active thread and tracks
 the Celery ``AsyncResult`` for every in-flight task so they can be revoked
 during thread or node cancellation.
 
-This module is intentionally a **process-local singleton** — it has no Redis
+This module is intentionally a **process-local singleton** -- it has no Redis
 or DB dependency.  State is lost on process restart, which is acceptable
 because the DB is the source of truth; the registry only accelerates
 in-process signal delivery.
@@ -44,7 +44,7 @@ class ThreadRegistry:
 
     def __init__(self) -> None:
         self._cancel_tokens: dict[str, asyncio.Event] = {}
-        # Maps task_id → Celery AsyncResult for all in-flight tasks.
+        # Maps task_id -> Celery AsyncResult for all in-flight tasks.
         self._celery_results: dict[str, Any] = {}
         self._lock = asyncio.Lock()
 
@@ -87,7 +87,7 @@ class ThreadRegistry:
     def cleanup_thread(self, thread_id: str) -> None:
         """Release the cancel token for *thread_id*.
 
-        Does **not** revoke dangling Celery results — callers should revoke
+        Does **not** revoke dangling Celery results -- callers should revoke
         before cleanup, or let the results expire naturally.
         """
         self._cancel_tokens.pop(thread_id, None)
@@ -117,7 +117,7 @@ class ThreadRegistry:
         """Revoke and discard the Celery result for *task_id*.
 
         Uses ``terminate=True`` so an already-running worker process receives
-        SIGTERM.  Errors are swallowed — revocation is best-effort.
+        SIGTERM.  Errors are swallowed -- revocation is best-effort.
 
         Args:
             task_id: Governance UUID to revoke.

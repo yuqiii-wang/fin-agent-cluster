@@ -36,7 +36,7 @@ class StreamingTaskOutput(BaseModel):
     task_executions row for the view to render correctly.
 
     Attributes:
-        thinking: Raw ``<think>…</think>`` content extracted by the stream
+        thinking: Raw ``<think>...</think>`` content extracted by the stream
             worker, or ``None`` when the model did not emit a thinking block.
         answer:   Task-specific result dict (e.g.
             ``{"stock_name": "AAPL", "not_seen": False}`` for analyze_query).

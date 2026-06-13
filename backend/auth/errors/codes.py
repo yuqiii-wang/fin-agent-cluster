@@ -1,8 +1,8 @@
-"""auth.errors — error code constants for the authentication layer.
+"""auth.errors -- error code constants for the authentication layer.
 
 Error code prefixes
 -------------------
-``AUTH_``   — Guest auth, JWT generation, and Centrifugo token failures.
+``AUTH_``   -- Guest auth, JWT generation, and Centrifugo token failures.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 #: Failed to create a guest user after the maximum number of DB retry attempts.
 AUTH_GUEST_CREATE_FAILED = "AUTH_GUEST_CREATE_FAILED"
 
-#: User token is absent or unrecognised — caller should create a new session.
+#: User token is absent or unrecognised -- caller should create a new session.
 AUTH_INVALID_TOKEN = "AUTH_INVALID_TOKEN"
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""centrifugo_mq.llm_tokens — LLM token streaming pipeline.
+"""centrifugo_mq.llm_tokens -- LLM token streaming pipeline.
 
 Architecture
 ------------
@@ -21,7 +21,7 @@ Usage::
 
 Implementation split
 --------------------
-stream.py — push_token and end_stream public API, queue/lock management
+stream.py -- push_token and end_stream public API, queue/lock management
 """
 
 from backend.centrifugo_mq.llm_tokens.stream import end_stream, push_token

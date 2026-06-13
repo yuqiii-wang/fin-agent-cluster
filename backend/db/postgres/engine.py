@@ -1,11 +1,11 @@
-"""SQLAlchemy async engine and session-factory — singleton per process.
+"""SQLAlchemy async engine and session-factory -- singleton per process.
 
 Two engines are maintained:
 
-* **write engine** (``get_engine()``) — targets the primary.  Used for
+* **write engine** (``get_engine()``) -- targets the primary.  Used for
   ORM writes, ``init_db()``, and reads that need read-after-write consistency.
 
-* **read engine** (``get_read_engine()``) — targets the replica when
+* **read engine** (``get_read_engine()``) -- targets the replica when
   ``DATABASE_PG_READ_URL`` is set; falls back to the primary so single-instance
   deployments work without configuration.
 """

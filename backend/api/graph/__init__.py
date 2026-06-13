@@ -1,4 +1,4 @@
-"""Graph API package — static graph topology and inspection endpoints."""
+"""Graph API package -- static graph topology and inspection endpoints."""
 
 from backend.api.graph.router import router
 

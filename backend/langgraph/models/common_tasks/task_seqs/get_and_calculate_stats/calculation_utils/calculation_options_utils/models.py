@@ -1,4 +1,4 @@
-"""models — Pydantic models for options stats calculation.
+"""models -- Pydantic models for options stats calculation.
 
 Contains all input/output models used by the calculate_option_stats task.
 """
@@ -81,7 +81,6 @@ class OptionContent(BaseModel):
     
     calls: list[OptionContractInput] = Field(default_factory=list)
     puts: list[OptionContractInput] = Field(default_factory=list)
-    data_type: str | None = None
 
 
 class StatsRecord(BaseModel):
@@ -99,12 +98,14 @@ class CalculateOptionStatsInput(BaseModel):
 
     Supports two input formats:
     1. Nested format (from Celery worker):
-       { "data_type": "options", "from_cache": true, "stats_record": { "symbol": "...", "content": { "calls": [...], "puts": [...] } } }
+       { "pipeline": "options", "from_cache": true, "stats_record": { "symbol": "...", "content": { "calls": [...], "puts": [...] } } }
     2. Flat format (from LangGraph):
        { "symbol": "...", "options": [...] }
 
     Attributes:
-        data_type:    Type of data (optional, used for routing).
+        pipeline:     Pipeline label (optional; used for routing). Always
+                      ``'options'`` here, but this is inferred from the
+                      presence of ``calls``/``puts`` rather than required.
         from_cache:   Whether data came from cache (optional).
         stats_record: Nested record containing symbol and options data (optional).
         symbol:       Underlying ticker symbol (used when stats_record is not provided).
@@ -114,7 +115,7 @@ class CalculateOptionStatsInput(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    data_type: str | None = None
+    pipeline: str | None = None
     from_cache: bool | None = None
     stats_record: StatsRecord | None = None
     symbol: str = ""
@@ -204,7 +205,7 @@ class VolSmilePoint(BaseModel):
 
 
 class VolSmileExpiry(BaseModel):
-    """Per-expiry volatility smile and volume — strike/IV/volume points for one expiry date.
+    """Per-expiry volatility smile and volume -- strike/IV/volume points for one expiry date.
 
     The volatility smile shows implied volatility across strike prices, while the
     accompanying volume bar chart displays trading activity at each strike.

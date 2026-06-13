@@ -1,4 +1,4 @@
-"""do_emb — NodeTask: generate embeddings for raw news articles from get_news output.
+"""do_emb -- NodeTask: generate embeddings for raw news articles from get_news output.
 
 Runs in parallel with ``do_summary``.  Receives the raw ``news_articles`` list from
 ``get_news`` and generates a 768-dim vector embedding of ``title + content`` for each
@@ -6,8 +6,8 @@ article, keyed by ``url_hash`` (sha256 of the article URL or title).
 
 Failure behaviour
 -----------------
-Per-item embedding failure → warning logged, item skipped.
-Embedder init failure → warning logged, empty embeddings returned.
+Per-item embedding failure -> warning logged, item skipped.
+Embedder init failure -> warning logged, empty embeddings returned.
 The task always completes as ``completed``; it is a soft-failure task.
 Delegation failures (Celery infrastructure down) propagate to seq.py for
 warning-level handling there.
@@ -18,13 +18,13 @@ LangGraph layer (``_do_emb_task`` decorated with ``@task``):
     Delegates to the Celery completion worker.
 
 Celery layer (``_handler``):
-    For each article: sha256 url/title → embed ``title + content`` via
+    For each article: sha256 url/title -> embed ``title + content`` via
     ``embedder.embed_documents([text])``.  Catches per-item exceptions.
 
 Public exports
 --------------
-``do_emb``   — ``NodeTask`` instance.
-``HANDLERS`` — dict slice for registration in ``backend.langgraph.nodes.HANDLERS``.
+``do_emb``   -- ``NodeTask`` instance.
+``HANDLERS`` -- dict slice for registration in ``backend.langgraph.nodes.HANDLERS``.
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ class DoEmbOutput(BaseModel):
     """Output from the do_emb task.
 
     Attributes:
-        embeddings:    Mapping of ``url_hash`` → 768-dim embedding vector for
+        embeddings:    Mapping of ``url_hash`` -> 768-dim embedding vector for
                        each successfully embedded article summary.
         skipped_count: Number of items that failed embedding (warnings logged).
         from_cache:    ``True`` when embeddings were loaded from existing
@@ -86,7 +86,7 @@ class DoEmbOutput(BaseModel):
 
     embeddings: dict[str, list[float]] = Field(
         default_factory=dict,
-        description="url_hash → embedding vector for each embedded summary.",
+        description="url_hash -> embedding vector for each embedded summary.",
     )
     skipped_count: int = Field(
         default=0, description="Items that failed embedding (warned and skipped)."
@@ -102,7 +102,7 @@ _TARGET_DIM = 768
 # for a given source dimension, making stored and freshly-computed embeddings
 # comparable even across process restarts.
 _PROJECTION_SEED = 42
-# Module-level cache: src_dim → (src_dim × TARGET_DIM) projection matrix.
+# Module-level cache: src_dim -> (src_dim × TARGET_DIM) projection matrix.
 # Populated lazily on first call per unique source dimension.
 _PROJECTION_CACHE: dict[int, Any] = {}
 
@@ -112,7 +112,7 @@ def _get_projection_matrix(src_dim: int) -> Any:
     The Johnson-Lindenstrauss construction uses a standard-normal random matrix
     whose columns are L2-normalised.  Column normalisation ensures each target
     dimension receives equal aggregate weight regardless of source dimensionality.
-    The matrix is built once per (src_dim → _TARGET_DIM) pair and cached for
+    The matrix is built once per (src_dim -> _TARGET_DIM) pair and cached for
     the process lifetime.
 
     Args:
@@ -263,7 +263,7 @@ async def _do_emb_pg_cache(
     return DoEmbOutput(embeddings=cached_embeddings, from_cache=True)
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _do_emb_task(
@@ -308,7 +308,7 @@ do_emb: NodeTask[DoEmbInput, DoEmbOutput] = NodeTask(
     name=_TASK_NAME,
     description=(
         "Generate 768-dim vector embeddings for the AI summaries produced by do_summary. "
-        "Soft-failure task — per-item failures emit warnings but do not fail the task."
+        "Soft-failure task -- per-item failures emit warnings but do not fail the task."
     ),
     input_type=DoEmbInput,
     output_type=DoEmbOutput,

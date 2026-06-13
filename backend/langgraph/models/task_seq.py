@@ -1,4 +1,4 @@
-"""TaskSeq — bundles a sequential pipeline of NodeTasks as a reusable unit.
+"""TaskSeq -- bundles a sequential pipeline of NodeTasks as a reusable unit.
 
 A ``TaskSeq`` groups two or more :class:`~backend.langgraph.models.task.NodeTask`
 instances into an ordered pipeline.  The individual tasks remain unchanged
@@ -11,7 +11,7 @@ Declare in the hosting node's ``tasks`` ClassVar by spreading::
 
     tasks: ClassVar[list[NodeTask]] = [
         other_task,
-        *my_seq.tasks,          # ← expand constituent NodeTasks
+        *my_seq.tasks,          # <- expand constituent NodeTasks
     ]
 
 Execute via the pipeline in the node's chain / agent::

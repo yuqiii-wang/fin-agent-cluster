@@ -1,4 +1,4 @@
-"""get_stock_from_web_if_not_seen — NodeTask for query_node.
+"""get_stock_from_web_if_not_seen -- NodeTask for query_node.
 
 This is a WebRequest task: it searches the web for the stock that
 ``analyze_query`` could not identify, then returns the raw web content for
@@ -16,8 +16,8 @@ Celery layer (``_handler``):
 
 Public export
 -------------
-``get_stock_from_web_if_not_seen`` — ``NodeTask`` instance.
-``HANDLERS``                        — dict slice for the completion registry.
+``get_stock_from_web_if_not_seen`` -- ``NodeTask`` instance.
+``HANDLERS``                        -- dict slice for the completion registry.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 _TASK_NAME = "get_stock_from_web_if_not_seen"
 
 # ---------------------------------------------------------------------------
-# Celery layer — pure business logic
+# Celery layer -- pure business logic
 # ---------------------------------------------------------------------------
 
 async def _handler(payload: dict) -> dict:
@@ -58,7 +58,7 @@ async def _handler(payload: dict) -> dict:
     return WebStockOutput().model_dump()
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _get_stock_from_web_if_not_seen_task(

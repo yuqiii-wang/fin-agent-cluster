@@ -1,11 +1,11 @@
-"""AnalyzeMacroNode — Workflow node that fetches and calculates stats for
+"""AnalyzeMacroNode -- Workflow node that fetches and calculates stats for
 macro instruments (gold, silver, natural gas, crude oil, bitcoin, ethereum).
 
 Hierarchy
 ---------
 Thread
   └── analyze_economics  (Workflow)
-        └── get_and_calculate_stats  (TaskSeq → get_stats + calculate_stats)  [xN instruments, parallel]
+        └── get_and_calculate_stats  (TaskSeq -> get_stats + calculate_stats)  [xN instruments, parallel]
 
 Node design
 -----------
@@ -17,7 +17,7 @@ No correlation analysis is performed.
 
 Predecessor
 -----------
-``query_node`` — must be completed before ``analyze_economics`` starts.
+``query_node`` -- must be completed before ``analyze_economics`` starts.
 Runs in parallel with ``prepare_peers``, ``prepare_macro_stats``, and ``prepare_index``.
 """
 
@@ -72,9 +72,9 @@ class AnalyzeMacroNode(BaseNode[AnalyzeEconomicsInput, AnalyzeEconomicsOutput]):
             "label": "Analysis depth",
             "type": "select",
             "options": [
-                {"value": "shallow", "label": "Shallow — fast overview"},
-                {"value": "normal", "label": "Normal — balanced"},
-                {"value": "deep", "label": "Deep — thorough"},
+                {"value": "shallow", "label": "Shallow -- fast overview"},
+                {"value": "normal", "label": "Normal -- balanced"},
+                {"value": "deep", "label": "Deep -- thorough"},
             ],
             "description": "Controls how much historical data is analysed for macro instruments.",
         },
@@ -85,7 +85,7 @@ class AnalyzeMacroNode(BaseNode[AnalyzeEconomicsInput, AnalyzeEconomicsOutput]):
     _prev_node_names: ClassVar[list[str]] = ["query_node"]
 
     async def build_input(self, state: GraphState) -> AnalyzeEconomicsInput:
-        """Construct node input — uses the default stats period.
+        """Construct node input -- uses the default stats period.
 
         Args:
             state: Current GraphState.
@@ -173,7 +173,7 @@ class AnalyzeMacroNode(BaseNode[AnalyzeEconomicsInput, AnalyzeEconomicsOutput]):
         )
 
     def get_state_updates(self, output: AnalyzeEconomicsOutput) -> dict[str, Any]:
-        """No GraphState updates — output stored in node_executions via lifecycle.
+        """No GraphState updates -- output stored in node_executions via lifecycle.
 
         Args:
             output: Completed node output.

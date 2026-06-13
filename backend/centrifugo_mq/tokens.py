@@ -1,4 +1,4 @@
-"""centrifugo.tokens — shim re-exporting from backend.auth.jwt.
+"""centrifugo.tokens -- shim re-exporting from backend.auth.jwt.
 
 JWT generation for Centrifugo has moved to :mod:`backend.auth.jwt`.
 This module is kept for backward-compatible imports.

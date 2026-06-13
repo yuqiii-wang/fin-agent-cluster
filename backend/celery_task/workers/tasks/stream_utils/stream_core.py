@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # ── Dynamic-batch tuning ─────────────────────────────────────────────────────
 # Flush the token buffer when either limit is reached, whichever comes first.
-# Larger batches → fewer Redis round-trips; smaller max-wait → lower latency.
+# Larger batches -> fewer Redis round-trips; smaller max-wait -> lower latency.
 BATCH_MAX_SIZE: int = 16      # tokens per pipeline flush
 BATCH_FLUSH_MS: float = 8.0   # milliseconds between forced flushes
 
@@ -64,7 +64,7 @@ async def run_stream_core(
     # Centrifugo token channel.  stream_start gives the frontend that window:
     # the ACK means the frontend has received and handled the event (and is now
     # subscribed).  Checking viewers_present before stream_start races against
-    # that subscription and produces False negatives → no tokens sent.
+    # that subscription and produces False negatives -> no tokens sent.
     acked = await notify_thread(
         thread_id,
         "stream_start",
@@ -95,7 +95,7 @@ async def run_stream_core(
     # Tracks whether a provider-level thinking block is currently open.
     # Used only when a provider exposes raw thinking tokens in
     # ``chunk.additional_kwargs["thinking"]`` (e.g. Anthropic extended thinking)
-    # rather than normalising them into ``chunk.content`` as ``<think>…</think>``
+    # rather than normalising them into ``chunk.content`` as ``<think>...</think>``
     # (Ollama's approach).  Both paths produce the same ``full_answer`` shape so
     # ``extract_thinking_answer`` works identically regardless of provider.
     _provider_thinking_open = False
@@ -109,7 +109,7 @@ async def run_stream_core(
         raw_content: str = chunk.content or ""  # type: ignore[union-attr]
 
         if raw_thinking:
-            # Wrap raw thinking in <think>…</think> so extract_thinking_answer
+            # Wrap raw thinking in <think>...</think> so extract_thinking_answer
             # works uniformly across all providers.
             if not _provider_thinking_open:
                 _provider_thinking_open = True
@@ -118,7 +118,7 @@ async def run_stream_core(
                 token = raw_thinking
         elif raw_content:
             if _provider_thinking_open:
-                # First content token after raw thinking — close the tag.
+                # First content token after raw thinking -- close the tag.
                 _provider_thinking_open = False
                 token = "</think>" + raw_content
             else:
@@ -141,7 +141,7 @@ async def run_stream_core(
                     "[stream_task] cancel_mid_stream thread_id=%s task_id=%s tokens=%d",
                     thread_id, task_id, seq,
                 )
-                # Break closes the async generator → httpx connection → Ollama stops.
+                # Break closes the async generator -> httpx connection -> Ollama stops.
                 break
             from backend.langgraph.lifecycle.pause_flag import is_task_pause_flag_set
             if await is_task_pause_flag_set(task_id):

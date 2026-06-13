@@ -1,4 +1,4 @@
-"""load_markdown.py — Step 1: propose URLs then crawl + convert to Markdown."""
+"""load_markdown.py -- Step 1: propose URLs then crawl + convert to Markdown."""
 
 from __future__ import annotations
 

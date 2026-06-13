@@ -4,9 +4,9 @@ NodeTask is the canonical task definition (input schema, description, Celery
 dispatch, LangGraph @task).  This module is the bridge layer that converts
 NodeTask objects into the lightweight ToolInfo representation used by:
 
-- ``capabilities.py`` — capability selection and system-prompt building.
-- ``loop.py`` — resolving which StructuredTools to bind to the LLM.
-- ``api/`` — displaying tool metadata to the UI.
+- ``capabilities.py`` -- capability selection and system-prompt building.
+- ``loop.py`` -- resolving which StructuredTools to bind to the LLM.
+- ``api/`` -- displaying tool metadata to the UI.
 """
 
 from __future__ import annotations

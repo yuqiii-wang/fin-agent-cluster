@@ -23,9 +23,9 @@ pool that caused Protocol Errors under parallel node execution.
 
 Hierarchy
 ---------
-  LangGraph thread  (main thread FastAPI — uvicorn asyncio event loop)
+  LangGraph thread  (main thread FastAPI -- uvicorn asyncio event loop)
     └── @task (langgraph.func.task)
-          └── delegate_completion / delegate_stream   ← this module
+          └── delegate_completion / delegate_stream   <- this module
                 └── Celery worker process
                       └── completion_task / stream_task
 """
@@ -120,12 +120,12 @@ async def _await_result(
                     f"Task {task_id} exceeded maximum duration of {total_timeout}s"
                 )
 
-            # Check Redis cancel flag — works across process boundaries.
+            # Check Redis cancel flag -- works across process boundaries.
             if await is_cancel_flag_set(thread_id):
                 registry.revoke_celery_task(task_id)
                 raise ThreadCancelledError(thread_id)
 
-            # Check per-node cancel flag — set by cancel_node API for single-node
+            # Check per-node cancel flag -- set by cancel_node API for single-node
             # cancellation (e.g. one branch of a parallel group cancelled by user).
             if node_id and await is_node_cancel_flag_set(node_id):
                 registry.revoke_celery_task(task_id)
@@ -154,7 +154,7 @@ async def _await_result(
                     if await is_task_pause_flag_set(task_id):
                         raise TaskPausedError(task_id)
                     raise ThreadCancelledError(thread_id)
-                # PENDING / STARTED / RETRY — keep polling
+                # PENDING / STARTED / RETRY -- keep polling
 
             await asyncio.sleep(min(_CANCEL_POLL_INTERVAL, remaining))
     finally:
@@ -174,7 +174,7 @@ async def delegate_completion(
     Runs in the LangGraph asyncio event loop; polls in a thread-pool executor
     with cancel-token checking until the result is available.  Emits the
     ``task_status: completed`` (or ``failed``) SSE event from this asyncio
-    loop as a background task — Celery only performs the DB write for
+    loop as a background task -- Celery only performs the DB write for
     durability.
 
     Args:
@@ -210,7 +210,7 @@ async def delegate_completion(
         # Cancel and timeout have their own SSE paths (cancel_task / node except block).
         raise
     except Exception as exc:
-        # Celery worker raised — emit task:failed SSE before re-raising so the
+        # Celery worker raised -- emit task:failed SSE before re-raising so the
         # failure event arrives at the UI before any node-level events.
         logger.error(
             "[task_delegation] task failed task_id=%s task_name=%s thread_id=%s: %s",
@@ -260,7 +260,7 @@ async def _emit_task_sse(
     Called from ``delegate_completion`` (awaited, not as a background task)
     so that task:completed / task:failed is published and ACKed before
     ``complete_node`` fires its own node-level SSE.  This enforces
-    task → node → subgraph → next_node ordering on the shared Centrifugo
+    task -> node -> subgraph -> next_node ordering on the shared Centrifugo
     thread channel.
 
     Args:
@@ -328,7 +328,7 @@ async def delegate_stream(
         thread_id:  LangGraph thread UUID (for Centrifugo shard routing).
         task_id:    Governance UUID for the ``fin_agents.tasks`` row.
         task_name:  UI-facing label for this streaming task (e.g. ``"stream_llm"``).
-                    Decided by each node's task — independent of the underlying
+                    Decided by each node's task -- independent of the underlying
                     Celery task registration name (always ``run_stream``).
         node_name:  Owning node name.
         payload:    Input context forwarded to the stream worker.
@@ -401,7 +401,7 @@ def _send_to_stream_worker(
         payload:    Input context forwarded to the worker.
 
     Returns:
-        Celery ``AsyncResult`` — pass to ``_await_result`` to retrieve the
+        Celery ``AsyncResult`` -- pass to ``_await_result`` to retrieve the
         final streaming result dict.
     """
     return celery_engine.send_task(

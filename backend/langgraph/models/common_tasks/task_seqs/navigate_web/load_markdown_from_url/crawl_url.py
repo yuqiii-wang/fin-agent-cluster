@@ -1,4 +1,4 @@
-"""crawl_url — NodeTask: fetch a web page and extract links.
+"""crawl_url -- NodeTask: fetch a web page and extract links.
 
 Uses :mod:`backend.httpx_client` to fetch the target URL and Python's stdlib
 ``html.parser`` to extract hyperlinks from the response body.
@@ -19,10 +19,10 @@ Celery layer (``_handler``):
 
 Public exports
 --------------
-``crawl_url``       — ``NodeTask`` instance.
-``CrawlUrlInput``   — Pydantic input model.
-``CrawlUrlOutput``  — Pydantic output model.
-``HANDLERS``        — dict slice for ``backend.langgraph.nodes.HANDLERS``.
+``crawl_url``       -- ``NodeTask`` instance.
+``CrawlUrlInput``   -- Pydantic input model.
+``CrawlUrlOutput``  -- Pydantic output model.
+``HANDLERS``        -- dict slice for ``backend.langgraph.nodes.HANDLERS``.
 """
 
 from __future__ import annotations
@@ -190,7 +190,7 @@ class CrawlUrlOutput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Celery layer — business logic
+# Celery layer -- business logic
 # ---------------------------------------------------------------------------
 
 
@@ -281,7 +281,7 @@ def _extract_title(html: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task
+# LangGraph layer -- @task
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""backend.db.redis.streams — Redis Stream helpers for real-time token delivery."""
+"""backend.db.redis.streams -- Redis Stream helpers for real-time token delivery."""
 
 from backend.db.redis.streams.publisher import stream_token, stream_token_batch
 from backend.db.redis.streams.reader import delete_stream_entries, recover_task_tokens

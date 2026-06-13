@@ -87,7 +87,7 @@ class ThreadErrorLogHandler(logging.Handler):
             _queue.put_nowait(item)
         except queue.Full:
             pass
-        except Exception:  # noqa: BLE001 — logging must never raise
+        except Exception:  # noqa: BLE001 -- logging must never raise
             pass
         finally:
             _local.in_capture = False

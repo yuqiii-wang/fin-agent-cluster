@@ -69,13 +69,13 @@ async def _complete_node_internal(
         except Exception:
             _existing = "unknown"
         logger.debug(
-            "[lifecycle:node] %s skipped node_id=%s node_name=%s existing_status=%s — node already terminal",
+            "[lifecycle:node] %s skipped node_id=%s node_name=%s existing_status=%s -- node already terminal",
             status, node_id, node_name, _existing,
         )
-        return  # Already terminal — skip SSE.
+        return  # Already terminal -- skip SSE.
 
     logger.debug(
-        "[lifecycle:node] %s node_id=%s node_name=%s db_ms=%.0f — emitting SSE",
+        "[lifecycle:node] %s node_id=%s node_name=%s db_ms=%.0f -- emitting SSE",
         status, node_id, node_name, (time.monotonic() - t0) * 1000,
     )
     t_sse = time.monotonic()

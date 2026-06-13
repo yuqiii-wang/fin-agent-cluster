@@ -1,13 +1,13 @@
-"""BaseNode and ChildNode — the agent-ready node template.
+"""BaseNode and ChildNode -- the agent-ready node template.
 
 Design: node as agent contract
 -------------------------------
 Every node exposes these methods that together define its contract:
 
-    build_input(state)      — reads typed input from predecessor outputs via DB
-    build_chain(ctx)        — composes task steps into a Runnable chain (agent loop later)
-    build_output(results)   — selects / composes from task outputs for the node output
-    get_state_updates(out)  — maps node output to GraphState key updates (usually {})
+    build_input(state)      -- reads typed input from predecessor outputs via DB
+    build_chain(ctx)        -- composes task steps into a Runnable chain (agent loop later)
+    build_output(results)   -- selects / composes from task outputs for the node output
+    get_state_updates(out)  -- maps node output to GraphState key updates (usually {})
 
 The ``build_chain`` method is the seam for the agent upgrade:
 
@@ -26,11 +26,11 @@ The ``build_chain`` method is the seam for the agent upgrade:
 
 Lifecycle
 ---------
-``__call__``              — top-level LangGraph entrypoint (enters + orchestrates + exits)
-``_run_as_child``         — called by a parent subgraph; same lifecycle but with
+``__call__``              -- top-level LangGraph entrypoint (enters + orchestrates + exits)
+``_run_as_child``         -- called by a parent subgraph; same lifecycle but with
                             ``parent_node_id`` and optional ``parallel_group``.
-``run_task``              — stamps a fresh TaskContext and invokes the @task fn.
-``_task_as_runnable``     — wraps a NodeTask as a ``RunnableLambda`` chain step.
+``run_task``              -- stamps a fresh TaskContext and invokes the @task fn.
+``_task_as_runnable``     -- wraps a NodeTask as a ``RunnableLambda`` chain step.
 
 Fork versioning
 ---------------
@@ -112,7 +112,7 @@ class BaseNode(
     ABC,
     Generic[I, O],
 ):
-    """Template for all LangGraph nodes — fixed-flow now, agent-upgradeable later.
+    """Template for all LangGraph nodes -- fixed-flow now, agent-upgradeable later.
 
     Class variables:
         node_name: Registered node name; used in DB rows and SSE events.
@@ -176,14 +176,14 @@ class BaseNode(
                     f"{cls.__name__}: AGENT node with agent_steps must also set "
                     "agent_global_state_class ClassVar."
                 )
-            return  # step registry + global state class present — OK
+            return  # step registry + global state class present -- OK
         base_node_idx = next(
             (i for i, c in enumerate(cls.__mro__) if c.__name__ == "BaseNode"),
             len(cls.__mro__),
         )
         for c in cls.__mro__[:base_node_idx]:
             if "build_agent" in c.__dict__:
-                return  # overridden below BaseNode — OK
+                return  # overridden below BaseNode -- OK
         raise TypeError(
             f"{cls.__name__}: NodeType.AGENT must set agent_steps ClassVar "
             "or override build_agent()."
@@ -272,7 +272,7 @@ class BaseNode(
 
     @abstractmethod
     def get_state_updates(self, output: O) -> dict[str, Any]:
-        """Map node output to GraphState key → value updates.
+        """Map node output to GraphState key -> value updates.
 
         Most nodes return ``{}`` since data flows via DB, not state.
         ``conclusion_node`` returns ``{"conclusion": output.answer}`` so
@@ -285,7 +285,7 @@ class ChildNode(BaseNode[I, O], ABC):
 
     Subclasses must implement ``orchestrate``, ``build_output``, and
     ``get_state_updates``.  They must NOT be registered in the top-level
-    LangGraph graph — use ``_run_as_child()`` from the parent instead.
+    LangGraph graph -- use ``_run_as_child()`` from the parent instead.
     """
 
     async def build_input(self, state: GraphState) -> I:

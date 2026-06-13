@@ -1,13 +1,13 @@
-"""backend.langgraph.compiled — process-wide compiled LangGraph instance.
+"""backend.langgraph.compiled -- process-wide compiled LangGraph instance.
 
 Pre-compiles the appropriate graph with a pooled ``AsyncPostgresSaver``
 checkpointer once at startup so individual query handlers avoid the
-per-invocation rebuild cost (~5–20 ms) and cold DB connect overhead.
+per-invocation rebuild cost (~5-20 ms) and cold DB connect overhead.
 
 Graph selection
 ---------------
-* ``Settings.TEST_MODE == True``  → mock graph (full multi-node pipeline)
-* ``Settings.TEST_MODE == False`` → fin-trading graph (production)
+* ``Settings.TEST_MODE == True``  -> mock graph (full multi-node pipeline)
+* ``Settings.TEST_MODE == False`` -> fin-trading graph (production)
 
 Usage::
 
@@ -61,7 +61,7 @@ def get_compiled_graph() -> Any:
     """
     if _compiled_graph is None:
         raise RuntimeError(
-            "Compiled graph not initialised — call init_compiled_graph() during startup"
+            "Compiled graph not initialised -- call init_compiled_graph() during startup"
         )
     return _compiled_graph
 

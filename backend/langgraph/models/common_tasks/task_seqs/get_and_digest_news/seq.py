@@ -1,13 +1,13 @@
-"""get_and_digest_news — TaskSeq pipeline: fetch raw news then LLM-digest into news_stats.
+"""get_and_digest_news -- TaskSeq pipeline: fetch raw news then LLM-digest into news_stats.
 
 Orchestration
 -------------
-1. ``get_news``              — fetch by requesting url/news provider, e.g., 
+1. ``get_news``              -- fetch by requesting url/news provider, e.g., 
     FinancialModelingPrep news API or DuckDuckGo Search API, or just input from the previous task.
     Hard failure: if this step fails, the whole pipeline fails and raises.
-2. ``do_summary`` ┐ parallel — LLM-classify each article (soft failure).
+2. ``do_summary`` ┐ parallel -- LLM-classify each article (soft failure).
    ``do_emb``     ┘           embed title+content of each article (soft failure).
-3. ``digest_news``           — read from ``input_raw``, combine summaries+embeddings,
+3. ``digest_news``           -- read from ``input_raw``, combine summaries+embeddings,
                                upsert to ``news_stats``, render Markdown.
 """
 
@@ -58,7 +58,7 @@ async def _pipeline(
     ctx: NodeContext,
     seq_input: GetAndDigestNewsInput,
 ) -> GetAndDigestNewsOutput:
-    """Run get_news → (do_summary ‖ do_emb) → digest_news.
+    """Run get_news -> (do_summary ‖ do_emb) -> digest_news.
 
     ``do_summary`` and ``do_emb`` run in parallel after ``get_news`` completes.
     Both are soft-failure tasks: exceptions log a warning and the pipeline
@@ -73,7 +73,7 @@ async def _pipeline(
     Returns:
         Combined output from all four tasks.
     """
-    # 1. get_news — hard failure (propagates)
+    # 1. get_news -- hard failure (propagates)
     gn_result = await run_task_fn(
         get_news,
         ctx,
@@ -88,7 +88,7 @@ async def _pipeline(
     gn_output: GetNewsOutput = gn_result.content
     articles_json = [a.model_dump(mode="json") for a in gn_output.news_articles]
 
-    # 2. do_summary ‖ do_emb — run in parallel, both are soft failures
+    # 2. do_summary ‖ do_emb -- run in parallel, both are soft failures
     summary_coro = run_task_fn(
         do_summary,
         ctx,
@@ -130,7 +130,7 @@ async def _pipeline(
 
     all_from_cache = gn_output.from_cache and summary_output.from_cache and emb_output.from_cache
 
-    # 3. digest_news — reads from DB, combines enrichment, upserts, renders Markdown
+    # 3. digest_news -- reads from DB, combines enrichment, upserts, renders Markdown
     dn_result = await run_task_fn(
         digest_news,
         ctx,

@@ -103,7 +103,7 @@ async def notify(
             SSE_NACK.labels(scope="task", event=event, reason="explicit_nack").inc()
             break
         logger.debug(
-            "[sse:task] ack timeout task_id=%s event=%s attempt=%d attempt_ms=%.0f — retrying",
+            "[sse:task] ack timeout task_id=%s event=%s attempt=%d attempt_ms=%.0f -- retrying",
             task_id, event, attempt, elapsed_attempt,
         )
 

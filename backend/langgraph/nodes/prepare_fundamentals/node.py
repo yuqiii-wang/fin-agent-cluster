@@ -1,11 +1,11 @@
-"""PrepareFundamentalsNode — Workflow node that fetches fundamental data for the queried
+"""PrepareFundamentalsNode -- Workflow node that fetches fundamental data for the queried
 equity symbol (e.g. income statement, balance sheet, cash flow, key ratios).
 
 Hierarchy
 ---------
 Thread
   └── prepare_fundamentals  (Workflow)
-        └── get_and_calculate_stats  (TaskSeq → get_stats + calculate_stats)
+        └── get_and_calculate_stats  (TaskSeq -> get_stats + calculate_stats)
 
 Flow
 ----
@@ -15,10 +15,10 @@ Flow
 
 Predecessor
 -----------
-``query_node`` — must be completed before ``prepare_fundamentals`` starts.
+``query_node`` -- must be completed before ``prepare_fundamentals`` starts.
 Runs in parallel with ``prepare_peers``, ``prepare_macro_stats``, ``prepare_index``,
-``prepare_news``, ``prepare_industry_news``, ``prepare_macro_news``, and
-``prepare_derivatives``.
+``prepare_news``, ``prepare_industry_news``, ``prepare_macro_news``,
+``prepare_options``, and ``prepare_futures``.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ class PrepareFundamentalsNode(BaseNode[PrepareFundamentalsInput, PrepareFundamen
         return PrepareFundamentalsOutput(symbol=results.get("symbol", ""))
 
     def get_state_updates(self, output: PrepareFundamentalsOutput) -> dict[str, Any]:
-        """No GraphState updates — data flows via DB."""
+        """No GraphState updates -- data flows via DB."""
         return {}
 
 

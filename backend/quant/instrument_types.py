@@ -3,13 +3,13 @@
 Supported types mirror the ``instrument_type`` CHECK constraint in
 ``fin_markets.quant_stats``:
 
-* ``'equity'``         — exchange-listed stocks and ETFs (e.g. ``'AAPL'``, ``'005930.KS'``).
-* ``'crypto'``         — cryptocurrency spot pairs (e.g. ``'BTC-USD'``, ``'ETH-USD'``).
-* ``'commodity'``      — commodity futures tickers (e.g. ``'NG=F'``, ``'CL=F'``).
-* ``'precious_metal'`` — precious metal futures tickers (e.g. ``'GC=F'``, ``'SI=F'``).
-* ``'index'``          — market-benchmark index tickers (e.g. ``'^GSPC'``, ``'000300.SS'``).
-* ``'futures'``        — dated derivative contracts with explicit contract_ticker.
-* ``'options'``        — options flow snapshots.
+* ``'equity'``         -- exchange-listed stocks and ETFs (e.g. ``'AAPL'``, ``'005930.KS'``).
+* ``'crypto'``         -- cryptocurrency spot pairs (e.g. ``'BTC-USD'``, ``'ETH-USD'``).
+* ``'commodity'``      -- commodity futures tickers (e.g. ``'NG=F'``, ``'CL=F'``).
+* ``'precious_metal'`` -- precious metal futures tickers (e.g. ``'GC=F'``, ``'SI=F'``).
+* ``'index'``          -- market-benchmark index tickers (e.g. ``'^GSPC'``, ``'000300.SS'``).
+* ``'futures'``        -- dated derivative contracts with explicit contract_ticker.
+* ``'options'``        -- options flow snapshots.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# Type alias — valid instrument_type values for quant_stats
+# Type alias -- valid instrument_type values for quant_stats
 # ---------------------------------------------------------------------------
 
 InstrumentType = Literal["equity", "crypto", "commodity", "precious_metal", "index", "futures", "options"]
@@ -70,13 +70,13 @@ def resolve_instrument_type(symbol: str, *, is_index: bool = False) -> Instrumen
 
     Resolution order
     ----------------
-    1. ``is_index=True`` **or** symbol starts with ``'^'`` → ``'index'``.
+    1. ``is_index=True`` **or** symbol starts with ``'^'`` -> ``'index'``.
        The ``'^'`` prefix is the universal Yahoo Finance convention for index tickers
        (e.g. ``'^DJI'``, ``'^GSPC'``, ``'^HSI'``).
-    2. Symbol in :data:`_CRYPTO_SYMBOLS`            → ``'crypto'``.
-    3. Symbol in :data:`_PRECIOUS_METAL_SYMBOLS`    → ``'precious_metal'``.
-    4. Symbol in :data:`_COMMODITY_FUTURES_SYMBOLS` → ``'commodity'``.
-    5. Everything else                              → ``'equity'``.
+    2. Symbol in :data:`_CRYPTO_SYMBOLS`            -> ``'crypto'``.
+    3. Symbol in :data:`_PRECIOUS_METAL_SYMBOLS`    -> ``'precious_metal'``.
+    4. Symbol in :data:`_COMMODITY_FUTURES_SYMBOLS` -> ``'commodity'``.
+    5. Everything else                              -> ``'equity'``.
 
     The ``is_index`` flag is kept as a separate parameter to avoid importing
     the DB-backed :func:`~backend.db.postgres.queries.fin_markets_indexes.is_index_ticker`

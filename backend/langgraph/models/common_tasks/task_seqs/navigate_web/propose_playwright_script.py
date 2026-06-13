@@ -1,4 +1,4 @@
-"""propose_playwright_script — NodeTask: LLM-stream generation of a Playwright Python script.
+"""propose_playwright_script -- NodeTask: LLM-stream generation of a Playwright Python script.
 
 When the pipeline encounters a blocked or broken page (popup overlay, consent gate,
 access barrier, or crawl error), this task instructs the LLM to write a self-contained
@@ -35,11 +35,11 @@ Celery layer (via ``STREAM_PROMPT_BUILDERS``):
 
 Public exports
 --------------
-``propose_playwright_script``            — ``NodeTask`` instance.
-``ProposePlaywrightScriptInput``         — Pydantic input model.
-``ProposePlaywrightScriptOutput``        — Pydantic output model.
-``STREAM_PROMPT_BUILDERS``               — dict slice for ``stream_task._get_stream_prompt_builders``.
-``HANDLERS``                             — empty dict (streaming task; no completion handler).
+``propose_playwright_script``            -- ``NodeTask`` instance.
+``ProposePlaywrightScriptInput``         -- Pydantic input model.
+``ProposePlaywrightScriptOutput``        -- Pydantic output model.
+``STREAM_PROMPT_BUILDERS``               -- dict slice for ``stream_task._get_stream_prompt_builders``.
+``HANDLERS``                             -- empty dict (streaming task; no completion handler).
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ You are a web automation engineer.  You will be given:
 
 Your job is to write a self-contained Python script that uses ``playwright.sync_api`` to:
 1. Launch headless Chromium (with ``--no-sandbox``, ``--disable-setuid-sandbox``, \
-   ``--disable-dev-shm-usage`` args — required for container environments).
+   ``--disable-dev-shm-usage`` args -- required for container environments).
 2. Navigate to the source URL and wait for network idle.
 3. Identify and dismiss any overlay (cookie consent, GDPR dialog, age gate, ad wall, \
    "I Agree", "Accept All", etc.) by clicking the appropriate element.
@@ -82,7 +82,7 @@ Your job is to write a self-contained Python script that uses ``playwright.sync_
 5. Print the full page HTML to stdout via ``print(page.content())``.
 
 IMPORTANT constraints:
-- Use ONLY ``playwright.sync_api`` — do NOT use async playwright.
+- Use ONLY ``playwright.sync_api`` -- do NOT use async playwright.
 - The script must be fully self-contained and have no imports other than \
   ``from playwright.sync_api import sync_playwright``.
 - Do NOT use ``sys``, ``json``, ``os``, or any other imports.
@@ -92,7 +92,7 @@ IMPORTANT constraints:
 - Wrap the element click in a try/except so the script never aborts.
 - Set a reasonable timeout: ``page.set_default_timeout(15000)``.
 
-Respond ONLY with a valid JSON object — no preamble, no explanation outside the JSON.
+Respond ONLY with a valid JSON object -- no preamble, no explanation outside the JSON.
 
 Schema:
 {{{{
@@ -256,7 +256,7 @@ def _parse_propose_playwright_answer(answer_dict: dict) -> ProposePlaywrightScri
 
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task
+# LangGraph layer -- @task
 # ---------------------------------------------------------------------------
 
 

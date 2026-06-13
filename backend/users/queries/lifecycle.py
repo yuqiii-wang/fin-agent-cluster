@@ -1,4 +1,4 @@
-"""backend.users.queries.lifecycle — ack, cancel, resume, cancel_node, cancel_task."""
+"""backend.users.queries.lifecycle -- ack, cancel, resume, cancel_node, cancel_task."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ async def cancel_query(thread_id: str, reason: str = "user") -> QueryResponse:
 
     Writes a Redis cancel flag so the graph runner's delegation poll loop
     detects it within ``_CANCEL_POLL_INTERVAL`` and revokes Celery tasks.
-    Also performs the DB cascade (nodes + tasks → cancelled) so the UI
+    Also performs the DB cascade (nodes + tasks -> cancelled) so the UI
     receives accurate status regardless of graph runner timing.
 
     Args:
@@ -132,9 +132,9 @@ async def cancel_task_by_uuid(
     After cancelling the task (output set to ``{}`` by the lifecycle layer),
     checks whether any other active tasks remain in the owning node:
 
-    - Active tasks remain → stop; node keeps running and can decide whether
+    - Active tasks remain -> stop; node keeps running and can decide whether
       the cancelled task's missing output is blocking.
-    - No active tasks remain → cancel the node and continue cascade-up via
+    - No active tasks remain -> cancel the node and continue cascade-up via
       :func:`_cascade_up_from_cancelled_node`.
 
     Args:
@@ -231,7 +231,7 @@ async def pause_task_by_uuid(
         get_thread_registry().revoke_celery_task(task_id)
 
     # Mark task as 'paused' in DB and emit SSE.
-    # Does NOT cascade to owning node — node stays 'running'.
+    # Does NOT cascade to owning node -- node stays 'running'.
     await _pause(thread_id, task_id)
 
     return {"thread_id": thread_id, "task_id": task_id, "action": "paused"}

@@ -1,4 +1,4 @@
-"""propose_index — pure-computation task for prepare_index.
+"""propose_index -- pure-computation task for prepare_index.
 
 Determines the set of equity market indexes to analyse for the current thread.
 
@@ -10,16 +10,16 @@ Logic
 4. Return the resolved :class:`IndexCandidate` list so the node can run
    ``get_and_calculate_stats`` for each index ticker in parallel.
 
-This is a pure computation task — no LLM or external I/O beyond DB reads.
+This is a pure computation task -- no LLM or external I/O beyond DB reads.
 Lifecycle tracking (``create_task`` / ``complete_task``) provides UI visibility
 and audit trail.
 
 Public exports
 --------------
-``propose_index``      — ``NodeTask`` instance used by ``AnalyzeIndexNode``.
-``ProposeIndexInput``  — Input model.
-``ProposeIndexOutput`` — Output model.
-``IndexCandidate``     — Per-index metadata used by the node to dispatch stats.
+``propose_index``      -- ``NodeTask`` instance used by ``AnalyzeIndexNode``.
+``ProposeIndexInput``  -- Input model.
+``ProposeIndexOutput`` -- Output model.
+``IndexCandidate``     -- Per-index metadata used by the node to dispatch stats.
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ class ProposeIndexOutput(BaseModel):
     )
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task (pure computation, DB reads only)
+# LangGraph layer -- @task (pure computation, DB reads only)
 # ---------------------------------------------------------------------------
 
 def _resolve_candidates(default_codes: list[str]) -> list[IndexCandidate]:
@@ -128,7 +128,7 @@ def _resolve_candidates(default_codes: list[str]) -> list[IndexCandidate]:
     for code in default_codes:
         idx: MarketIndex | None = get_index_by_code(code)
         if idx is None or not idx.ticker:
-            logger.error("[PI-003] Index code %r not found in cache — skipping.", code)
+            logger.error("[PI-003] Index code %r not found in cache -- skipping.", code)
             continue
         candidates.append(
             IndexCandidate(
@@ -186,7 +186,7 @@ async def _propose_index_task(
                     candidates.extend(extra_candidate)
                 else:
                     logger.error(
-                        "[PI-004] Stock %r index %r not in cache — cannot add.",
+                        "[PI-004] Stock %r index %r not in cache -- cannot add.",
                         stock_sym, added_code,
                     )
                     added_code = None

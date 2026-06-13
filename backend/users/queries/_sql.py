@@ -1,4 +1,4 @@
-"""backend.users.queries._sql — Raw SQL constants for user query operations."""
+"""backend.users.queries._sql -- Raw SQL constants for user query operations."""
 
 from __future__ import annotations
 

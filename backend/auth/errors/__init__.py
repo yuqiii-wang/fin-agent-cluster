@@ -1,4 +1,4 @@
-"""backend.auth.errors — authentication layer error codes."""
+"""backend.auth.errors -- authentication layer error codes."""
 
 from __future__ import annotations
 

@@ -66,13 +66,13 @@ async def pause_task(
     """Pause a single task: mark DB as 'pause' and emit SSE.
 
     Unlike :func:`cancel_task`, pausing does **not** cascade to the owning
-    node — the node stays ``running`` and the task can be retried later.
+    node -- the node stays ``running`` and the task can be retried later.
     For streaming tasks the Celery worker is also signalled via a Redis
     pause flag (set by the caller before invoking this function) so it can
     save its partial thinking content gracefully before exiting.  The
     caller (:func:`~backend.users.queries.lifecycle.pause_task_by_uuid`) is
     responsible for revoking the Celery task when needed (completion tasks
-    only) — this function only updates the DB and emits the SSE.
+    only) -- this function only updates the DB and emits the SSE.
 
     Args:
         thread_id: LangGraph thread UUID.
@@ -103,7 +103,7 @@ async def pause_task(
 
     # Check whether this was a user-initiated pause (not server shutdown).
     # When reason != "server_shutdown", we mark the node as user-paused so that
-    # the startup recovery won't auto-resume it — the user must click Continue.
+    # the startup recovery won't auto-resume it -- the user must click Continue.
     # We do NOT call pause_node here directly; that happens when TaskPausedError
     # propagates to node.__call__ or _run_as_child after the stream worker stops.
     # However, we do mark the node's is_last_paused_by_server=FALSE now so that
@@ -134,7 +134,7 @@ async def cleanup_zombie_tasks(thread_id: str, fencing_token: int) -> None:
 
     Args:
         thread_id:     LangGraph thread UUID.
-        fencing_token: The zombie run's fencing token — only rows with this
+        fencing_token: The zombie run's fencing token -- only rows with this
                        exact token are updated.
     """
     try:

@@ -1,4 +1,4 @@
-"""backend.api.threads — thread inspection and event management router."""
+"""backend.api.threads -- thread inspection and event management router."""
 
 from __future__ import annotations
 

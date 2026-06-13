@@ -1,4 +1,4 @@
-"""prepare_fundamentals — fan-out fetch fundamentals then aggregate into quant_static_stats."""
+"""prepare_fundamentals -- fan-out fetch fundamentals then aggregate into quant_static_stats."""
 
 from __future__ import annotations
 

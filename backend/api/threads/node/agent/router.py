@@ -1,15 +1,15 @@
-"""backend.api.threads.node.agent — agent capabilities API router.
+"""backend.api.threads.node.agent -- agent capabilities API router.
 
 Routes (all mounted on the parent ``/threads`` router):
 
     GET  /api/v1/threads/{thread_id}/nodes/{node_id}/agent/capabilities
-         — return tools, skills, and task-output memory for an agent node.
+         -- return tools, skills, and task-output memory for an agent node.
 
     POST /api/v1/threads/{thread_id}/nodes/{node_id}/agent/skills
-         — add a user-defined skill; if node is running, sets pause+auto_resume.
+         -- add a user-defined skill; if node is running, sets pause+auto_resume.
 
     POST /api/v1/threads/{thread_id}/nodes/{node_id}/agent/skills/{skill_id}/forget
-         — mark a skill as forgotten; if node is running, sets pause+auto_resume.
+         -- mark a skill as forgotten; if node is running, sets pause+auto_resume.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""backend.main_thread — in-process graph execution for main thread FastAPI instances.
+"""backend.main_thread -- in-process graph execution for main thread FastAPI instances.
 
 This package replaces the standalone ``graph_runner`` subprocess.  Each
 FastAPI (main thread) instance owns its graph coroutines directly on uvicorn's
@@ -9,11 +9,11 @@ so that exactly one main thread handles each graph run at any time.
 
 Public API
 ----------
-:func:`dispatch_graph_run`  — acquire lock and dispatch graph as asyncio.Task.
-:exc:`ThreadRoutingError`   — raised when another live instance owns the thread.
-:func:`recover_running_threads`     — call on startup to resume orphaned runs.
-:func:`cleanup_stale_celery_tasks`  — call on startup to revoke zombie Celery tasks.
-:func:`wait_all`                    — call on shutdown to drain in-flight graph tasks.
+:func:`dispatch_graph_run`  -- acquire lock and dispatch graph as asyncio.Task.
+:exc:`ThreadRoutingError`   -- raised when another live instance owns the thread.
+:func:`recover_running_threads`     -- call on startup to resume orphaned runs.
+:func:`cleanup_stale_celery_tasks`  -- call on startup to revoke zombie Celery tasks.
+:func:`wait_all`                    -- call on shutdown to drain in-flight graph tasks.
 """
 
 from backend.main_thread.executor import ThreadRoutingError, dispatch_graph_run

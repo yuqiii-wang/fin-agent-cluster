@@ -1,4 +1,4 @@
-"""backend.users.models — SQLAlchemy ORM models for user and query tables."""
+"""backend.users.models -- SQLAlchemy ORM models for user and query tables."""
 
 from __future__ import annotations
 

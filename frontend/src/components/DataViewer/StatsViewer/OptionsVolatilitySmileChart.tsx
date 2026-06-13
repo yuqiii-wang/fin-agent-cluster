@@ -19,8 +19,10 @@ import {
   COLOR_CHART_AXIS,
   COLOR_CHART_BG,
   COLOR_CHART_CALL_IV,
+  COLOR_CHART_CALL_IV_SUBTLE,
   COLOR_CHART_GRID,
   COLOR_CHART_PUT_IV,
+  COLOR_CHART_PUT_IV_SUBTLE,
   COLOR_CHART_TOOLTIP_BG,
   COLOR_HOVER_CROSSHAIR,
 } from '../../../constants/styleColors';
@@ -77,8 +79,11 @@ const SmileChart: React.FC<ChartProps> = ({ expiry, width, height }) => {
 
   const callPoints = expiry.points.filter((p) => p.call_cost !== null) as (VolSmilePoint & { call_cost: number })[];
   const putPoints  = expiry.points.filter((p) => p.put_cost  !== null) as (VolSmilePoint & { put_cost:  number })[];
+  const callIvPoints = expiry.points.filter((p) => p.call_iv !== null) as (VolSmilePoint & { call_iv: number })[];
+  const putIvPoints  = expiry.points.filter((p) => p.put_iv  !== null) as (VolSmilePoint & { put_iv:  number })[];
 
   const allCosts  = [...callPoints.map((p) => p.call_cost), ...putPoints.map((p) => p.put_cost)];
+  const allIvs    = [...callIvPoints.map((p) => p.call_iv), ...putIvPoints.map((p) => p.put_iv)];
   const strikes = expiry.points.map((p) => p.strike);
 
   // Volume data
@@ -90,39 +95,52 @@ const SmileChart: React.FC<ChartProps> = ({ expiry, width, height }) => {
   ].filter((v): v is number => v !== null);
   const maxVolume = allVolumes.length > 0 ? Math.max(...allVolumes) : 0;
 
-  const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; strike: number; callCost: number | null; putCost: number | null; callVolume: number | null; putVolume: number | null } | null>(null);
+  const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; strike: number; callCost: number | null; putCost: number | null; callIv: number | null; putIv: number | null; callVolume: number | null; putVolume: number | null } | null>(null);
 
-  if (strikes.length === 0 || allCosts.length === 0) {
+  if (strikes.length === 0 || (allCosts.length === 0 && allIvs.length === 0)) {
     return (
       <Text type="secondary" style={{ padding: 24, display: 'block', textAlign: 'center' }}>
-        No option cost data for this expiry.
+        No option data for this expiry.
       </Text>
     );
   }
 
   const minStrike = Math.min(...strikes);
   const maxStrike = Math.max(...strikes);
-  const minCost   = Math.min(...allCosts);
-  const maxCost   = Math.max(...allCosts);
+  const minCost   = allCosts.length > 0 ? Math.min(...allCosts) : 0;
+  const maxCost   = allCosts.length > 0 ? Math.max(...allCosts) : 1;
+  const minIv     = allIvs.length > 0 ? Math.min(...allIvs) : 0;
+  const maxIv     = allIvs.length > 0 ? Math.max(...allIvs) : 1;
 
   const xRange = niceRange(minStrike, maxStrike, TICK_COUNT_X);
   const yRange = niceRange(Math.max(0, minCost - 2), maxCost + 2, TICK_COUNT_Y);
+  const yIvRange = niceRange(Math.max(0, minIv - 5), maxIv + 5, TICK_COUNT_Y);
 
   const xScale = (s: number) => PAD.left + ((s - xRange.lo) / (xRange.hi - xRange.lo)) * cw;
   const yScale = (v: number) => PAD.top  + (1 - (v - yRange.lo) / (yRange.hi - yRange.lo)) * ch;
+  const yIvScale = (v: number) => PAD.top + (1 - (v - yIvRange.lo) / (yIvRange.hi - yIvRange.lo)) * ch;
 
   // x-axis ticks
   const xTicks: number[] = [];
   for (let t = xRange.lo; t <= xRange.hi + xRange.step * 0.01; t += xRange.step) xTicks.push(t);
-  // y-axis ticks
+  // y-axis ticks (cost, primary)
   const yTicks: number[] = [];
   for (let t = yRange.lo; t <= yRange.hi + yRange.step * 0.01; t += yRange.step) yTicks.push(t);
+  // y-axis ticks (iv, secondary)
+  const yIvTicks: number[] = [];
+  for (let t = yIvRange.lo; t <= yIvRange.hi + yIvRange.step * 0.01; t += yIvRange.step) yIvTicks.push(t);
 
-  const polylinePoints = (pts: { strike: number; cost: number }[]) =>
-    pts.map((p) => `${xScale(p.strike).toFixed(1)},${yScale(p.cost).toFixed(1)}`).join(' ');
+  const polylinePoints = (pts: { strike: number; cost: number }[], useIv: boolean = false) =>
+    pts.map((p) => {
+      const xs = xScale(p.strike).toFixed(1);
+      const ys = useIv ? yIvScale(p.cost).toFixed(1) : yScale(p.cost).toFixed(1);
+      return `${xs},${ys}`;
+    }).join(' ');
 
   const callLine = polylinePoints(callPoints.map((p) => ({ strike: p.strike, cost: p.call_cost })));
   const putLine  = polylinePoints(putPoints.map((p) => ({ strike: p.strike, cost: p.put_cost })));
+  const callIvLine = allIvs.length > 0 ? polylinePoints(callIvPoints.map((p) => ({ strike: p.strike, cost: p.call_iv })), true) : '';
+  const putIvLine  = allIvs.length > 0 ? polylinePoints(putIvPoints.map((p) => ({ strike: p.strike, cost: p.put_iv })), true) : '';
 
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -143,6 +161,8 @@ const SmileChart: React.FC<ChartProps> = ({ expiry, width, height }) => {
         strike: nearest.strike,
         callCost: nearest.call_cost,
         putCost:  nearest.put_cost,
+        callIv:   nearest.call_iv,
+        putIv:    nearest.put_iv,
         callVolume: nearest.call_volume,
         putVolume:  nearest.put_volume,
       });
@@ -166,13 +186,25 @@ const SmileChart: React.FC<ChartProps> = ({ expiry, width, height }) => {
         <line key={`xg${t}`} x1={xScale(t)} y1={PAD.top} x2={xScale(t)} y2={PAD.top + ch} stroke={COLOR_CHART_GRID} strokeWidth={1} />
       ))}
 
-      {/* Y axis labels */}
+      {/* Y axis labels (primary: cost) */}
       {yTicks.map((t) => (
         <text key={`yl${t}`} x={PAD.left - 8} y={yScale(t) + 4} textAnchor="end" fill={COLOR_CHART_AXIS} fontSize={11}>{t.toFixed(1)}</text>
       ))}
       {/* Y axis title */}
       <text x={14} y={PAD.top + ch / 2} textAnchor="middle" fill={COLOR_CHART_AXIS} fontSize={11}
         transform={`rotate(-90, 14, ${PAD.top + ch / 2})`}>Option Cost ($)</text>
+
+      {/* Secondary Y axis (IV %) – right side */}
+      {allIvs.length > 0 && (
+        <>
+          <line x1={PAD.left + cw} y1={PAD.top} x2={PAD.left + cw} y2={PAD.top + ch} stroke={COLOR_CHART_AXIS} strokeWidth={1} opacity={0.5} />
+          {yIvTicks.map((t) => (
+            <text key={`ivl${t}`} x={PAD.left + cw + 8} y={yIvScale(t) + 4} textAnchor="start" fill={COLOR_CHART_AXIS} fontSize={11} opacity={0.65}>{t.toFixed(0)}%</text>
+          ))}
+          <text x={width - 10} y={PAD.top + ch / 2} textAnchor="middle" fill={COLOR_CHART_AXIS} fontSize={11} opacity={0.7}
+            transform={`rotate(90, ${width - 10}, ${PAD.top + ch / 2})`}>IV (%)</text>
+        </>
+      )}
 
       {/* X axis labels */}
       {xTicks.map((t) => (
@@ -185,6 +217,14 @@ const SmileChart: React.FC<ChartProps> = ({ expiry, width, height }) => {
       <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={PAD.top + ch} stroke={COLOR_CHART_AXIS} strokeWidth={1} />
       <line x1={PAD.left} y1={PAD.top + ch} x2={PAD.left + cw} y2={PAD.top + ch} stroke={COLOR_CHART_AXIS} strokeWidth={1} />
 
+      {/* Put IV line (subtle) */}
+      {putIvLine && (
+        <polyline points={putIvLine} fill="none" stroke={COLOR_CHART_PUT_IV_SUBTLE} strokeWidth={2} />
+      )}
+      {/* Call IV line (subtle) */}
+      {callIvLine && (
+        <polyline points={callIvLine} fill="none" stroke={COLOR_CHART_CALL_IV_SUBTLE} strokeWidth={2} strokeDasharray="5 3" />
+      )}
       {/* Put line */}
       {putLine && (
         <polyline points={putLine} fill="none" stroke={COLOR_CHART_PUT_IV} strokeWidth={2} />
@@ -194,6 +234,14 @@ const SmileChart: React.FC<ChartProps> = ({ expiry, width, height }) => {
         <polyline points={callLine} fill="none" stroke={COLOR_CHART_CALL_IV} strokeWidth={2} strokeDasharray="5 3" />
       )}
 
+      {/* Put IV data points */}
+      {putIvPoints.map((p) => (
+        <circle key={`pivd${p.strike}`} cx={xScale(p.strike)} cy={yIvScale(p.put_iv)} r={2} fill={COLOR_CHART_PUT_IV_SUBTLE} />
+      ))}
+      {/* Call IV data points */}
+      {callIvPoints.map((p) => (
+        <circle key={`civd${p.strike}`} cx={xScale(p.strike)} cy={yIvScale(p.call_iv)} r={2} fill={COLOR_CHART_CALL_IV_SUBTLE} />
+      ))}
       {/* Put data points */}
       {putPoints.map((p) => (
         <circle key={`pd${p.strike}`} cx={xScale(p.strike)} cy={yScale(p.put_cost)} r={3} fill={COLOR_CHART_PUT_IV} />
@@ -265,22 +313,25 @@ const SmileChart: React.FC<ChartProps> = ({ expiry, width, height }) => {
           {/* Tooltip box */}
           {(() => {
             const tx = hoverInfo.x + 10 > PAD.left + cw - 140 ? hoverInfo.x - 150 : hoverInfo.x + 10;
-            const ty = Math.max(PAD.top, Math.min(PAD.top + ch - 86, hoverInfo.y - 40));
+            const ty = Math.max(PAD.top, Math.min(PAD.top + ch - 118, hoverInfo.y - 60));
             return (
               <g>
-                <rect x={tx} y={ty} width={140} height={86} rx={4} fill={COLOR_CHART_TOOLTIP_BG} stroke={COLOR_CHART_GRID} />
-                <text x={tx + 8} y={ty + 16} fill={COLOR_CHART_AXIS} fontSize={11}>Strike: {hoverInfo.strike}</text>
-                <text x={tx + 8} y={ty + 32} fill={COLOR_CHART_CALL_IV} fontSize={11}>
+                <rect x={tx} y={ty} width={140} height={118} rx={4} fill={COLOR_CHART_TOOLTIP_BG} stroke={COLOR_CHART_GRID} />
+                <text x={tx + 8} y={ty + 14} fill={COLOR_CHART_AXIS} fontSize={11}>Strike: {hoverInfo.strike}</text>
+                <text x={tx + 8} y={ty + 30} fill={COLOR_CHART_CALL_IV} fontSize={11}>
                   Call Cost: ${hoverInfo.callCost != null ? hoverInfo.callCost.toFixed(2) : '—'}
                 </text>
-                <text x={tx + 8} y={ty + 48} fill={COLOR_CHART_CALL_IV} fontSize={11}>
-                  Call Vol: {hoverInfo.callVolume != null ? hoverInfo.callVolume.toLocaleString() : '—'}
+                <text x={tx + 8} y={ty + 46} fill={COLOR_CHART_CALL_IV_SUBTLE} fontSize={11}>
+                  Call IV: {hoverInfo.callIv != null ? hoverInfo.callIv.toFixed(2) + '%' : '—'}
                 </text>
-                <text x={tx + 8} y={ty + 64} fill={COLOR_CHART_PUT_IV} fontSize={11}>
+                <text x={tx + 8} y={ty + 62} fill={COLOR_CHART_PUT_IV} fontSize={11}>
                   Put Cost: ${hoverInfo.putCost != null ? hoverInfo.putCost.toFixed(2) : '—'}
                 </text>
-                <text x={tx + 8} y={ty + 80} fill={COLOR_CHART_PUT_IV} fontSize={11}>
-                  Put Vol: {hoverInfo.putVolume != null ? hoverInfo.putVolume.toLocaleString() : '—'}
+                <text x={tx + 8} y={ty + 78} fill={COLOR_CHART_PUT_IV_SUBTLE} fontSize={11}>
+                  Put IV: {hoverInfo.putIv != null ? hoverInfo.putIv.toFixed(2) + '%' : '—'}
+                </text>
+                <text x={tx + 8} y={ty + 94} fill={COLOR_CHART_AXIS} fontSize={10}>
+                  Vol: {hoverInfo.callVolume != null ? hoverInfo.callVolume.toLocaleString() : '—'} / {hoverInfo.putVolume != null ? hoverInfo.putVolume.toLocaleString() : '—'}
                 </text>
               </g>
             );
@@ -289,16 +340,20 @@ const SmileChart: React.FC<ChartProps> = ({ expiry, width, height }) => {
       )}
 
       {/* Legend */}
-      <g transform={`translate(${PAD.left + cw - 120}, ${PAD.top + 8})`}>
-        <rect x={0} y={0} width={116} height={72} rx={4} fill={COLOR_CHART_TOOLTIP_BG} stroke={COLOR_CHART_GRID} />
+      <g transform={`translate(${PAD.left + cw - 124}, ${PAD.top + 8})`}>
+        <rect x={0} y={0} width={120} height={96} rx={4} fill={COLOR_CHART_TOOLTIP_BG} stroke={COLOR_CHART_GRID} />
         <line x1={8} y1={13} x2={28} y2={13} stroke={COLOR_CHART_CALL_IV} strokeWidth={2} strokeDasharray="5 3" />
         <text x={34} y={17} fill={COLOR_CHART_CALL_IV} fontSize={11}>Call Cost</text>
         <line x1={8} y1={29} x2={28} y2={29} stroke={COLOR_CHART_PUT_IV} strokeWidth={2} />
         <text x={34} y={33} fill={COLOR_CHART_PUT_IV} fontSize={11}>Put Cost</text>
-        <rect x={8} y={45} width={8} height={8} fill={COLOR_CHART_CALL_IV} opacity={0.7} />
-        <text x={34} y={52} fill={COLOR_CHART_AXIS} fontSize={10}>Call Vol</text>
-        <rect x={8} y={59} width={8} height={8} fill={COLOR_CHART_PUT_IV} opacity={0.7} />
-        <text x={34} y={66} fill={COLOR_CHART_AXIS} fontSize={10}>Put Vol</text>
+        <line x1={8} y1={45} x2={28} y2={45} stroke={COLOR_CHART_CALL_IV_SUBTLE} strokeWidth={2} strokeDasharray="5 3" />
+        <text x={34} y={49} fill={COLOR_CHART_AXIS} fontSize={10}>Call IV</text>
+        <line x1={8} y1={61} x2={28} y2={61} stroke={COLOR_CHART_PUT_IV_SUBTLE} strokeWidth={2} />
+        <text x={34} y={65} fill={COLOR_CHART_AXIS} fontSize={10}>Put IV</text>
+        <rect x={8} y={74} width={8} height={8} fill={COLOR_CHART_CALL_IV} opacity={0.7} />
+        <text x={34} y={81} fill={COLOR_CHART_AXIS} fontSize={10}>Call Vol</text>
+        <rect x={8} y={86} width={8} height={8} fill={COLOR_CHART_PUT_IV} opacity={0.7} />
+        <text x={34} y={93} fill={COLOR_CHART_AXIS} fontSize={10}>Put Vol</text>
       </g>
     </svg>
   );

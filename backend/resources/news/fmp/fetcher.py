@@ -9,12 +9,12 @@ Endpoint
 
 Query parameters
 ----------------
-tickers   — comma-separated tickers, e.g. ``"AAPL"`` (optional)
-from      — start date ``YYYY-MM-DD`` (optional)
-to        — end date ``YYYY-MM-DD`` (optional)
-q         — free-text query used when no ticker is given (optional)
-limit     — max articles to return
-apikey    — FMP API key (required)
+tickers   -- comma-separated tickers, e.g. ``"AAPL"`` (optional)
+from      -- start date ``YYYY-MM-DD`` (optional)
+to        -- end date ``YYYY-MM-DD`` (optional)
+q         -- free-text query used when no ticker is given (optional)
+limit     -- max articles to return
+apikey    -- FMP API key (required)
 """
 
 from __future__ import annotations

@@ -73,7 +73,7 @@ async def complete_thread(
 
     On normal completion (``failed=False``) the thread status is aligned to the
     terminal status of the last end-of-lifecycle node (the leaf node with no
-    successors) in the **latest version** — so a thread whose final node ended
+    successors) in the **latest version** -- so a thread whose final node ended
     ``failed`` / ``cancelled`` / ``wrong`` is reflected accurately instead of
     being reported as ``completed``.
 
@@ -106,7 +106,7 @@ async def complete_thread(
     get_thread_registry().cleanup_thread(thread_id)
 
     if failed:
-        # Sweep any nodes still active — complete_node may have been skipped
+        # Sweep any nodes still active -- complete_node may have been skipped
         # (e.g. fencing-token mismatch). Leaving them as 'running' creates a
         # permanently stuck state visible to the user.
         async with raw_conn() as conn:
@@ -121,7 +121,7 @@ async def complete_thread(
 
     event = "done" if not failed else "thread_failed"
     logger.debug(
-        "[lifecycle:thread] %s thread_id=%s — emitting SSE event=%s",
+        "[lifecycle:thread] %s thread_id=%s -- emitting SSE event=%s",
         status, thread_id, event,
     )
     t_sse = time.monotonic()
@@ -154,20 +154,20 @@ async def cancel_thread(
     3. Batch-UPDATE active nodes to ``cancelled`` (RETURNING node rows).
     4. UPDATE the thread itself to ``cancelled``.
     5. Set the process-local cancel token so polling delegation loops exit.
-    6. Emit SSE: task cancelled → node cancelled → thread cancelled.
+    6. Emit SSE: task cancelled -> node cancelled -> thread cancelled.
 
     All DB writes precede the corresponding SSE events.
 
     Args:
         thread_id: LangGraph thread UUID.
-        reason:    Human-readable reason (``"user"``, ``"shutdown"``, …).
+        reason:    Human-readable reason (``"user"``, ``"shutdown"``, ...).
 
     Returns:
         ``True`` if the thread was active and has been cancelled;
         ``False`` if it was already terminal.
     """
     # ------------------------------------------------------------------
-    # 0. Set Redis cancel flag immediately — unblocks _await_result within
+    # 0. Set Redis cancel flag immediately -- unblocks _await_result within
     #    one poll cycle (0.5 s) regardless of the DB status below.
     # ------------------------------------------------------------------
     try:
@@ -237,7 +237,7 @@ async def cancel_thread(
     registry.cleanup_thread(thread_id)
 
     # ------------------------------------------------------------------
-    # 6. SSE — tasks → nodes → thread.
+    # 6. SSE -- tasks -> nodes -> thread.
     # ------------------------------------------------------------------
     for task_id in cancelled_task_ids:
         await emit_task_cancelled_sse(thread_id, task_id, reason)
@@ -261,7 +261,7 @@ async def cancel_all_running_threads(*, reason: str = "shutdown") -> None:
     update for any threads still marked running in the DB (e.g. orphaned by a
     previous unclean shutdown).
 
-    Errors are logged but never raised — shutdown must proceed regardless.
+    Errors are logged but never raised -- shutdown must proceed regardless.
 
     Args:
         reason: Cancellation reason label (default ``"shutdown"``).
@@ -345,7 +345,7 @@ async def pause_all_running_tasks_on_shutdown() -> None:
     :func:`~backend.celery_task.workers.task_delegation.delegate_stream` to
     dispatch ``run_stream_compact_continue`` automatically.
 
-    Errors are logged but never raised — shutdown must proceed regardless.
+    Errors are logged but never raised -- shutdown must proceed regardless.
     """
     from backend.langgraph.lifecycle.pause_flag import set_task_pause_flag
 
@@ -372,7 +372,7 @@ async def pause_all_running_tasks_on_shutdown() -> None:
                 row["task_id"], exc,
             )
 
-    # 3. Bulk-update running tasks → 'paused' in DB (nodes intentionally stay 'running').
+    # 3. Bulk-update running tasks -> 'paused' in DB (nodes intentionally stay 'running').
     try:
         from backend.langgraph.lifecycle.threads.nodes.tasks.sql import (  # noqa: PLC0415
             _BULK_PAUSE_RUNNING_TASKS,
@@ -382,7 +382,7 @@ async def pause_all_running_tasks_on_shutdown() -> None:
     except Exception as exc:  # noqa: BLE001
         logger.error("[lifecycle] pause_all: bulk task DB update failed: %s", exc)
 
-    # 4. Bulk-update running nodes → 'paused' with is_last_paused_by_server=TRUE.
+    # 4. Bulk-update running nodes -> 'paused' with is_last_paused_by_server=TRUE.
     # This is done before revoking Celery tasks so the node status is correct
     # even if the event loop shuts down before the graph's except handlers run.
     try:
@@ -399,7 +399,7 @@ async def pause_all_running_tasks_on_shutdown() -> None:
     except Exception as exc:  # noqa: BLE001
         logger.error("[lifecycle] pause_all: bulk node DB update failed: %s", exc)
 
-    # 5. Revoke Celery tasks — triggers TaskPausedError inside _await_result.
+    # 5. Revoke Celery tasks -- triggers TaskPausedError inside _await_result.
     registry.revoke_all_celery_tasks()
 
     if running_tasks:

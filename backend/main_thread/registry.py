@@ -1,4 +1,4 @@
-"""backend.main_thread.registry — in-process graph asyncio.Task registry.
+"""backend.main_thread.registry -- in-process graph asyncio.Task registry.
 
 Tracks all graph tasks running on this main thread instance so that:
 * Graceful shutdown can await them all before closing DB pools.
@@ -15,7 +15,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# thread_id → asyncio.Task mapping for all in-flight graph runs.
+# thread_id -> asyncio.Task mapping for all in-flight graph runs.
 _tasks: dict[str, asyncio.Task] = {}
 
 

@@ -1,14 +1,14 @@
-"""backend.api.queries.router — user query history and lookup endpoints.
+"""backend.api.queries.router -- user query history and lookup endpoints.
 
 Non-streaming, plain HTTP endpoints for querying thread records.
 These complement the streaming SSE flow in ``backend.api.threads``.
 
 Routes
 ------
-    GET  /api/v1/queries                      — paginated query history for the caller
-    GET  /api/v1/queries/active               — most recent in-progress thread
-    GET  /api/v1/queries/{thread_id}          — single thread status
-    DELETE /api/v1/queries/{thread_id}        — cancel and remove a thread
+    GET  /api/v1/queries                      -- paginated query history for the caller
+    GET  /api/v1/queries/active               -- most recent in-progress thread
+    GET  /api/v1/queries/{thread_id}          -- single thread status
+    DELETE /api/v1/queries/{thread_id}        -- cancel and remove a thread
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ async def list_queries(
 
     Args:
         x_user_token: Guest bearer token from ``localStorage``.
-        limit:        Max records to return (1–100, default 20).
+        limit:        Max records to return (1-100, default 20).
         offset:       Pagination offset (default 0).
 
     Returns:
@@ -146,8 +146,8 @@ async def search_by_uuid(
 
     Checks in order:
     1. ``uuid`` is a ``thread_id`` owned by this user.
-    2. ``uuid`` is a ``node_id`` — finds parent ``thread_id``, verifies ownership.
-    3. ``uuid`` is a ``task_id`` — finds parent ``thread_id``, verifies ownership.
+    2. ``uuid`` is a ``node_id`` -- finds parent ``thread_id``, verifies ownership.
+    3. ``uuid`` is a ``task_id`` -- finds parent ``thread_id``, verifies ownership.
 
     Args:
         uuid:         UUID string to resolve (thread / node / task id).

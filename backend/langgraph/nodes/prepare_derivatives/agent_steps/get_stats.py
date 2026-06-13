@@ -1,4 +1,4 @@
-"""get_stats.py — Step 2: fetch OHLCV bars and compute technical indicators."""
+"""get_stats.py -- Step 2: fetch OHLCV bars and compute technical indicators."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ async def step_get_stats(sctx: DerivativesStepContext) -> None:
     text_content: str | None = None
 
     if json_input is None and g.load_md_output is not None:
-        # Sandbox extraction failed but markdown is available — store it in input_raw.
+        # Sandbox extraction failed but markdown is available -- store it in input_raw.
         text_content = g.load_md_output.html_to_markdown.markdown
 
     await get_and_calculate_stats.run(

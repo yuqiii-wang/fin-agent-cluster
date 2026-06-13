@@ -2,9 +2,9 @@
 
 Key schema
 ----------
-fin:agent:pause:{node_id}        — pause flag; agent loop polls before each LLM call
-fin:agent:auto_resume:{node_id}  — when set, EntrypointMixin auto-resumes after pause
-fin:agent:state:{node_id}        — reserved for future message-history persistence
+fin:agent:pause:{node_id}        -- pause flag; agent loop polls before each LLM call
+fin:agent:auto_resume:{node_id}  -- when set, EntrypointMixin auto-resumes after pause
+fin:agent:state:{node_id}        -- reserved for future message-history persistence
 """
 
 from __future__ import annotations

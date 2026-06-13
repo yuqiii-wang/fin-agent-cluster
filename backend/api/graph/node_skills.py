@@ -1,4 +1,4 @@
-"""Node skills endpoint helpers — GET /api/v1/graph/node-skills.
+"""Node skills endpoint helpers -- GET /api/v1/graph/node-skills.
 
 Returns the list of markdown files from each node's ``skills/`` directory.
 These files document the node's built-in workflow and capabilities.

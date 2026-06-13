@@ -1,4 +1,4 @@
-"""EntrypointMixin — the LangGraph ``__call__`` implementation for BaseNode."""
+"""EntrypointMixin -- the LangGraph ``__call__`` implementation for BaseNode."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ class EntrypointMixin:
 
         Reads fork_generation from state to determine the node's version and
         UUID5 node_id.  Builds NodeRecord for GraphState.nodes.  Wires:
-        build_input(state) → upsert_node → orchestrate(ctx, inp)
-        → build_output(results) → complete_node → state updates.
+        build_input(state) -> upsert_node -> orchestrate(ctx, inp)
+        -> build_output(results) -> complete_node -> state updates.
 
         If ``state["fork_point_node_name"]`` matches this node's name, marks
         the node as is_forked=TRUE in the DB (first node of a re-explore branch).
@@ -40,7 +40,7 @@ class EntrypointMixin:
         Before orchestrating, checks whether any required predecessor node was
         cancelled (i.e. a parallel branch the graph barrier waited for).  If so,
         the node auto-cancels itself, cascades to the thread if no other active
-        nodes remain, and returns a ``cancelled`` state delta without raising —
+        nodes remain, and returns a ``cancelled`` state delta without raising --
         so the other parallel branches and the join barrier complete cleanly.
 
         During orchestration, if a ``NodeCancelledError`` is raised (per-node
@@ -80,7 +80,7 @@ class EntrypointMixin:
             and self.node_name != state.get("fork_point_node_name")  # type: ignore[attr-defined]
         ):
             # Find the latest completed version of this sibling node.  Returns
-            # None when the sibling has never completed (e.g. always failed) —
+            # None when the sibling has never completed (e.g. always failed) --
             # in that case fall through and let the node run fresh.
             sibling_version = await get_latest_sibling_node_version(
                 thread_id, self.node_name  # type: ignore[attr-defined]
@@ -209,7 +209,7 @@ class EntrypointMixin:
             # the last active node.  If sibling branches are still running, absorb
             # the error and return a failed state delta so they can complete cleanly.
             if self.parallel_group:  # type: ignore[attr-defined]
-                active_count = 1  # conservative default — assume siblings are running
+                active_count = 1  # conservative default -- assume siblings are running
                 try:
                     from backend.db.postgres import raw_conn
                     async with raw_conn(readonly=True) as conn:
@@ -227,11 +227,11 @@ class EntrypointMixin:
                         node_id, db_exc,
                     )
                 if active_count > 0:
-                    # Sibling branches still running — absorb failure, let them finish.
+                    # Sibling branches still running -- absorb failure, let them finish.
                     failed_record = self._build_node_record(node_id, version, prev_node_ids, "failed")  # type: ignore[attr-defined]
                     failed_record["task_ids"] = list(ctx.task_ids)
                     return {"nodes": {node_id: failed_record}}
-                # No active siblings remain — fall through to raise so the thread fails.
+                # No active siblings remain -- fall through to raise so the thread fails.
             raise
         node_output = self.build_output(results)  # type: ignore[attr-defined]
         stored_output = (
@@ -271,13 +271,13 @@ class EntrypointMixin:
         completed_record = self._build_node_record(node_id, version, prev_node_ids, _terminal_status)  # type: ignore[attr-defined]
         completed_record["task_ids"] = list(ctx.task_ids)
 
-        # Return only the delta — never spread the full state back.
+        # Return only the delta -- never spread the full state back.
         # Returning {**state, ...} causes INVALID_CONCURRENT_GRAPH_UPDATE when
         # two parallel nodes complete in the same step, because un-annotated
-        # keys (thread_id, query, …) would receive two conflicting values.
+        # keys (thread_id, query, ...) would receive two conflicting values.
         # The `nodes` key uses operator.or_ so it merges each node's single
         # NodeRecord dict correctly across parallel branches.
-        # Skip state updates when the node failed — partial outputs must not
+        # Skip state updates when the node failed -- partial outputs must not
         # propagate into downstream state as if the node succeeded.
         if _node_failed:
             return {"nodes": {node_id: completed_record}}

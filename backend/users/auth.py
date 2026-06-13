@@ -1,4 +1,4 @@
-"""backend.users.auth — re-exports the guest auth helper for API routers."""
+"""backend.users.auth -- re-exports the guest auth helper for API routers."""
 
 from __future__ import annotations
 

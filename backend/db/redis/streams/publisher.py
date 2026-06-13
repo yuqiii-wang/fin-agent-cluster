@@ -1,4 +1,4 @@
-"""backend.db.redis.streams.publisher — Centrifugo Redis-Stream token publisher.
+"""backend.db.redis.streams.publisher -- Centrifugo Redis-Stream token publisher.
 
 Each LLM token (or batch of tokens) is written to the ``fin:llm:tokens`` Redis
 Stream on the shard that owns the thread.  Centrifugo's built-in Redis Stream
@@ -7,7 +7,7 @@ WebSocket channel in real-time.
 
 Shard routing
 -------------
-``SHA-256(thread_id) % len(DATABASE_REDIS_NODES)`` — identical to the formula
+``SHA-256(thread_id) % len(DATABASE_REDIS_NODES)`` -- identical to the formula
 used by :func:`~backend.centrifugo_mq.client.get_shard_index` so the Redis node
 selected here always matches the Centrifugo token-stream node that subscribes
 to it.
@@ -18,8 +18,8 @@ Wire format (one Redis Stream entry per Centrifugo publication)::
 
 Public API
 ----------
-:func:`stream_token`       — publish a single message (e.g. ``stream_end``).
-:func:`stream_token_batch` — publish many messages in one Redis pipeline round-trip.
+:func:`stream_token`       -- publish a single message (e.g. ``stream_end``).
+:func:`stream_token_batch` -- publish many messages in one Redis pipeline round-trip.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Redis Stream key — same name on every shard; routing is per-Redis-server.
+# Redis Stream key -- same name on every shard; routing is per-Redis-server.
 _STREAM_NAME = "fin:llm:tokens"
 
 # Module-level set to detect the first publish per thread (for INFO log).
@@ -63,7 +63,7 @@ async def stream_token(thread_id: str, payload: dict[str, Any]) -> None:
     delivery prefer :func:`stream_token_batch` to amortise round-trip overhead.
 
     Args:
-        thread_id: LangGraph thread UUID — determines the Redis shard.
+        thread_id: LangGraph thread UUID -- determines the Redis shard.
         payload:   Arbitrary dict that becomes ``data`` in the Centrifugo
                    publication (e.g. ``{"event": "stream_end", ...}``).
     """
@@ -95,7 +95,7 @@ async def stream_token_batch(thread_id: str, payloads: list[dict[str, Any]]) -> 
     many tokens are in the batch.
 
     Args:
-        thread_id: LangGraph thread UUID — determines the Redis shard.
+        thread_id: LangGraph thread UUID -- determines the Redis shard.
         payloads:  Ordered list of message dicts; each becomes one Redis Stream
                    entry and one Centrifugo publication.  Sequence integrity is
                    guaranteed by the ``seq`` field embedded in each payload by

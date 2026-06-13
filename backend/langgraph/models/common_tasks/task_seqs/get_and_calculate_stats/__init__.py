@@ -1,4 +1,4 @@
-"""get_and_calculate_stats — fetch OHLCV stats and compute indicators as a TaskSeq pipeline."""
+"""get_and_calculate_stats -- fetch OHLCV stats and compute indicators as a TaskSeq pipeline."""
 
 from __future__ import annotations
 

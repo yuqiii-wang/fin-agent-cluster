@@ -1,11 +1,11 @@
-"""llm_orchestration_for_validation — NodeTask: LLM-driven JSON output validator.
+"""llm_orchestration_for_validation -- NodeTask: LLM-driven JSON output validator.
 
 Given the outputs of a previous source task and a JSON blob produced by a
 downstream step, this task asks the LLM to verify every field/value in the
 JSON blob against the source data using two rules:
 
-- **Exact match** for numeric values (prices, counts, percentages, ratios, …).
-- **Semantic match** for non-numeric values (names, descriptions, categories, …).
+- **Exact match** for numeric values (prices, counts, percentages, ratios, ...).
+- **Semantic match** for non-numeric values (names, descriptions, categories, ...).
 
 Any field that cannot be traced back to the source data is reported as a
 violation.  The task returns ``passed=True`` only when no violations are found.
@@ -36,12 +36,12 @@ Celery layer (``STREAM_PROMPT_BUILDERS``):
 
 Public exports
 --------------
-``llm_orchestration_for_validation``     — ``NodeTask`` instance.
-``ValidationViolation``                  — Single violation record.
-``LlmValidationInput``                   — Pydantic input model.
-``LlmValidationOutput``                  — Pydantic output model.
-``STREAM_PROMPT_BUILDERS``               — dict slice for the Celery stream prompt registry.
-``HANDLERS``                             — empty dict (streaming task; no completion handler).
+``llm_orchestration_for_validation``     -- ``NodeTask`` instance.
+``ValidationViolation``                  -- Single violation record.
+``LlmValidationInput``                   -- Pydantic input model.
+``LlmValidationOutput``                  -- Pydantic output model.
+``STREAM_PROMPT_BUILDERS``               -- dict slice for the Celery stream prompt registry.
+``HANDLERS``                             -- empty dict (streaming task; no completion handler).
 """
 
 from __future__ import annotations
@@ -78,11 +78,11 @@ class ValidationViolation(BaseModel):
                           inside ``json_input`` (e.g. ``"price"`` or
                           ``"summary.pe_ratio"``).
         kind:             Violation category.  One of:
-                          ``"numeric_mismatch"`` — exact match required but
+                          ``"numeric_mismatch"`` -- exact match required but
                           value differs from the source;
-                          ``"semantic_mismatch"`` — non-numeric value cannot be
+                          ``"semantic_mismatch"`` -- non-numeric value cannot be
                           semantically traced back to the source;
-                          ``"unverifiable"`` — source data does not cover this
+                          ``"unverifiable"`` -- source data does not cover this
                           field so correctness cannot be determined.
         found_value:      String representation of the value found in
                           ``json_input``.
@@ -111,7 +111,7 @@ class LlmValidationInput(BaseModel):
                           and must be kept concise (no raw OHLCV blobs).
         json_input:       The JSON object to validate against ``src_output``.
         objective:        One-sentence description of what this pipeline is
-                          trying to accomplish — used by the LLM for context.
+                          trying to accomplish -- used by the LLM for context.
         numeric_hint:     Optional list of dot-paths that should be treated as
                           numeric regardless of their Python type.  If empty
                           the LLM infers type from value content.
@@ -159,18 +159,18 @@ Your task is to check every field/value in the JSON INPUT against the SOURCE \
 OUTPUT of a prior pipeline step named "{src_task_name}".
 
 Validation rules:
-1. NUMERIC fields (integers, floats, percentages, prices, counts, …) — the \
+1. NUMERIC fields (integers, floats, percentages, prices, counts, ...) -- the \
 value in JSON INPUT must match EXACTLY (same sign, magnitude, and reasonable \
 precision) a value that appears in SOURCE OUTPUT.  Discrepancies are \
 "numeric_mismatch" violations.
-2. NON-NUMERIC fields (names, descriptions, categories, qualitative labels, …) \
-— the value in JSON INPUT must be semantically traceable to the SOURCE OUTPUT.  \
+2. NON-NUMERIC fields (names, descriptions, categories, qualitative labels, ...) \
+-- the value in JSON INPUT must be semantically traceable to the SOURCE OUTPUT.  \
 Fabricated or contradictory content is a "semantic_mismatch" violation.
 3. If a field has no corresponding information in SOURCE OUTPUT and cannot be \
 confirmed, classify it as "unverifiable".
 
 {numeric_hint_section}\
-Return ONLY a valid JSON object — no preamble, no explanation outside the JSON.
+Return ONLY a valid JSON object -- no preamble, no explanation outside the JSON.
 
 Schema:
 {{
@@ -301,7 +301,7 @@ def _parse_validation_answer(answer_dict: dict[str, Any]) -> LlmValidationOutput
     )
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task
+# LangGraph layer -- @task
 # ---------------------------------------------------------------------------
 
 async def _llm_orchestration_for_validation_task(

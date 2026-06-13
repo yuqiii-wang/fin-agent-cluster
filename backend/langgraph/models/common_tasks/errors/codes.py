@@ -49,7 +49,7 @@ NEWS_TASK_ERRORS: dict[str, str] = {
     NEWS_TASK_EMBED_ERROR: "Embedding generation failed for one or more article summaries.",
     NEWS_TASK_SUMMARY_WARN: "do_summary task failed (soft); digest_news continues without LLM summaries.",
     NEWS_TASK_EMB_WARN: "do_emb task failed (soft); digest_news continues without vector embeddings.",
-    NEWS_TASK_ALL_PROVIDERS_EMPTY: "All news providers (FMP and DDGS) returned empty results after retry — task failed.",
+    NEWS_TASK_ALL_PROVIDERS_EMPTY: "All news providers (FMP and DDGS) returned empty results after retry -- task failed.",
 }
 
 PDF_TASK_CONVERT_ERROR = "PDF_TASK_CONVERT_ERROR"

@@ -1,4 +1,4 @@
-"""backend.db.redis.session.notify_ack_store — BLPOP-based ACK/NACK signaling for SSE notifications.
+"""backend.db.redis.session.notify_ack_store -- BLPOP-based ACK/NACK signaling for SSE notifications.
 
 After an SSE event is published to the frontend via Centrifugo, the publisher
 awaits a signal on a per-event Redis list.  When the frontend confirms receipt
@@ -34,11 +34,11 @@ def _list_key(thread_id: str, ack_key: str) -> str:
 async def wait_notify_ack(thread_id: str, ack_key: str, timeout: float = 3.0) -> bool | None:
     """Block (async) until an ACK or NACK signal arrives, or *timeout* seconds elapse.
 
-    Uses Redis BLPOP so no polling occurs — the coroutine yields to the event
+    Uses Redis BLPOP so no polling occurs -- the coroutine yields to the event
     loop and resumes only when a value is pushed or the timeout fires.
 
     Args:
-        thread_id: LangGraph thread UUID — determines the Redis shard.
+        thread_id: LangGraph thread UUID -- determines the Redis shard.
         ack_key:   Unique key for this notification (e.g. ``"task:{task_id}:completed"``).
         timeout:   Maximum seconds to wait per attempt before returning ``None``.
 
@@ -49,7 +49,7 @@ async def wait_notify_ack(thread_id: str, ack_key: str, timeout: float = 3.0) ->
         redis = await get_client(shard_for_thread(thread_id))
         result = await redis.blpop([_list_key(thread_id, ack_key)], timeout=max(1, int(timeout)))
         if result is None:
-            return None  # timeout → caller decides whether to retry
+            return None  # timeout -> caller decides whether to retry
         _, value = result
         return value == "1"
     except Exception as exc:  # noqa: BLE001

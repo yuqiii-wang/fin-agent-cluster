@@ -1,4 +1,4 @@
-"""NodeTask — bundles a LangGraph @task fn with its Celery handler and metadata.
+"""NodeTask -- bundles a LangGraph @task fn with its Celery handler and metadata.
 
 A ``NodeTask`` is the single unit of work that a node can perform.  It is
 the bridge between two execution layers:
@@ -26,7 +26,7 @@ In agent mode, ``NodeTask`` becomes a LangChain ``StructuredTool``:
     )
 
 The node's ``orchestrate()`` override passes ``[t.as_tool(ctx) for t in self.tasks]``
-to a ReAct / ToolNode agent.  The ``handler`` is unchanged — it still runs
+to a ReAct / ToolNode agent.  The ``handler`` is unchanged -- it still runs
 in the Celery worker.
 """
 
@@ -67,7 +67,7 @@ class NodeTask(Generic[I, O]):
     """A task that a node can execute.
 
     Attributes:
-        name: Task name — key in the ``HANDLERS`` registry and ``fin_agents.tasks`` rows.
+        name: Task name -- key in the ``HANDLERS`` registry and ``fin_agents.tasks`` rows.
         description: Human-readable description; surfaced to the LLM as a tool description
             in agent mode.
         input_type: Pydantic model type for the task input content.
@@ -77,7 +77,7 @@ class NodeTask(Generic[I, O]):
         pg_cache_fn: Optional async function ``(input: I, ctx: NodeContext) -> O | None``
             called by ``run_task`` before invoking ``task_fn``.  When it returns a
             non-``None`` output, ``run_task`` short-circuits with a ``ToolCall``
-            lifecycle record and returns the cached result — skipping both ``task_fn``
+            lifecycle record and returns the cached result -- skipping both ``task_fn``
             and the Celery dispatch.  All tasks that previously implemented per-task
             cache checks should register their check here.
     """

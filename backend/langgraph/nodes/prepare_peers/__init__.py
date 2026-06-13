@@ -1,4 +1,4 @@
-"""prepare_peers package — Workflow node for industry peer proposal."""
+"""prepare_peers package -- Workflow node for industry peer proposal."""
 
 from backend.langgraph.nodes.prepare_peers.node import prepare_peers_node
 from backend.langgraph.nodes.prepare_peers.models import AnalyzePeersInput, AnalyzePeersOutput

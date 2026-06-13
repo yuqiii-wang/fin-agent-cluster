@@ -22,7 +22,7 @@ async def reset_task_for_retry(
 ) -> dict[str, Any] | None:
     """Reset a terminal task to 'running' in preparation for retry.
 
-    Transitions completed / failed / cancelled → running.  Clears the
+    Transitions completed / failed / cancelled -> running.  Clears the
     previous output from ``task_executions`` so the retry starts clean.
     Emits a ``task_status: running`` SSE event on success.
 

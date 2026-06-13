@@ -2,9 +2,9 @@
 
 An agent node's capabilities are:
 
-- ``tools``  — the fixed ``NodeTask`` tools registered on the node class.
-- ``skills`` — user-defined active skill instructions attached to the node.
-- ``memory`` — memory entries explicitly written to ``fin_agents.agent_memory``
+- ``tools``  -- the fixed ``NodeTask`` tools registered on the node class.
+- ``skills`` -- user-defined active skill instructions attached to the node.
+- ``memory`` -- memory entries explicitly written to ``fin_agents.agent_memory``
   for this node execution (via :func:`backend.langgraph.agent.memory.write_memory`).
 
 This module exposes a single entry point, :func:`get_agent_capabilities`,
@@ -44,7 +44,7 @@ class AgentCapabilities(BaseModel):
 async def get_agent_capabilities(node_id: str) -> AgentCapabilities:
     """Return the full capability snapshot for *node_id*.
 
-    Memory is read from ``fin_agents.agent_memory`` — entries written by
+    Memory is read from ``fin_agents.agent_memory`` -- entries written by
     :func:`~backend.langgraph.agent.memory.write_memory` during this node's
     execution.  Task-backed entries (``task_id`` set, ``content`` null) are
     resolved at read time to the referenced task's latest execution output.

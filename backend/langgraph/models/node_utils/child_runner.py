@@ -1,4 +1,4 @@
-"""ChildRunnerMixin — running a node as a child within a parent subgraph."""
+"""ChildRunnerMixin -- running a node as a child within a parent subgraph."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class ChildRunnerMixin:
 
         Args:
             parent_ctx:      The parent subgraph's NodeContext.
-            node_input:      Typed input — constructed by the parent, not from state.
+            node_input:      Typed input -- constructed by the parent, not from state.
             parallel_group:  Optional label grouping sibling parallel nodes.
             parallel_branch: Optional branch identity within the parallel_group.
                 Defaults to ``self.node_name`` when ``parallel_group`` is set.

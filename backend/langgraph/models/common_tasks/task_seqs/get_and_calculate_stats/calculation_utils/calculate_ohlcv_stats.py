@@ -1,4 +1,4 @@
-"""calculate_ohlcv_stats — business logic for computing OHLCV technical indicators.
+"""calculate_ohlcv_stats -- business logic for computing OHLCV technical indicators.
 
 Accepts a structured OHLCV ``StatsRecord`` and computes a full suite of technical
 indicators using ``pandas_ta``, then upserts all bar rows into the appropriate
@@ -6,11 +6,11 @@ indicators using ``pandas_ta``, then upserts all bar rows into the appropriate
 
 Instrument routing
 ------------------
-``equity``        → ``quant_stats``            (OhlcvStatsSQL)
-``index``         → ``quant_index_stats``       (IndexStatsSQL)
-``crypto``        → ``quant_crypto_stats``      (CryptoStatsSQL)
-``precious_metal``→ ``quant_precious_metal_stats`` (PreciousMetalStatsSQL)
-``commodity``     → ``quant_commodity_stats``   (CommodityStatsSQL)
+``equity``        -> ``quant_stats``            (OhlcvStatsSQL)
+``index``         -> ``quant_index_stats``       (IndexStatsSQL)
+``crypto``        -> ``quant_crypto_stats``      (CryptoStatsSQL)
+``precious_metal``-> ``quant_precious_metal_stats`` (PreciousMetalStatsSQL)
+``commodity``     -> ``quant_commodity_stats``   (CommodityStatsSQL)
 
 Indicators computed
 -------------------
@@ -23,10 +23,10 @@ Volume / price-volume: VWAP, OBV, Chaikin A/D Line
 
 Public exports
 --------------
-``CalculateOhlcvStatsInput``    — Pydantic input model.
-``CalculateOhlcvStatsOutput``   — Pydantic output model.
-``calculate_ohlcv_stats_handler`` — Celery-layer async handler function.
-``PERIOD_TO_GRANULARITY``       — Period → granularity mapping constant.
+``CalculateOhlcvStatsInput``    -- Pydantic input model.
+``CalculateOhlcvStatsOutput``   -- Pydantic output model.
+``calculate_ohlcv_stats_handler`` -- Celery-layer async handler function.
+``PERIOD_TO_GRANULARITY``       -- Period -> granularity mapping constant.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ from backend.resources.stats.models import OhlcvStatsMatrix, StatsRecord
 
 logger = logging.getLogger(__name__)
 
-# Map StatsRecord.period → quant_stats.granularity (CHECK constraint values).
+# Map StatsRecord.period -> quant_stats.granularity (CHECK constraint values).
 # yfinance returns hourly bars for '1d', daily for '1w'/'1mo'/'3mo'/'2y', monthly for '1y'.
 PERIOD_TO_GRANULARITY: dict[str, str] = {
     "1d": "5min",
@@ -102,15 +102,14 @@ class CalculateOhlcvStatsInput(BaseModel):
         stats_record:  OHLCV stats record from :class:`GetStatsOutput.stats_record`.
         from_cache:    When ``True``, skip pandas_ta recomputation and instead return the
                        count of already-existing rows in ``quant_stats``.
-                       Set to ``True`` by the calling seq when ``data_type != 'ohlcv'``.
-        data_type:     Payload category passed down from :attr:`GetStatsOutput.data_type`.
-                       Used by the dispatcher to select the correct handler; the stock-stats
-                       handler only processes ``'ohlcv'`` records.
+                       Set to ``True`` by the calling seq when ``pipeline != 'ohlcv'``.
+        pipeline:      Pipeline label passed down from the caller. The stock-stats
+                       handler only processes ``'ohlcv'``/``'futures'`` records.
     """
 
     stats_record: StatsRecord
     from_cache: bool = Field(default=False, description="Skip recomputation; read row count from DB.")
-    data_type: str = Field(default=STATS_DATA_TYPE.OHLCV.value, description="Payload category: 'ohlcv', 'options', 'futures', etc.")
+    pipeline: str = Field(default=STATS_DATA_TYPE.OHLCV.value, description="Pipeline label: 'ohlcv', 'options', 'futures', etc.")
 
 
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.models import CalculateStatsBaseOutput
@@ -257,7 +256,7 @@ def _row_to_params(
 
 
 # ---------------------------------------------------------------------------
-# Handler — Celery-layer business logic
+# Handler -- Celery-layer business logic
 # ---------------------------------------------------------------------------
 
 

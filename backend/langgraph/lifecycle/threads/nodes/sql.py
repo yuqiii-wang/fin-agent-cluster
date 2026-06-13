@@ -5,9 +5,9 @@
 #          fencing_token, is_forked, forked_from_version, view_type, view_schema, stats_views)
 #
 # ON CONFLICT rules:
-#   • If the incoming fencing_token is LOWER than stored → zombie write; reject.
-#   • If the stored status is already terminal → keep it regardless of token.
-#   • Otherwise → overwrite with 'running' and the new prev_node_ids.
+#   • If the incoming fencing_token is LOWER than stored -> zombie write; reject.
+#   • If the stored status is already terminal -> keep it regardless of token.
+#   • Otherwise -> overwrite with 'running' and the new prev_node_ids.
 #   • fencing_token is always updated to GREATEST(incoming, stored).
 #   • is_forked / forked_from_version: once TRUE/set, preserved on conflict.
 #   • parallel_branch: once set, preserved on conflict (branch identity is immutable).

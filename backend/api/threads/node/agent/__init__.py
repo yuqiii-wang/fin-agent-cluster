@@ -1,4 +1,4 @@
-"""backend.api.threads.node.agent — agent capabilities API."""
+"""backend.api.threads.node.agent -- agent capabilities API."""
 
 from __future__ import annotations
 

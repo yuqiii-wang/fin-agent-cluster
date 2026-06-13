@@ -1,4 +1,4 @@
-"""TaskRunnerMixin — task execution and LangChain Runnable wrapping."""
+"""TaskRunnerMixin -- task execution and LangChain Runnable wrapping."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ class TaskRunnerMixin:
 
         Args:
             node_task: The ``NodeTask`` whose ``task_fn`` to invoke.
-            ctx:       Current node context — mutated to record the task_id.
+            ctx:       Current node context -- mutated to record the task_id.
             content:   Typed biz input; must match ``node_task.input_type``.
 
         Returns:
@@ -65,7 +65,7 @@ class TaskRunnerMixin:
         # if task_id is already present another coroutine has claimed it; create a fresh one.
         existing_claimed = existing is not None and existing["task_id"] in ctx.task_ids
         if from_maybe_cache and existing and not existing_claimed and existing["status"] == "completed":
-            # SQL already verified input_hash matches and TTL is live — serve from cache.
+            # SQL already verified input_hash matches and TTL is live -- serve from cache.
             task_id = existing["task_id"]
             task_row = await get_task_full(ctx.thread_id, task_id)
             output_data = task_row.get("output") if task_row else None
@@ -103,7 +103,7 @@ class TaskRunnerMixin:
         # ------------------------------------------------------------------
         # PG cache short-circuit: call pg_cache_fn before delegating to
         # task_fn / Celery.  On a hit the mixin emits a ToolCall lifecycle
-        # record and returns immediately — no Celery dispatch needed.
+        # record and returns immediately -- no Celery dispatch needed.
         # ------------------------------------------------------------------
         if from_maybe_cache and node_task.pg_cache_fn is not None:
             cached_content = await node_task.pg_cache_fn(content, ctx)

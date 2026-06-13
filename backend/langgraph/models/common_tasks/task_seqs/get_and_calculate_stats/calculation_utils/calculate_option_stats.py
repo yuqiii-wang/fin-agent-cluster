@@ -1,11 +1,11 @@
-"""calculate_option_stats — facade re-exporting from calculation_options_utils.
+"""calculate_option_stats -- facade re-exporting from calculation_options_utils.
 
 Implementation is split across:
-  calculation_options_utils/models.py       — Pydantic models
-  calculation_options_utils/parsers.py      — OSI parsing and coercion helpers
-  calculation_options_utils/parser_utils.py — Additional parsing utilities
-  calculation_options_utils/handler.py      — DB persistence handler
-  calculation_options_utils/task.py         — LangGraph @task and NodeTask
+  calculation_options_utils/models.py       -- Pydantic models
+  calculation_options_utils/parsers.py      -- OSI parsing and coercion helpers
+  calculation_options_utils/parser_utils.py -- Additional parsing utilities
+  calculation_options_utils/handler.py      -- DB persistence handler
+  calculation_options_utils/task.py         -- LangGraph @task and NodeTask
 """
 
 from __future__ import annotations

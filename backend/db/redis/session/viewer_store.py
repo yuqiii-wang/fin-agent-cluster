@@ -1,4 +1,4 @@
-"""backend.db.redis.session.viewer_store — explicit per-thread/per-user viewer tracking.
+"""backend.db.redis.session.viewer_store -- explicit per-thread/per-user viewer tracking.
 
 Replaces indirect Centrifugo presence-stats polling with explicit Redis flags so
 ``stream_task`` can immediately determine viewer presence without relying on
@@ -6,11 +6,11 @@ WebSocket subscription timing.
 
 Two flag types
 --------------
-* **App-level** ``fin:user:app_viewer:{user_id}`` — set whenever the user submits a
+* **App-level** ``fin:user:app_viewer:{user_id}`` -- set whenever the user submits a
   query or explicitly opens a thread.  Signals that the browser is open.  Maps to
   :func:`~backend.centrifugo_mq.client.has_app_viewers`.
 
-* **Thread-level** ``fin:thread:viewer:{thread_id}`` — set when the user submits this
+* **Thread-level** ``fin:thread:viewer:{thread_id}`` -- set when the user submits this
   specific query or navigates to this thread.  Signals that the user is actively
   watching the thread.  Maps to
   :func:`~backend.centrifugo_mq.client.has_thread_viewers`.
@@ -42,7 +42,7 @@ async def set_viewer(user_id: str, thread_id: str) -> None:
     """Mark *user_id* as having the app open and actively viewing *thread_id*.
 
     Sets both the app-level and thread-level viewer flags on Redis shard 0 with
-    a 30-minute TTL.  Errors are logged but never raised — viewer detection is
+    a 30-minute TTL.  Errors are logged but never raised -- viewer detection is
     best-effort with a safe fallback of ``True`` in the callers.
 
     Args:
@@ -82,7 +82,7 @@ async def has_app_viewer(user_id: str) -> bool:
         return val is not None
     except Exception as exc:  # noqa: BLE001
         logger.error("[viewer_store] has_app_viewer failed user_id=%s: %s", user_id, exc)
-        return True  # Safe default — callers treat True as "publish events".
+        return True  # Safe default -- callers treat True as "publish events".
 
 
 async def has_thread_viewer(thread_id: str) -> bool:
@@ -103,7 +103,7 @@ async def has_thread_viewer(thread_id: str) -> bool:
         return val is not None
     except Exception as exc:  # noqa: BLE001
         logger.error("[viewer_store] has_thread_viewer failed thread_id=%s: %s", thread_id, exc)
-        return True  # Safe default — callers treat True as "publish events".
+        return True  # Safe default -- callers treat True as "publish events".
 
 
 async def clear_viewer(user_id: str, thread_id: str) -> None:
@@ -113,7 +113,7 @@ async def clear_viewer(user_id: str, thread_id: str) -> None:
     (thread completed, navigation away, page unload).  Clearing the flag ensures
     subsequent backend ``notify()`` calls treat the thread as unobserved and
     publish events to Centrifugo history only (no ACK retry loop), eliminating
-    the 15–30 s CENTRIFUGO_003 NACK storm that occurs when the viewer flag
+    the 15-30 s CENTRIFUGO_003 NACK storm that occurs when the viewer flag
     outlives the actual WebSocket subscription.
 
     Args:

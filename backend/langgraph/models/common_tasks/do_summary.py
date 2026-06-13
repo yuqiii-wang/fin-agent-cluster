@@ -1,18 +1,18 @@
-"""do_summary — NodeTask: streaming LLM-classify and summarise news articles.
+"""do_summary -- NodeTask: streaming LLM-classify and summarise news articles.
 
 Batches all qualifying :class:`~backend.resources.news.models.NewsArticle` items
 from the ``get_news`` output into a single streaming LLM prompt and classifies
 each to produce:
 
-* ``summary``          — content verbatim (≤500 chars) or 2-3 sentence compressed summary
-* ``sentiment_level``  — one of the 9 sentiment codes
-* ``topic``            — one topic code from ``news_topics``
-* ``tags``             — free-form tag list
+* ``summary``          -- content verbatim (<=500 chars) or 2-3 sentence compressed summary
+* ``sentiment_level``  -- one of the 9 sentiment codes
+* ``topic``            -- one topic code from ``news_topics``
+* ``tags``             -- free-form tag list
 
 Failure behaviour
 -----------------
 Streaming failure (Celery infra down) propagates to seq.py for warning-level handling.
-Per-article parse failure → warning logged, article skipped (no entry in output summaries).
+Per-article parse failure -> warning logged, article skipped (no entry in output summaries).
 The task is a soft-failure task; seq.py continues without summaries on failure.
 
 Execution layers
@@ -30,10 +30,10 @@ Celery layer (``stream_task.run_stream``):
 
 Public exports
 --------------
-``do_summary``             — ``NodeTask`` instance.
-``SummaryRecord``          — Pydantic model for per-article LLM classification output.
-``STREAM_PROMPT_BUILDERS`` — dict slice for registration in ``stream_task._get_stream_prompt_builders``.
-``HANDLERS``               — empty dict (streaming task; no completion handler).
+``do_summary``             -- ``NodeTask`` instance.
+``SummaryRecord``          -- Pydantic model for per-article LLM classification output.
+``STREAM_PROMPT_BUILDERS`` -- dict slice for registration in ``stream_task._get_stream_prompt_builders``.
+``HANDLERS``               -- empty dict (streaming task; no completion handler).
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ _SENTIMENT_LEVELS = frozenset({
 })
 
 # ---------------------------------------------------------------------------
-# News topics — loaded from fin_markets.news_topics on first use
+# News topics -- loaded from fin_markets.news_topics on first use
 # ---------------------------------------------------------------------------
 
 _topics_cache: dict[str, str | None] | None = None
@@ -123,7 +123,7 @@ def _build_batch_system_prompt(topics: dict[str, str | None]) -> str:
     codes_str = " | ".join(sorted(topics.keys())) + " | null"
     return (
         "You are a financial news analyst. Given a list of articles, classify each one and respond\n"
-        "ONLY with valid JSON matching the schema below. Do not think out loud — output only the JSON object.\n"
+        "ONLY with valid JSON matching the schema below. Do not think out loud -- output only the JSON object.\n"
         "\n"
         "Rules:\n"
         "- summary: if the article body is 500 characters or fewer, copy it verbatim; otherwise write\n"
@@ -137,7 +137,7 @@ def _build_batch_system_prompt(topics: dict[str, str | None]) -> str:
         "{\n"
         '  "summaries": {\n'
         '    "<url_hash>": {\n'
-        '      "summary":         "<verbatim body if ≤500 chars, else 2–3 sentence compressed summary>",\n'
+        '      "summary":         "<verbatim body if <=500 chars, else 2-3 sentence compressed summary>",\n'
         '      "sentiment_level": "<one of: strongly_bullish | bullish | mildly_bullish | slightly_bullish | neutral | slightly_bearish | mildly_bearish | bearish | strongly_bearish>",\n'
         f'      "topic":           "<one of: {codes_str}>",\n'
         '      "tags":            ["<tag1>", "<tag2>"]\n'
@@ -254,7 +254,7 @@ class SummaryRecord(BaseModel):
     """Per-article LLM classification output stored in :class:`DoSummaryOutput`.
 
     Attributes:
-        summary:         Content verbatim (≤500 chars) or 2-3 sentence compressed summary.
+        summary:         Content verbatim (<=500 chars) or 2-3 sentence compressed summary.
         sentiment_level: Sentiment code (validated against reference set).
         topic:           Topic code from ``news_topics``, or ``None``.
         tags:            Free-form tag list.
@@ -294,7 +294,7 @@ class DoSummaryOutput(BaseModel):
     """Output from the do_summary task.
 
     Attributes:
-        summaries:     Mapping of ``url_hash`` → serialised :class:`SummaryRecord`
+        summaries:     Mapping of ``url_hash`` -> serialised :class:`SummaryRecord`
                        for each successfully classified article.
         skipped_count: Number of articles that failed LLM classification.
         from_cache:    ``True`` when summaries were loaded from existing
@@ -303,7 +303,7 @@ class DoSummaryOutput(BaseModel):
 
     summaries: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
-        description="url_hash → SummaryRecord dict for each successfully classified article.",
+        description="url_hash -> SummaryRecord dict for each successfully classified article.",
     )
     skipped_count: int = Field(
         default=0, description="Articles that failed classification (warned and skipped)."
@@ -351,7 +351,7 @@ async def _do_summary_pg_cache(
 
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 
@@ -386,7 +386,7 @@ async def _do_summary_task(
 
     articles = [NewsArticle.model_validate(a) for a in inp.news_articles]
 
-    # No qualifying articles — ToolCall fast path.
+    # No qualifying articles -- ToolCall fast path.
     if not any(len(a.content) >= _MIN_CONTENT_LEN for a in articles):
         output = DoSummaryOutput()
         await create_task(
@@ -400,7 +400,7 @@ async def _do_summary_task(
         )
         return TaskOutput(ctx=ctx, content=output)
 
-    # Streaming path — LLM classifies all qualifying articles.
+    # Streaming path -- LLM classifies all qualifying articles.
     await create_task(
         ctx.thread_id, ctx.node_id, ctx.node_name, ctx.task_id, ctx.task_name, payload,
         view_type="Streaming",
@@ -437,7 +437,7 @@ do_summary: NodeTask[DoSummaryInput, DoSummaryOutput] = NodeTask(
     description=(
         "Streaming LLM-classify and summarise raw news articles: produces summary, "
         "sentiment_level, topic classification, and tags for each article. "
-        "Soft-failure task — streaming failures propagate to the seq wrapper as a warning."
+        "Soft-failure task -- streaming failures propagate to the seq wrapper as a warning."
     ),
     input_type=DoSummaryInput,
     output_type=DoSummaryOutput,

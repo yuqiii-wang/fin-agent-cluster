@@ -1,4 +1,4 @@
-"""html_to_markdown — NodeTask: convert raw HTML to Markdown using markitdown.
+"""html_to_markdown -- NodeTask: convert raw HTML to Markdown using markitdown.
 
 Accepts a raw HTML string (typically the body returned by ``crawl_url``) and
 converts it to clean Markdown text using
@@ -9,7 +9,7 @@ Design notes
 ------------
 * Conversion is CPU-bound (markitdown/html2text under the hood), so it runs
   inside a ``ThreadPoolExecutor`` to avoid stalling the async event loop.
-* No DB persistence — pure in-process transform task.
+* No DB persistence -- pure in-process transform task.
 
 Execution layers
 ----------------
@@ -23,10 +23,10 @@ Celery layer (``_handler``):
 
 Public exports
 --------------
-``html_to_markdown``       — ``NodeTask`` instance.
-``HtmlToMarkdownInput``    — Pydantic input model.
-``HtmlToMarkdownOutput``   — Pydantic output model.
-``HANDLERS``               — dict slice for ``backend.langgraph.nodes.HANDLERS``.
+``html_to_markdown``       -- ``NodeTask`` instance.
+``HtmlToMarkdownInput``    -- Pydantic input model.
+``HtmlToMarkdownOutput``   -- Pydantic output model.
+``HANDLERS``               -- dict slice for ``backend.langgraph.nodes.HANDLERS``.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class HtmlToMarkdownOutput(BaseModel):
     source_url: str = Field(description="Origin URL of the page.")
 
 # ---------------------------------------------------------------------------
-# Celery layer — business logic
+# Celery layer -- business logic
 # ---------------------------------------------------------------------------
 
 async def _handler(payload: dict) -> dict:
@@ -107,7 +107,7 @@ async def _handler(payload: dict) -> dict:
     ).model_dump()
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task
+# LangGraph layer -- @task
 # ---------------------------------------------------------------------------
 
 async def _html_to_markdown_task(

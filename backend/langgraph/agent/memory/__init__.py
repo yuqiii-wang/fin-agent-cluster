@@ -1,11 +1,11 @@
-"""backend.langgraph.agent.memory — unified node-scoped memory for agents.
+"""backend.langgraph.agent.memory -- unified node-scoped memory for agents.
 
 Two entry flavours exist per node:
 
-* **Task-backed memory** — entry references a ``fin_agents.tasks`` row;
+* **Task-backed memory** -- entry references a ``fin_agents.tasks`` row;
   content is derived from the task's latest ``fin_agents.task_executions``
   output when read.
-* **Direct memory** — arbitrary JSON payload stored directly in the memory
+* **Direct memory** -- arbitrary JSON payload stored directly in the memory
   row; must be non-empty.
 
 All entries are scoped to a single ``node_id``.

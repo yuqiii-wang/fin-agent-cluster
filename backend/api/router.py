@@ -1,4 +1,4 @@
-"""Parent APIRouter — aggregates all domain sub-routers under ``/api/v1``."""
+"""Parent APIRouter -- aggregates all domain sub-routers under ``/api/v1``."""
 
 from __future__ import annotations
 

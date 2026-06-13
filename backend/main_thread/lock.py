@@ -1,4 +1,4 @@
-"""backend.main_thread.lock — Redis-based thread ownership lock.
+"""backend.main_thread.lock -- Redis-based thread ownership lock.
 
 Each graph run is exclusively owned by one main thread (FastAPI instance).
 The lock key maps a thread UUID to the owning instance's port, PID, and
@@ -6,7 +6,7 @@ fencing token.
 
 Key format:       ``fin:thread:lock:{thread_id}``
 Value:            JSON ``{"port": 8432, "pid": 12345, "token": 7}``
-Fencing counter:  ``fin:thread:fencing:{thread_id}`` — monotonically
+Fencing counter:  ``fin:thread:fencing:{thread_id}`` -- monotonically
                   increasing integer, incremented atomically on each lock
                   acquisition or steal.  The token in the lock value equals
                   the counter at acquisition time and is stored in every DB
@@ -18,10 +18,10 @@ TTL:              ``THREAD_LOCK_TTL_SECONDS`` (default 60 s), renewed every
 
 Fix summary implemented here
 -----------------------------
-Fix 1 – CAS steal: ``steal_lock`` only overwrites when the stored owner
+Fix 1 - CAS steal: ``steal_lock`` only overwrites when the stored owner
         matches the dead owner confirmed by the caller.  Two simultaneous
         steal attempts produce at most one winner.
-Fix 5 – Fencing token: ``acquire_lock`` and ``steal_lock`` atomically
+Fix 5 - Fencing token: ``acquire_lock`` and ``steal_lock`` atomically
         increment a per-thread counter in the same Redis script that writes
         the lock, returning the new token so the graph run can stamp all its
         DB writes.
@@ -315,8 +315,8 @@ async def check_owner_alive(owner: OwnerInfo) -> bool:
     """Check whether the lock owner FastAPI instance is still running.
 
     Two-step check to handle the same-port restart race:
-    1. TCP connect — if the port is not responding at all, the instance is dead.
-    2. PID check via ``os.kill(pid, 0)`` — if the port IS responding but the
+    1. TCP connect -- if the port is not responding at all, the instance is dead.
+    2. PID check via ``os.kill(pid, 0)`` -- if the port IS responding but the
        recorded PID no longer exists, a new process replaced the old one on
        the same port (e.g. uvicorn ``--reload`` or process restart).  In that
        case we return ``False`` so the caller can steal the lock and dispatch
@@ -339,7 +339,7 @@ async def check_owner_alive(owner: OwnerInfo) -> bool:
         )
         writer.close()
         await writer.wait_closed()
-        # Port is reachable — verify the ORIGINAL process is still running.
+        # Port is reachable -- verify the ORIGINAL process is still running.
         # Without this check, a replacement process on the same port would
         # cause the old dead owner to appear alive and prevent recovery.
         return _pid_alive(owner["pid"])

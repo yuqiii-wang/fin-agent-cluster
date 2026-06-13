@@ -1,4 +1,4 @@
-"""FastAPI router — internal Centrifugo publish-proxy endpoint.
+"""FastAPI router -- internal Centrifugo publish-proxy endpoint.
 
 Receives publish-proxy requests forwarded by Centrifugo when a subscribed
 frontend client calls ``sub.publish(data)`` on a ``thread:{thread_id}``

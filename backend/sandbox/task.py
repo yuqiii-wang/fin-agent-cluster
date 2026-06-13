@@ -1,7 +1,7 @@
-"""run_sandbox — NodeTask: execute LLM-generated Python or bash inside an isolated sandbox.
+"""run_sandbox -- NodeTask: execute LLM-generated Python or bash inside an isolated sandbox.
 
 The LLM writes a self-contained script (Python or bash) to process text
-input (e.g. web-scraped markdown CSV → JSON) and this task runs it safely.
+input (e.g. web-scraped markdown CSV -> JSON) and this task runs it safely.
 
 Execution layers
 ----------------
@@ -19,21 +19,21 @@ Celery layer (``_handler``):
 
 Isolation guarantees
 --------------------
-* **Network** — ``unshare --net`` creates a new Linux network namespace; all
+* **Network** -- ``unshare --net`` creates a new Linux network namespace; all
   socket operations fail regardless of the script content.
-* **Filesystem** — the process CWD is pinned to a temp dir deleted on exit;
+* **Filesystem** -- the process CWD is pinned to a temp dir deleted on exit;
   path-traversal patterns are rejected at the validation stage.
-* **Resources** — ``setrlimit`` caps virtual memory, CPU time, child-process
+* **Resources** -- ``setrlimit`` caps virtual memory, CPU time, child-process
   count, and open-file descriptors as configured in ``Settings``.
-* **Timeout** — wall-clock cap via ``subprocess.communicate(timeout=N)``
+* **Timeout** -- wall-clock cap via ``subprocess.communicate(timeout=N)``
   with ``proc.kill()`` on expiry.
 
 Public exports
 --------------
-``run_sandbox``      — :class:`~backend.langgraph.models.task.NodeTask` instance.
-``RunSandboxInput``  — Pydantic input model.
-``RunSandboxOutput`` — Pydantic output model.
-``HANDLERS``         — dict slice for registration in
+``run_sandbox``      -- :class:`~backend.langgraph.models.task.NodeTask` instance.
+``RunSandboxInput``  -- Pydantic input model.
+``RunSandboxOutput`` -- Pydantic output model.
+``HANDLERS``         -- dict slice for registration in
                        ``backend.langgraph.nodes.HANDLERS``.
 """
 
@@ -100,15 +100,15 @@ class RunSandboxOutput(BaseModel):
     timed_out: bool = Field(default=False, description="True if killed by timeout.")
 
 # ---------------------------------------------------------------------------
-# Celery layer — business logic
+# Celery layer -- business logic
 # ---------------------------------------------------------------------------
 
 async def _handler(payload: dict) -> dict:
     """Validate and execute a sandboxed script.
 
     Called by ``completion_task.run_completion`` inside a Celery worker.
-    Runs the full sandbox isolation stack: security validation → isolated
-    temp dir → subprocess with network-ns + resource limits + timeout.
+    Runs the full sandbox isolation stack: security validation -> isolated
+    temp dir -> subprocess with network-ns + resource limits + timeout.
 
     Args:
         payload: Serialised :class:`RunSandboxInput` dict.
@@ -122,7 +122,7 @@ async def _handler(payload: dict) -> dict:
         SandboxSpawnError:    OS could not exec the interpreter binary.
         SandboxUnsupportedLanguageError: Language is not ``python`` or ``bash``.
     """
-    from backend.config import get_settings  # noqa: PLC0415 — deferred for Celery worker import order
+    from backend.config import get_settings  # noqa: PLC0415 -- deferred for Celery worker import order
     from backend.sandbox.environment import sandbox_workdir  # noqa: PLC0415
     from backend.sandbox.executor import execute_bash, execute_python  # noqa: PLC0415
     from backend.sandbox.errors import SandboxUnsupportedLanguageError  # noqa: PLC0415
@@ -154,7 +154,7 @@ async def _handler(payload: dict) -> dict:
     ).model_dump()
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _run_sandbox_task(

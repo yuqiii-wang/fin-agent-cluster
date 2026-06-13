@@ -1,4 +1,4 @@
-"""backend.users.queries._helpers — Shared row converters and cascade helpers."""
+"""backend.users.queries._helpers -- Shared row converters and cascade helpers."""
 
 from __future__ import annotations
 

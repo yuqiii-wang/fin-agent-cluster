@@ -1,4 +1,4 @@
-"""backend.db.redis — lazy async Redis clients, one per shard.
+"""backend.db.redis -- lazy async Redis clients, one per shard.
 
 Initialisation is deferred to first access so there is no event-loop
 dependency at import time.  Clients are keyed by shard index and reused
@@ -13,7 +13,7 @@ Usage::
 
 Implementation split
 --------------------
-client.py — client pool, shard mapping, get_client, close_all
+client.py -- client pool, shard mapping, get_client, close_all
 """
 
 from backend.db.redis.client import close_all, get_client, shard_for_thread

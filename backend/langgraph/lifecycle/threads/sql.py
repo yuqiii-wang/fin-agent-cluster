@@ -66,7 +66,7 @@ _CANCEL_ACTIVE_TASKS_BY_THREAD = """
     RETURNING task_id
 """
 
-# Fetch thread IDs whose status is not terminal — used during shutdown.
+# Fetch thread IDs whose status is not terminal -- used during shutdown.
 _LIST_ACTIVE_THREAD_IDS = """
     SELECT thread_id
     FROM fin_agents.user_queries

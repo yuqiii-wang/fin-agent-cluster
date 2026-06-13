@@ -1,4 +1,4 @@
-"""backend.users.queries.status — Read-only query/node/task status helpers."""
+"""backend.users.queries.status -- Read-only query/node/task status helpers."""
 
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ def _build_pending_frontier(
     if topo is None:
         return []
 
-    # Build ran-node map: node_name → node_id, keeping the highest-version row.
+    # Build ran-node map: node_name -> node_id, keeping the highest-version row.
     ran_node_id: dict[str, str] = {}
     ran_node_ver: dict[str, int] = {}
     ran_node_names: set[str] = set()
@@ -143,7 +143,7 @@ def _build_pending_frontier(
             ran_node_ver[name] = v
             ran_node_id[name] = r["node_id"]
 
-    # Predecessor map: to_node → [from_node, ...] built from topology edges.
+    # Predecessor map: to_node -> [from_node, ...] built from topology edges.
     pred_map: dict[str, list[str]] = {}
     for edge in topo.edges:
         pred_map.setdefault(edge.to_node, []).append(edge.from_node)
@@ -155,7 +155,7 @@ def _build_pending_frontier(
             continue
         preds = pred_map.get(name, [])
         if not preds:
-            continue  # root node — would have already run if reachable
+            continue  # root node -- would have already run if reachable
         if all(p in ran_node_names for p in preds):
             prev_ids = [ran_node_id[p] for p in preds if p in ran_node_id]
             pending.append(NodeExecutionInfo(

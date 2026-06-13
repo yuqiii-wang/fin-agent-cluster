@@ -44,11 +44,12 @@ class OhlcvStatsMatrix(BaseModel):
 class StatsRecord(BaseModel):
     """A statistics record for a single symbol and period.
 
-    ``content`` is an unvalidated raw JSON payload. Its shape depends on the
-    ``data_type`` of the producing step — OHLCV matrices, options chains,
-    futures, fundamentals, or free-form text. Validation/transformation into a
-    concrete schema (e.g. :class:`OhlcvStatsMatrix`) happens in the downstream
-    calculation handler, not here.
+    ``content`` is an unvalidated raw JSON payload. Its shape varies by the
+    producing step -- OHLCV matrices, options chains, futures, fundamentals, or
+    free-form text. Validation/transformation into a concrete schema (e.g.
+    :class:`OhlcvStatsMatrix`) happens in the downstream calculation handler,
+    not here. Downstream handlers inspect the record content (and the record
+    ``id`` prefix) to decide how to process it.
     """
 
     id: str = Field(..., description="Unique record identifier.")

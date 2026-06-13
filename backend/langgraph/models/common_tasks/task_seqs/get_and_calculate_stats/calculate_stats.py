@@ -1,12 +1,12 @@
-"""calculate_stats — entry NodeTask dispatching OHLCV indicator computation.
+"""calculate_stats -- entry NodeTask dispatching OHLCV indicator computation.
 
 Routes the calculation payload to the appropriate instrument-specific handler
 in :mod:`calculation_utils` based on the ``StatsRecord.id`` prefix:
 
-- ``json-options-*``  → no-op (options stats are computed by ``calculate_option_stats``)
-- ``json-futures-*``  → no-op (futures stats calculation not yet implemented)
-- all other records   → :func:`~calculation_utils.calculate_ohlcv_stats.calculate_ohlcv_stats_handler`
-  (equity, index, crypto, precious_metal, commodity — any OHLCV-based record)
+- ``json-options-*``  -> no-op (options stats are computed by ``calculate_option_stats``)
+- ``json-futures-*``  -> no-op (futures stats calculation not yet implemented)
+- all other records   -> :func:`~calculation_utils.calculate_ohlcv_stats.calculate_ohlcv_stats_handler`
+  (equity, index, crypto, precious_metal, commodity -- any OHLCV-based record)
 
 Execution layers
 ----------------
@@ -20,10 +20,10 @@ Celery layer (``_handler``):
 
 Public exports
 --------------
-``calculate_stats``      — ``NodeTask`` instance.
-``CalculateStatsInput``  — Pydantic input model (alias for ``CalculateOhlcvStatsInput``).
-``CalculateStatsOutput`` — Pydantic output model (alias for ``CalculateOhlcvStatsOutput``).
-``HANDLERS``             — dict slice for ``backend.langgraph.nodes.HANDLERS``.
+``calculate_stats``      -- ``NodeTask`` instance.
+``CalculateStatsInput``  -- Pydantic input model (alias for ``CalculateOhlcvStatsInput``).
+``CalculateStatsOutput`` -- Pydantic output model (alias for ``CalculateOhlcvStatsOutput``).
+``HANDLERS``             -- dict slice for ``backend.langgraph.nodes.HANDLERS``.
 """
 
 from __future__ import annotations
@@ -52,33 +52,32 @@ CalculateStatsInput = CalculateOhlcvStatsInput
 CalculateStatsOutput = CalculateStatsBaseOutput
 
 # ---------------------------------------------------------------------------
-# Celery layer — entry dispatcher
+# Celery layer -- entry dispatcher
 # ---------------------------------------------------------------------------
 
 async def _handler(payload: dict) -> dict:
     """Dispatch the calculate_stats payload to the appropriate instrument handler.
 
-    Routes by ``data_type`` from the payload:
-    - ``ohlcv`` (default) → :func:`calculate_ohlcv_stats_handler`.
-    - ``options`` → :func:`calculate_option_stats_handler`.
-    - Other types → return a zero-row stub; these may have dedicated handlers elsewhere.
-
-    Args:
-        payload: Serialised input dict containing ``data_type`` field.
-
-    Returns:
-        Serialised output dict from the appropriate handler.
+    Routes by ``pipeline`` from the payload:
+    - ``'ohlcv'`` (default) -> :func:`calculate_ohlcv_stats_handler`.
+    - ``'options'`` -> :func:`calculate_option_stats_handler`.
+    - ``'futures'`` -> :func:`calculate_ohlcv_stats_handler` (futures bars are
+      OHLCV-shaped; they are persisted via the same pandas_ta pipeline and the
+      dedicated futures stats table).
     """
-    data_type = payload.get("data_type", STATS_DATA_TYPE.OHLCV.value)
+    pipeline = payload.get("pipeline", STATS_DATA_TYPE.OHLCV.value)
 
-    if data_type == STATS_DATA_TYPE.OHLCV.value:
+    if pipeline == STATS_DATA_TYPE.OHLCV.value:
         inp = CalculateOhlcvStatsInput.model_validate(payload)
         return await calculate_ohlcv_stats_handler(payload)
-    elif data_type == STATS_DATA_TYPE.OPTIONS.value:
+    elif pipeline == STATS_DATA_TYPE.OPTIONS.value:
         inp = CalculateOptionStatsInput.model_validate(payload)
         return await calculate_option_stats_handler(payload)
+    elif pipeline == STATS_DATA_TYPE.FUTURES.value:
+        inp = CalculateOhlcvStatsInput.model_validate(payload)
+        return await calculate_ohlcv_stats_handler(payload)
     else:
-        # For other data types, return a zero-row stub
+        # For other pipeline types, return a zero-row stub
         return CalculateOhlcvStatsOutput(
             rows_upserted=0,
             symbol="",
@@ -89,7 +88,7 @@ async def _handler(payload: dict) -> dict:
         ).model_dump()
 
 # ---------------------------------------------------------------------------
-# LangGraph layer — @task orchestration
+# LangGraph layer -- @task orchestration
 # ---------------------------------------------------------------------------
 
 async def _calculate_stats_task(
@@ -124,9 +123,9 @@ async def _calculate_stats_task(
         )
         raise
 
-    # Validate against the correct output model based on data_type
-    data_type = payload.get("data_type", STATS_DATA_TYPE.OHLCV.value)
-    if data_type == STATS_DATA_TYPE.OPTIONS.value:
+    # Validate against the correct output model based on pipeline
+    pipeline = payload.get("pipeline", STATS_DATA_TYPE.OHLCV.value)
+    if pipeline == STATS_DATA_TYPE.OPTIONS.value:
         output = CalculateOptionStatsOutput.model_validate(result)
     else:
         output = CalculateOhlcvStatsOutput.model_validate(result)

@@ -1,4 +1,4 @@
-"""backend.db.redis.streams.reader — Recovery reader for ``fin:llm:tokens`` stream entries.
+"""backend.db.redis.streams.reader -- Recovery reader for ``fin:llm:tokens`` stream entries.
 
 After the streaming Celery task completes, this module reads every Redis Stream
 entry that belongs to a given ``task_id``, reconstructs the full text fields by
@@ -30,11 +30,11 @@ JSON-encoded Centrifugo publish envelope::
         }}"
     }
 
-Event types → ``llm_responses`` columns
+Event types -> ``llm_responses`` columns
 -----------------------------------------
-``event="token"``          → ``answer``
-``event="thinking_token"`` → ``thinking``
-``event="prompt_token"``   → ``prompts``
+``event="token"``          -> ``answer``
+``event="thinking_token"`` -> ``thinking``
+``event="prompt_token"``   -> ``prompts``
 
 All other event types (e.g. ``stream_end``) are collected for deletion but their
 content is not included in the reconstructed text.
@@ -92,7 +92,7 @@ async def recover_task_tokens(
     non-text events) are returned so the caller can delete them in bulk.
 
     Args:
-        thread_id: LangGraph thread UUID — determines the Redis shard.
+        thread_id: LangGraph thread UUID -- determines the Redis shard.
         task_id:   Task UUID to filter entries.
 
     Returns:
@@ -109,7 +109,7 @@ async def recover_task_tokens(
     shard = _shard_index(thread_id)
     client = await get_client(shard)
 
-    # {event_type: {seq: token_text}} — accumulates tokens per column.
+    # {event_type: {seq: token_text}} -- accumulates tokens per column.
     buckets: dict[str, dict[int, str]] = {}
     # ALL entry IDs matching task_id (token events + stream_end + any other).
     entry_ids: list[str] = []
@@ -140,7 +140,7 @@ async def recover_task_tokens(
 
             event = data.get("event", "")
             if event not in _TOKEN_EVENTS:
-                # stream_end, or unknown event — counted for deletion only.
+                # stream_end, or unknown event -- counted for deletion only.
                 continue
 
             token: str = data.get("token", "")
@@ -181,7 +181,7 @@ async def delete_stream_entries(thread_id: str, entry_ids: list[str]) -> int:
     ignored by Redis.
 
     Args:
-        thread_id:  LangGraph thread UUID — determines the Redis shard.
+        thread_id:  LangGraph thread UUID -- determines the Redis shard.
         entry_ids:  Stream entry IDs returned by :func:`recover_task_tokens`.
 
     Returns:

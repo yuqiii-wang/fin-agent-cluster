@@ -1,4 +1,4 @@
-"""auth.jwt — HS256 JWT encoding and Centrifugo token generation.
+"""auth.jwt -- HS256 JWT encoding and Centrifugo token generation.
 
 Centrifugo v6 authenticates WebSocket connections and channel subscriptions
 via HS256-signed JWTs.  This module generates both token types using Python's
@@ -6,17 +6,17 @@ built-in ``hmac`` + ``hashlib`` modules (no external JWT library required).
 
 Token types
 -----------
-**Connection token** — authenticates the WebSocket connection itself.
+**Connection token** -- authenticates the WebSocket connection itself.
   Claims: ``sub`` (user_id), ``iat``, ``exp``.
 
-**Subscription token** — authorises a client to subscribe to one channel.
+**Subscription token** -- authorises a client to subscribe to one channel.
   Claims: ``sub`` (user_id), ``channel``, ``iat``, ``exp``.
 
 Channel naming
 --------------
 Thread lifecycle events travel on ``thread:{thread_id}`` (``thread`` namespace).
 Per-task token streams travel on ``stream:{task_id}`` (``stream`` namespace).
-A task has a 1:1 mapping to a stream — ``stream_id == task_id``.
+A task has a 1:1 mapping to a stream -- ``stream_id == task_id``.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def make_connection_token(user_id: str, secret: str, ttl_seconds: int = 3600) ->
     """Generate a Centrifugo WebSocket connection JWT for *user_id*.
 
     Args:
-        user_id:     Subject claim — identifies the connecting user.
+        user_id:     Subject claim -- identifies the connecting user.
         secret:      Centrifugo ``token_hmac_secret_key``.
         ttl_seconds: Token validity window in seconds (default 1 hour).
 
@@ -84,7 +84,7 @@ def make_subscription_token(
     """Generate a Centrifugo subscription JWT for *channel*.
 
     Args:
-        user_id:     Subject claim — identifies the subscribing user.
+        user_id:     Subject claim -- identifies the subscribing user.
         channel:     Centrifugo channel name, e.g. ``thread:{thread_id}`` or
                      ``stream:{task_id}``.
         secret:      Centrifugo ``token_hmac_secret_key``.

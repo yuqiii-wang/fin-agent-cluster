@@ -1,4 +1,4 @@
-"""backend.users.schemas — Pydantic response models for user-facing API endpoints."""
+"""backend.users.schemas -- Pydantic response models for user-facing API endpoints."""
 
 from __future__ import annotations
 
@@ -58,8 +58,8 @@ class RetryTaskRequest(BaseModel):
 
     Attributes:
         mode: Retry strategy.
-            - ``"restart"`` — re-run with the original input unchanged.
-            - ``"compact_and_continue"`` — streaming tasks only; injects
+            - ``"restart"`` -- re-run with the original input unchanged.
+            - ``"compact_and_continue"`` -- streaming tasks only; injects
               compressed prior thinking as context so the LLM continues from
               a de-looped state rather than starting over.
     """

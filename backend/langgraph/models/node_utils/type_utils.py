@@ -1,4 +1,4 @@
-"""TypeValidationMixin — Generic[I, O] resolution and Pydantic model validation."""
+"""TypeValidationMixin -- Generic[I, O] resolution and Pydantic model validation."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class TypeValidationMixin(ABC):
             if not args or len(args) < 2:
                 continue
             i_type, o_type = args[0], args[1]
-            # Skip TypeVar params — class is still abstract/generic.
+            # Skip TypeVar params -- class is still abstract/generic.
             if isinstance(i_type, TypeVar) or isinstance(o_type, TypeVar):
                 continue
             if isinstance(i_type, type) and not issubclass(i_type, BaseModel):

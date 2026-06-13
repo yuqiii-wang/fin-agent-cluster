@@ -1,16 +1,16 @@
-"""common_tasks — shared LangGraph NodeTasks usable across multiple nodes.
+"""common_tasks -- shared LangGraph NodeTasks usable across multiple nodes.
 
 Tasks
 -----
-``get_stats``                   — fetch OHLCV stats from a stats provider, cache in input_raw.
-``calculate_stats``             — compute technical indicators from a StatsRecord, upsert to quant_stats.
-``calculate_corr``              — compute pairwise Pearson correlation of close prices from quant_stats.
-``propose_web_knowledge_urls``  — map a symbol to its Yahoo Finance options URL for downstream web navigation.
-``llm_orchestration_on_failure``           — streaming LLM recovery decision; selects an earlier LLM streaming step to regenerate after a failure.
+``get_stats``                   -- fetch OHLCV stats from a stats provider, cache in input_raw.
+``calculate_stats``             -- compute technical indicators from a StatsRecord, upsert to quant_stats.
+``calculate_corr``              -- compute pairwise Pearson correlation of close prices from quant_stats.
+``propose_web_knowledge_urls``  -- map a symbol to its Yahoo Finance options URL for downstream web navigation.
+``llm_orchestration_on_failure``           -- streaming LLM recovery decision; selects an earlier LLM streaming step to regenerate after a failure.
 
 HANDLERS registry
 -----------------
-Flat dict mapping task_name → async handler function, consumed by the Celery
+Flat dict mapping task_name -> async handler function, consumed by the Celery
 completion worker (``completion_task.run_completion``).  Import and merge into
 ``backend.langgraph.nodes.HANDLERS``.
 """

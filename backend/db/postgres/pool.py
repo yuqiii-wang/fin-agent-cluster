@@ -2,16 +2,16 @@
 
 Three pools are managed here:
 
-* **checkpointer_pool** — used exclusively by the LangGraph
+* **checkpointer_pool** -- used exclusively by the LangGraph
   :class:`~langgraph.checkpoint.postgres.aio.AsyncPostgresSaver`.
   Always targets the **primary** (write) node; LangGraph needs consistent
   reads immediately after writes.  ``autocommit=True``, ``prepare_threshold=0``.
 
-* **raw_pool** — used by :func:`~backend.db.postgres.connection.raw_conn`
+* **raw_pool** -- used by :func:`~backend.db.postgres.connection.raw_conn`
   for write operations (INSERT / UPDATE / DELETE / NOTIFY) and any query
   that requires read-after-write consistency.  Targets the **primary**.
 
-* **raw_read_pool** — used by ``raw_conn(readonly=True)`` for pure SELECT
+* **raw_read_pool** -- used by ``raw_conn(readonly=True)`` for pure SELECT
   queries.  Targets the **replica** when ``DATABASE_PG_READ_URL`` is set,
   otherwise falls back to the primary so single-instance deployments keep
   working without configuration.
@@ -115,19 +115,19 @@ async def close_pools() -> None:
 def get_checkpointer_pool() -> AsyncConnectionPool:
     """Return the shared checkpointer pool (primary).  Must call :func:`open_pools` first."""
     if _checkpointer_pool is None:
-        raise RuntimeError(f"[{PG_POOL_NOT_OPENED}] Connection pools not opened — call open_pools() in lifespan")
+        raise RuntimeError(f"[{PG_POOL_NOT_OPENED}] Connection pools not opened -- call open_pools() in lifespan")
     return _checkpointer_pool
 
 
 def get_raw_pool() -> AsyncConnectionPool:
     """Return the shared raw-write pool (primary).  Must call :func:`open_pools` first."""
     if _raw_pool is None:
-        raise RuntimeError(f"[{PG_POOL_NOT_OPENED}] Connection pools not opened — call open_pools() in lifespan")
+        raise RuntimeError(f"[{PG_POOL_NOT_OPENED}] Connection pools not opened -- call open_pools() in lifespan")
     return _raw_pool
 
 
 def get_raw_read_pool() -> AsyncConnectionPool:
     """Return the shared raw-read pool (replica or primary).  Must call :func:`open_pools` first."""
     if _raw_read_pool is None:
-        raise RuntimeError(f"[{PG_POOL_NOT_OPENED}] Connection pools not opened — call open_pools() in lifespan")
+        raise RuntimeError(f"[{PG_POOL_NOT_OPENED}] Connection pools not opened -- call open_pools() in lifespan")
     return _raw_read_pool

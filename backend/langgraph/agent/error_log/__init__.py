@@ -1,4 +1,4 @@
-"""backend.langgraph.agent.error_log — per-thread WARNING+ log capture for recovery.
+"""backend.langgraph.agent.error_log -- per-thread WARNING+ log capture for recovery.
 
 A bounded, deduplicated, Redis-backed store of a thread's recent error/warning
 logs.  ``llm_orchestration_on_failure`` reads it (alongside the last failed task

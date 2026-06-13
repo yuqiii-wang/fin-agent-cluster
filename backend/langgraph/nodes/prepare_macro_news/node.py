@@ -1,10 +1,10 @@
-"""PrepareMacroNewsNode — Workflow node that fetches and digests macro-economic news.
+"""PrepareMacroNewsNode -- Workflow node that fetches and digests macro-economic news.
 
 Hierarchy
 ---------
 Thread
   └── prepare_macro_news  (Workflow)
-        └── get_and_digest_news  (TaskSeq → get_news + digest_news)  [×1]
+        └── get_and_digest_news  (TaskSeq -> get_news + digest_news)  [×1]
 
 Node design
 -----------
@@ -13,9 +13,9 @@ The node runs the ``get_and_digest_news`` pipeline with macro-economic topics
 stock symbol.  The optional stock symbol from ``query_node`` is carried through
 purely for downstream contextual correlation.
 
-1. ``get_news``    — fetch latest macro-economic news via FMP and web-search
+1. ``get_news``    -- fetch latest macro-economic news via FMP and web-search
                      snippets via DDGS, cache result in ``fin_markets.input_raw``.
-2. ``digest_news`` — enrich each article with LLM completion (ARK/Doubao),
+2. ``digest_news`` -- enrich each article with LLM completion (ARK/Doubao),
                      embed the AI summary, and upsert to ``fin_markets.news_stats``.
 
 Default topics: ``["federal reserve", "inflation", "gdp", "interest rates",
@@ -24,7 +24,7 @@ Default lookback: 7 calendar days before the run date.
 
 Predecessor
 -----------
-``query_node`` — must be completed before ``prepare_macro_news`` starts.
+``query_node`` -- must be completed before ``prepare_macro_news`` starts.
 Runs in parallel with ``prepare_peers``, ``prepare_macro_stats``, ``prepare_index``,
 ``prepare_news``, and ``prepare_industry_news``.
 """
@@ -95,7 +95,7 @@ class PrepareMacroNewsNode(BaseNode[PrepareMacroNewsInput, PrepareMacroNewsOutpu
     _prev_node_names: ClassVar[list[str]] = ["query_node"]
 
     async def build_input(self, state: GraphState) -> PrepareMacroNewsInput:
-        """Construct node input — optionally reads stock symbol from query_node output.
+        """Construct node input -- optionally reads stock symbol from query_node output.
 
         Args:
             state: Current GraphState.
@@ -177,7 +177,7 @@ class PrepareMacroNewsNode(BaseNode[PrepareMacroNewsInput, PrepareMacroNewsOutpu
         )
 
     def get_state_updates(self, output: PrepareMacroNewsOutput) -> dict[str, Any]:
-        """No GraphState updates — output stored in node_executions via lifecycle.
+        """No GraphState updates -- output stored in node_executions via lifecycle.
 
         Args:
             output: Completed node output.

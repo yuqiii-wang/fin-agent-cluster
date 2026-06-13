@@ -1,12 +1,12 @@
-"""load_md_from_url — TaskSeq: fetch a URL and convert its HTML to Markdown.
+"""load_md_from_url -- TaskSeq: fetch a URL and convert its HTML to Markdown.
 
 Orchestration
 -------------
-1. ``crawl_url``        — httpx async fetch + link extraction.
-2. ``html_to_markdown`` — markitdown HTML → Markdown conversion.
+1. ``crawl_url``        -- httpx async fetch + link extraction.
+2. ``html_to_markdown`` -- markitdown HTML -> Markdown conversion.
 
 Failures propagate to the caller.  Recovery (if any) is owned by the hosting
-AGENT node's step loop via ``llm_orchestration_on_failure`` — this sequence
+AGENT node's step loop via ``llm_orchestration_on_failure`` -- this sequence
 performs no per-task orchestration of its own.
 """
 
@@ -41,7 +41,7 @@ async def _pipeline(
     ctx: NodeContext,
     seq_input: LoadMdFromUrlInput,
 ) -> LoadMdFromUrlOutput:
-    """Run crawl_url → html_to_markdown.
+    """Run crawl_url -> html_to_markdown.
 
     Args:
         run_task_fn: Bound ``self.run_task`` from the hosting node.

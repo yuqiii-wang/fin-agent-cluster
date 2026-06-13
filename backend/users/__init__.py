@@ -1,4 +1,4 @@
-"""backend.users — user management, query submission, and schema definitions."""
+"""backend.users -- user management, query submission, and schema definitions."""
 
 from __future__ import annotations
 

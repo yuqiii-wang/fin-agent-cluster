@@ -97,7 +97,7 @@ async def record_thread_log(
             str(settings.AGENT_ERRLOG_TTL_SECONDS),
             str(settings.AGENT_ERRLOG_MAX_ENTRIES),
         )
-    except Exception as exc:  # noqa: BLE001 — never let log capture raise
+    except Exception as exc:  # noqa: BLE001 -- never let log capture raise
         logger.debug("[%s] thread=%s: %s", ERRLOG_WRITE_FAILED, thread_id, exc)
 
 

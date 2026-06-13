@@ -19,14 +19,14 @@ def compute_metrics(df_split: dict) -> dict:
 
     Metrics computed
     ----------------
-    * ``return_pct``  — period return ``(last_close - first_close) / first_close * 100``.
-    * ``volatility``  — standard deviation of daily returns, expressed as a percentage.
-    * ``trend``       — ``"uptrend"`` / ``"downtrend"`` / ``"sideways"`` derived by
+    * ``return_pct``  -- period return ``(last_close - first_close) / first_close * 100``.
+    * ``volatility``  -- standard deviation of daily returns, expressed as a percentage.
+    * ``trend``       -- ``"uptrend"`` / ``"downtrend"`` / ``"sideways"`` derived by
                         comparing the mean of the last third of closes against the
                         first third (±1 % threshold).
-    * ``bar_count``   — number of OHLCV bars in the series.
-    * ``first_close`` — first closing price.
-    * ``last_close``  — last closing price.
+    * ``bar_count``   -- number of OHLCV bars in the series.
+    * ``first_close`` -- first closing price.
+    * ``last_close``  -- last closing price.
 
     Args:
         df_split: Dict with keys ``"index"``, ``"columns"``, ``"data"``

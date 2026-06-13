@@ -1,4 +1,4 @@
-"""backend.main_thread.executor — in-process graph dispatch for main thread.
+"""backend.main_thread.executor -- in-process graph dispatch for main thread.
 
 Replaces the standalone graph_runner process.  Each FastAPI (main thread)
 instance runs graph coroutines directly on uvicorn's asyncio event loop as
@@ -13,33 +13,33 @@ and released on completion.
 
 Fix summary implemented here
 -----------------------------
-Fix 1 – CAS steal: ``steal_lock`` is CAS-based; if it returns ``None``
+Fix 1 - CAS steal: ``steal_lock`` is CAS-based; if it returns ``None``
         (another instance already stole it), we route to the new owner.
-Fix 2 – Zombie abort on renewal failure: when lock renewal fails in the
+Fix 2 - Zombie abort on renewal failure: when lock renewal fails in the
         background renew loop the running graph task is cancelled immediately
         via ``task.cancel()``.  ``_run_graph`` catches the resulting
         ``asyncio.CancelledError``, exits silently (does NOT mark the thread
         as failed), and proceeds to Fix 3 zombie cleanup.
-Fix 3 – Zombie task cleanup: on zombie abort the ``finally`` block calls
+Fix 3 - Zombie task cleanup: on zombie abort the ``finally`` block calls
         ``cleanup_zombie_tasks`` to mark all tasks created by this run
         (identified by their fencing token) as ``'wrong'``, so orphaned rows
         do not remain ``'running'`` indefinitely.
-Fix 5 – Fencing token: the token returned by ``acquire_lock`` / ``steal_lock``
+Fix 5 - Fencing token: the token returned by ``acquire_lock`` / ``steal_lock``
         is stored in a ``ContextVar`` (``backend.main_thread.context``) so all
         lifecycle write calls within the graph automatically stamp their DB rows
         with the token.  DB guards reject zombie writes with a lower token.
 
 Routing logic (``dispatch_graph_run``)
 ---------------------------------------
-1. No lock exists → acquire it (returns fencing token) → dispatch.
-2. Lock is owned by **this** instance, task already running → idempotent no-op.
-3. Lock is owned by **this** instance, task not running → re-dispatch with
+1. No lock exists -> acquire it (returns fencing token) -> dispatch.
+2. Lock is owned by **this** instance, task already running -> idempotent no-op.
+3. Lock is owned by **this** instance, task not running -> re-dispatch with
    existing token (no new increment needed).
-4. Lock owned by **another** instance that is **alive** → raise
+4. Lock owned by **another** instance that is **alive** -> raise
    :exc:`ThreadRoutingError`; caller returns HTTP 503 so nginx can retry on the
    correct instance.
-5. Lock owned by **another** instance that is **dead** → CAS steal lock
-   (returns new fencing token) → dispatch; if CAS fails (stolen by a third
+5. Lock owned by **another** instance that is **dead** -> CAS steal lock
+   (returns new fencing token) -> dispatch; if CAS fails (stolen by a third
    instance), route to that new owner instead.
 """
 
@@ -75,7 +75,7 @@ async def _renew_lock_loop(
 ) -> None:
     """Background task: renew the thread lock until *stop_event* is set.
 
-    Fix 2 – If renewal fails (lock lost or expired), sets *lock_lost_event*
+    Fix 2 - If renewal fails (lock lost or expired), sets *lock_lost_event*
     and cancels the running graph task so the zombie run aborts promptly
     without proceeding to further node/task writes.
 
@@ -98,7 +98,7 @@ async def _renew_lock_loop(
                 break
             if not await renew_lock(thread_id):
                 logger.error(
-                    "[main_thread.executor] lock renewal failed thread_id=%s — "
+                    "[main_thread.executor] lock renewal failed thread_id=%s -- "
                     "ownership lost; aborting zombie graph run",
                     thread_id,
                 )
@@ -131,11 +131,11 @@ async def _run_graph(
     Fencing token is written to the ContextVar so all lifecycle DB writes
     within this coroutine (and any sub-coroutines) carry the token.
 
-    Fix 2 – ``asyncio.CancelledError`` caused by lock-loss is caught and
+    Fix 2 - ``asyncio.CancelledError`` caused by lock-loss is caught and
     handled silently; the thread is NOT marked failed so the new owner can
     complete it from the last LangGraph checkpoint.
 
-    Fix 3 – On zombie abort (lock_lost_event is set), ``cleanup_zombie_tasks``
+    Fix 3 - On zombie abort (lock_lost_event is set), ``cleanup_zombie_tasks``
     marks all tasks created during this run as ``'wrong'``.
 
     Args:
@@ -220,13 +220,13 @@ async def _run_graph(
         if lock_lost_event.is_set():
             logger.error(
                 "[main_thread.executor] [%s] thread_id=%s fencing_token=%d"
-                " — zombie run aborted; new owner will complete the thread",
+                " -- zombie run aborted; new owner will complete the thread",
                 MAIN_THREAD_LOCK_LOST, thread_id, fencing_token,
             )
             # Do NOT mark the thread as failed.  Fall through to finally for
             # zombie task cleanup and normal lock/cancel-flag cleanup.
             return
-        # Non-lock-loss cancellation (e.g. uvicorn shutdown) — re-raise.
+        # Non-lock-loss cancellation (e.g. uvicorn shutdown) -- re-raise.
         raise
 
     except Exception as exc:  # noqa: BLE001
@@ -273,7 +273,7 @@ async def _run_graph(
                 )
 
 
-import json  # noqa: E402 — imported after type-only top section
+import json  # noqa: E402 -- imported after type-only top section
 
 
 async def dispatch_graph_run(
@@ -286,13 +286,13 @@ async def dispatch_graph_run(
 
     Implements the full routing / ownership check with CAS steal (Fix 1):
 
-    1. No lock → acquire (returns fencing token) → dispatch.
-    2. Lock owned by this instance, task running → idempotent no-op.
-    3. Lock owned by this instance, task not running → re-dispatch with
+    1. No lock -> acquire (returns fencing token) -> dispatch.
+    2. Lock owned by this instance, task running -> idempotent no-op.
+    3. Lock owned by this instance, task not running -> re-dispatch with
        existing token.
-    4. Lock owned by live foreign instance → raise :exc:`ThreadRoutingError`.
-    5. Lock owned by dead foreign instance → CAS steal (returns new token)
-       → dispatch; if CAS fails (another instance stole it first), re-check
+    4. Lock owned by live foreign instance -> raise :exc:`ThreadRoutingError`.
+    5. Lock owned by dead foreign instance -> CAS steal (returns new token)
+       -> dispatch; if CAS fails (another instance stole it first), re-check
        the new owner and route accordingly.
 
     Args:
@@ -328,9 +328,9 @@ async def dispatch_graph_run(
         )
         if is_mine:
             if is_running(thread_id):
-                # Already running on this instance — idempotent.
+                # Already running on this instance -- idempotent.
                 return
-            # Lock is ours but task finished/crashed — re-dispatch with
+            # Lock is ours but task finished/crashed -- re-dispatch with
             # the token already in the lock (no new increment).
             fencing_token = existing_owner.get("token", 0)
         else:
@@ -342,14 +342,14 @@ async def dispatch_graph_run(
                     MAIN_THREAD_LOCK_CONFLICT, thread_id, existing_owner.get("port"),
                 )
                 raise ThreadRoutingError(existing_owner["port"])
-            # Owner is dead — CAS steal the lock.
+            # Owner is dead -- CAS steal the lock.
             logger.error(
                 "[main_thread.executor] %s thread_id=%s dead_port=%d",
                 MAIN_THREAD_LOCK_STOLEN, thread_id, existing_owner.get("port"),
             )
             token = await steal_lock(thread_id, existing_owner)
             if token is None:
-                # CAS failed — another instance beat us to the steal.
+                # CAS failed -- another instance beat us to the steal.
                 logger.error(
                     "[main_thread.executor] %s thread_id=%s",
                     MAIN_THREAD_STEAL_RACE, thread_id,
@@ -359,12 +359,12 @@ async def dispatch_graph_run(
                     alive = await check_owner_alive(new_owner)
                     if alive:
                         raise ThreadRoutingError(new_owner["port"])
-                    # New owner is also dead — retry steal once.
+                    # New owner is also dead -- retry steal once.
                     token = await steal_lock(thread_id, new_owner)
                     if token is None:
                         raise ThreadRoutingError(0)
                 else:
-                    # Lock vanished entirely — fall through to acquire below.
+                    # Lock vanished entirely -- fall through to acquire below.
                     token_from_acquire = await acquire_lock(thread_id)
                     if token_from_acquire is None:
                         raise ThreadRoutingError(0)
@@ -373,7 +373,7 @@ async def dispatch_graph_run(
             if token is not None:
                 fencing_token = token
     else:
-        # No lock — try to acquire.
+        # No lock -- try to acquire.
         token = await acquire_lock(thread_id)
         if token is None:
             # Race: another instance just acquired it.
@@ -382,11 +382,11 @@ async def dispatch_graph_run(
                 alive = await check_owner_alive(existing_owner)
                 if alive:
                     raise ThreadRoutingError(existing_owner["port"])
-                # Dead already — CAS steal.
+                # Dead already -- CAS steal.
                 token = await steal_lock(thread_id, existing_owner)
                 if token is None:
                     raise ThreadRoutingError(0)
-            # Lock vanished between NX-fail and GET (extremely rare) — proceed.
+            # Lock vanished between NX-fail and GET (extremely rare) -- proceed.
             fencing_token = token if token is not None else 0
         else:
             fencing_token = token

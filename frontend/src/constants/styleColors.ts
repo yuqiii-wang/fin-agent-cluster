@@ -67,8 +67,10 @@ export const COLOR_BRAND_BLUE_SUBTLE = '#1677ff33'; // Brand blue at low opacity
 export const COLOR_BORDER_INACTIVE   = '#333333';   // Inactive / forgotten entry border
 
 // ── Chart: volatility smile ───────────────────────────────────────────────
-export const COLOR_CHART_CALL_IV    = '#60a5fa'; // blue-400 – call IV line
-export const COLOR_CHART_PUT_IV     = '#fb923c'; // orange-400 – put IV line
+export const COLOR_CHART_CALL_IV    = '#60a5fa'; // blue-400 – call cost line (primary)
+export const COLOR_CHART_PUT_IV     = '#fb923c'; // orange-400 – put cost line (primary)
+export const COLOR_CHART_CALL_IV_SUBTLE = '#60a5fa60'; // muted blue – call implied volatility
+export const COLOR_CHART_PUT_IV_SUBTLE  = '#fb923c60'; // muted orange – put implied volatility
 export const COLOR_CHART_GRID       = '#2B2F38'; // chart grid lines
 export const COLOR_CHART_AXIS       = '#9B9EA4'; // axis labels / lines / text
 export const COLOR_CHART_BG         = '#1a1d23'; // chart background

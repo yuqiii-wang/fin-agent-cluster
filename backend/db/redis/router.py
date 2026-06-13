@@ -1,4 +1,4 @@
-"""backend.db.redis.router — Redis shard URL router.
+"""backend.db.redis.router -- Redis shard URL router.
 
 Provides :func:`get_redis_router` which returns a router capable of
 mapping a shard index to the corresponding Redis URL.  Used by the

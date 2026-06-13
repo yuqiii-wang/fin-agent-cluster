@@ -4,14 +4,14 @@ Provides news article and web-search models, and the DDGS-backed client.
 
 Sub-packages
 ------------
-errors  — news-specific error codes.
+errors  -- news-specific error codes.
 
 Exports
 -------
-NewsClient       — DDGS-backed async client.
-NewsArticle      — Pydantic model for a single article.
-NewsListResponse — Pydantic model for a paginated list.
-InfoResult       — Pydantic model for a web-search result.
+NewsClient       -- DDGS-backed async client.
+NewsArticle      -- Pydantic model for a single article.
+NewsListResponse -- Pydantic model for a paginated list.
+InfoResult       -- Pydantic model for a web-search result.
 """
 
 from __future__ import annotations

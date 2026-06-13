@@ -6,7 +6,7 @@ lookback window, and returns the full Pearson correlation matrix as a
 nested dict.
 
 Series with insufficient overlap (fewer than :data:`_MIN_BARS` aligned bars)
-result in an empty matrix — the caller decides whether to raise or skip.
+result in an empty matrix -- the caller decides whether to raise or skip.
 """
 
 from __future__ import annotations
@@ -29,14 +29,14 @@ def compute_pearson_matrix(
     *window_bars* rows before computing correlations.
 
     Args:
-        series_map:  Mapping of label → :class:`pandas.Series` with a common
+        series_map:  Mapping of label -> :class:`pandas.Series` with a common
                      DatetimeIndex.  Series that are empty are ignored;
                      fewer than 2 non-empty Series returns an empty result.
         window_bars: Maximum number of most-recent aligned bars to include.
 
     Returns:
         A tuple ``(matrix, bar_count)`` where *matrix* is a nested
-        ``{label → {label → pearson_r}}`` dict (values rounded to 6 d.p.)
+        ``{label -> {label -> pearson_r}}`` dict (values rounded to 6 d.p.)
         and *bar_count* is the number of aligned bars used.
         Returns ``({}, 0)`` when fewer than :data:`_MIN_BARS` aligned bars
         exist after inner-join and trimming.

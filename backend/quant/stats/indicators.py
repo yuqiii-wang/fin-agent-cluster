@@ -16,7 +16,7 @@ Trend / ADX     : ADX-14, +DI-14, -DI-14, Aroon Up/Down-14, Parabolic SAR
 Volume          : VWAP, OBV, Chaikin A/D Line
 
 Indicators that require more history than the DataFrame contains are silently
-left as ``NaN`` — callers should propagate these as ``None`` to the database.
+left as ``NaN`` -- callers should propagate these as ``None`` to the database.
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ def build_indicator_df(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         The same DataFrame with all indicator columns appended.
     """
-    import pandas_ta as ta  # noqa: F401 — registers the .ta accessor
+    import pandas_ta as ta  # noqa: F401 -- registers the .ta accessor
 
     # Moving averages
     df.ta.sma(20, append=True)

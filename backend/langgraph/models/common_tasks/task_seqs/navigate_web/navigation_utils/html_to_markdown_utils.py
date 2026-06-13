@@ -1,4 +1,4 @@
-"""html_to_markdown_utils — convert a raw HTML string to Markdown using markitdown.
+"""html_to_markdown_utils -- convert a raw HTML string to Markdown using markitdown.
 
 This module exposes a single async helper, :func:`transform_html_to_markdown`,
 used by the various ``navigate_web`` nodes that need to go from rendered HTML
@@ -31,7 +31,7 @@ _EXECUTOR = ThreadPoolExecutor(
 
 
 def _html_to_markdown_sync(raw_html: str) -> str:
-    """Synchronous markitdown conversion — runs inside a thread executor.
+    """Synchronous markitdown conversion -- runs inside a thread executor.
 
     Args:
         raw_html: Raw HTML document string (typically the full ``<html>...</html>``
@@ -44,7 +44,7 @@ def _html_to_markdown_sync(raw_html: str) -> str:
         RuntimeError: If ``markitdown`` is not installed or the conversion fails.
     """
     try:
-        from markitdown import MarkItDown, StreamInfo  # deferred import — optional dependency
+        from markitdown import MarkItDown, StreamInfo  # deferred import -- optional dependency
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise RuntimeError(
             f"[{WEB_TASK_CONVERT_ERROR}] markitdown is not installed; "

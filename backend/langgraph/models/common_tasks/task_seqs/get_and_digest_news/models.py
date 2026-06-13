@@ -33,12 +33,12 @@ class GetAndDigestNewsInput(BaseModel):
 
 
 class GetAndDigestNewsOutput(BaseModel):
-    """Combined output from the get_news → do_summary → do_emb → digest_news pipeline.
+    """Combined output from the get_news -> do_summary -> do_emb -> digest_news pipeline.
 
     Attributes:
         get_news:    Output from the ``get_news`` task (JSON view).
-        do_summary:  Output from the ``do_summary`` task (url_hash → SummaryRecord).
-        do_emb:      Output from the ``do_emb`` task (url_hash → embedding vector).
+        do_summary:  Output from the ``do_summary`` task (url_hash -> SummaryRecord).
+        do_emb:      Output from the ``do_emb`` task (url_hash -> embedding vector).
         digest_news: Output from the ``digest_news`` task (Markdown view + upserted IDs).
     """
 

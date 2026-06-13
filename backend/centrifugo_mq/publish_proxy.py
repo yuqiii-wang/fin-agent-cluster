@@ -1,4 +1,4 @@
-"""centrifugo.publish_proxy — Centrifugo publish-proxy ACK handler.
+"""centrifugo.publish_proxy -- Centrifugo publish-proxy ACK handler.
 
 Receives publish-proxy requests forwarded by Centrifugo when a frontend
 client calls ``sub.publish(data)`` on the ``thread:{thread_id}`` channel.

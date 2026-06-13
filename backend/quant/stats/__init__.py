@@ -1,13 +1,13 @@
-"""Quant stats — pandas-based OHLCV computation utilities.
+"""Quant stats -- pandas-based OHLCV computation utilities.
 
 Sub-modules
 -----------
-dataframe    — :func:`matrix_to_split` and :func:`split_to_dataframe` for
+dataframe    -- :func:`matrix_to_split` and :func:`split_to_dataframe` for
                converting between ``OhlcvStatsMatrix`` and the split-orient dict.
-metrics      — :func:`compute_metrics` for vectorised OHLCV metric computation.
-indicators   — :func:`build_ohlcv_dataframe`, :func:`build_indicator_df`, and
+metrics      -- :func:`compute_metrics` for vectorised OHLCV metric computation.
+indicators   -- :func:`build_ohlcv_dataframe`, :func:`build_indicator_df`, and
                :func:`safe_float` for ``pandas_ta``-based indicator computation.
-correlation  — :func:`compute_pearson_matrix` for Pearson correlation of
+correlation  -- :func:`compute_pearson_matrix` for Pearson correlation of
                aligned Series (close prices, SMAs, EMAs, etc.).
 
 Market data models and the HTTP client live in

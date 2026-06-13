@@ -1,12 +1,12 @@
-"""api.auth.router — FastAPI router for authentication and Centrifugo bootstrap.
+"""api.auth.router -- FastAPI router for authentication and Centrifugo bootstrap.
 
 Mounted at ``/auth`` under the parent API router.  Full paths:
 
-    POST /api/v1/auth/guest                             — create / validate a guest session
-    GET  /api/v1/auth/me/history                        — list this user's thread history
-    GET  /api/v1/auth/me/active                         — most recent non-completed thread
-    GET  /api/v1/auth/centrifugo/llm-token?thread_id=       — token-stream Centrifugo JWTs (centrifugo-llm-0/1)
-    GET  /api/v1/auth/centrifugo/sse-notification?thread_id=   — SSE lifecycle Centrifugo JWTs (centrifugo-sse)
+    POST /api/v1/auth/guest                             -- create / validate a guest session
+    GET  /api/v1/auth/me/history                        -- list this user's thread history
+    GET  /api/v1/auth/me/active                         -- most recent non-completed thread
+    GET  /api/v1/auth/centrifugo/llm-token?thread_id=       -- token-stream Centrifugo JWTs (centrifugo-llm-0/1)
+    GET  /api/v1/auth/centrifugo/sse-notification?thread_id=   -- SSE lifecycle Centrifugo JWTs (centrifugo-sse)
 """
 
 from __future__ import annotations

@@ -27,11 +27,11 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# Ticker-suffix → yfinance exchange code fallback
+# Ticker-suffix -> yfinance exchange code fallback
 # Used when yf_exchange is not available (e.g. fmp provider or mock).
 # ---------------------------------------------------------------------------
 _SUFFIX_TO_YF_EXCHANGE: dict[str, str] = {
-    "": "NMS",       # unsuffixed US tickers → NASDAQ (most common)
+    "": "NMS",       # unsuffixed US tickers -> NASDAQ (most common)
     ".US": "NMS",    # explicit US suffix
     ".HK": "HKG",    # Hong Kong
     ".SS": "SHH",    # Shanghai
@@ -176,7 +176,7 @@ async def warm_market_indexes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Lookup helpers (synchronous — read from cache)
+# Lookup helpers (synchronous -- read from cache)
 # ---------------------------------------------------------------------------
 
 def get_index_by_code(code: str) -> MarketIndex | None:

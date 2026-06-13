@@ -1,8 +1,8 @@
 """Unified raw-input cache SQL templates for the ``fin_markets`` schema.
 
-Covers ``fin_markets.input_raw`` — the single cache table that stores raw
+Covers ``fin_markets.input_raw`` -- the single cache table that stores raw
 external responses (news APIs, market-data/stats providers, fundamentals
-endpoints, web fetches, …) or directly-injected payloads.  Each row carries
+endpoints, web fetches, ...) or directly-injected payloads.  Each row carries
 its own ``cache_ttl_seconds`` so freshness is evaluated per-entry.
 
 All constants are raw SQL strings ready for use with psycopg3 ``%s``

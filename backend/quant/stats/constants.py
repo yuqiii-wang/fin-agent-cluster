@@ -21,7 +21,7 @@ class STATS_VIEW_TYPE(Enum):
 
 
 class FUTURES_OPTIONS_PERIODS(Enum):
-    NEXT = ('next', 3600 * 24 * 1)
+    NEXT = ('next', 0)
     ONE_WEEK = ('one week', 3600 * 24 * 7)
     ONE_MONTH = ('one month', 3600 * 24 * 30)
     ONE_QUARTER = ('one quarter', 3600 * 24 * 90)
