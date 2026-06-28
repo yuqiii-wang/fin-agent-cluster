@@ -26,9 +26,25 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "ollama"
 
     # ── Volcano Engine ARK / Doubao ──────────────────────────────────────────
+    # Default LLM conversation credentials.  The model value is either a public
+    # Doubao model ID (e.g. ``doubao-seed-2-0-mini-260428``) or a custom
+    # reasoning access point ID (``ep-xxxx``) you created in the console.
     ARK_API_KEY: Optional[str] = None
     ARK_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
     ARK_MODEL: str = "doubao-seed-2-0-mini-260215"
+
+    # ── Volcano Engine ARK / Doubao 联网搜索  (web search + AI summary) ──
+    # Dedicated credentials used by the ``web_search`` tool in
+    # ``backend/resources/web_knowledge/providers/ark``.  When ``ARK_SEARCH_API_KEY``
+    # is unset the provider falls back to ``ARK_API_KEY`` so you can keep a
+    # single key in simple deployments.  ``ARK_SEARCH_MODEL`` is the model /
+    # endpoint ID that supports the ``web_search`` tool (e.g. ``doubao-seed-1-6-250615``
+    # or any endpoint you created with the "联网内容插件" enabled).
+    ARK_SEARCH_API_KEY: Optional[str] = None
+    ARK_SEARCH_API_URL: Optional[str] = None
+    ARK_SEARCH_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
+    ARK_SEARCH_MODEL: str = "doubao-seed-1-6-250615"
+    ARK_SEARCH_TIMEOUT_SECONDS: int = 60
 
     # Max characters of page Markdown injected into the study_web_content LLM prompt.
     # Caps the request size so it stays within the model's max message tokens

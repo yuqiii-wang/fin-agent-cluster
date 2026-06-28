@@ -41,6 +41,11 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.cal
     CalculateOptionStatsOutput,
     calculate_option_stats_handler,
 )
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_futures_stats import (
+    CalculateFuturesStatsInput,
+    CalculateFuturesStatsOutput,
+    calculate_futures_stats_handler,
+)
 from backend.langgraph.models.models import TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
 from backend.quant.stats import STATS_DATA_TYPE, STATS_VIEW_TYPE
@@ -61,21 +66,21 @@ async def _handler(payload: dict) -> dict:
     Routes by ``pipeline`` from the payload:
     - ``'ohlcv'`` (default) -> :func:`calculate_ohlcv_stats_handler`.
     - ``'options'`` -> :func:`calculate_option_stats_handler`.
-    - ``'futures'`` -> :func:`calculate_ohlcv_stats_handler` (futures bars are
-      OHLCV-shaped; they are persisted via the same pandas_ta pipeline and the
-      dedicated futures stats table).
+    - ``'futures'`` -> :func:`calculate_futures_stats_handler` (reuses the
+      quant_stats OHLCV indicator pipeline internally; stamps output with
+      ``maturity_label`` / ``maturity_seconds`` / ``pipeline='futures'``).
     """
     pipeline = payload.get("pipeline", STATS_DATA_TYPE.OHLCV.value)
 
     if pipeline == STATS_DATA_TYPE.OHLCV.value:
-        inp = CalculateOhlcvStatsInput.model_validate(payload)
+        CalculateOhlcvStatsInput.model_validate(payload)
         return await calculate_ohlcv_stats_handler(payload)
     elif pipeline == STATS_DATA_TYPE.OPTIONS.value:
-        inp = CalculateOptionStatsInput.model_validate(payload)
+        CalculateOptionStatsInput.model_validate(payload)
         return await calculate_option_stats_handler(payload)
     elif pipeline == STATS_DATA_TYPE.FUTURES.value:
-        inp = CalculateOhlcvStatsInput.model_validate(payload)
-        return await calculate_ohlcv_stats_handler(payload)
+        CalculateFuturesStatsInput.model_validate(payload)
+        return await calculate_futures_stats_handler(payload)
     else:
         # For other pipeline types, return a zero-row stub
         return CalculateOhlcvStatsOutput(
@@ -127,6 +132,8 @@ async def _calculate_stats_task(
     pipeline = payload.get("pipeline", STATS_DATA_TYPE.OHLCV.value)
     if pipeline == STATS_DATA_TYPE.OPTIONS.value:
         output = CalculateOptionStatsOutput.model_validate(result)
+    elif pipeline == STATS_DATA_TYPE.FUTURES.value:
+        output = CalculateFuturesStatsOutput.model_validate(result)
     else:
         output = CalculateOhlcvStatsOutput.model_validate(result)
     return TaskOutput(ctx=ctx, content=output)

@@ -56,10 +56,9 @@ async def _calculate_option_stats_task(
 calculate_option_stats = NodeTask(
     name=_TASK_NAME,
     description=(
-        "Persist an options chain in two steps: upsert each call/put contract into "
-        "fin_markets.quant_options_stats, then aggregate per expiry into "
-        "fin_markets.quant_derivative_stats by estimating the underlying price where the "
-        "call and put breakevens meet at the ATM strike."
+        "Persist an options chain: upsert each call/put contract into "
+        "fin_markets.quant_options_stats. Per-expiry metrics (volatility smile, "
+        "put/call ratios) are computed in-memory and reported in the output."
     ),
     input_type=CalculateOptionStatsInput,
     output_type=CalculateOptionStatsOutput,

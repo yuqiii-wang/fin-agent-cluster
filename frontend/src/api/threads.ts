@@ -2,7 +2,7 @@
  * Threads API client — wraps all /api/v1/threads/* and /api/v1/auth/centrifugo/* calls.
  */
 
-import type { CentrifugoTokenResponse, GraphTopology, NodeInfo, NodeMeta, QueryResponse, TaskInfo, ThreadSummary, VersionGraphResponse, AgentCapabilities, Skill, NodeSkillsResponse } from '../types';
+import type { CentrifugoTokenResponse, GraphTopology, NodeInfo, NodeMeta, QueryResponse, TaskInfo, ThreadSummary, VersionGraphResponse } from '../types';
 import { getStoredToken } from './auth';
 
 /** API error that preserves the HTTP status code. */
@@ -102,12 +102,6 @@ export async function getGraphTopology(): Promise<GraphTopology> {
 export async function fetchNodeMetas(): Promise<NodeMeta[]> {
   const res = await fetch(`${BASE}/graph/node-metas`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Get node metas failed: ${res.status}`);
-  return res.json();
-}
-
-export async function fetchNodeSkills(): Promise<NodeSkillsResponse[]> {
-  const res = await fetch(`${BASE}/graph/node-skills`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`Get node skills failed: ${res.status}`);
   return res.json();
 }
 
@@ -298,47 +292,4 @@ export async function getVersionGraph(threadId: string, version: number): Promis
   });
   if (!res.ok) throw new Error(`Get version graph failed: ${res.status}`);
   return res.json();
-}
-
-// ── Agent capability endpoints ─────────────────────────────────────────────
-
-export async function getAgentCapabilities(threadId: string, nodeId: string): Promise<AgentCapabilities> {
-  const res = await fetch(`${BASE}/threads/${threadId}/nodes/${nodeId}/agent/capabilities`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error(`Get agent capabilities failed: ${res.status}`);
-  return res.json();
-}
-
-export async function addAgentSkill(
-  threadId: string,
-  nodeId: string,
-  summary: string,
-  instructions: string,
-): Promise<Skill> {
-  const res = await fetch(`${BASE}/threads/${threadId}/nodes/${nodeId}/agent/skills`, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ summary, instructions }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Add skill failed: ${res.status}`);
-  }
-  return res.json();
-}
-
-export async function forgetAgentSkill(
-  threadId: string,
-  nodeId: string,
-  skillId: string,
-): Promise<void> {
-  const res = await fetch(
-    `${BASE}/threads/${threadId}/nodes/${nodeId}/agent/skills/${skillId}/forget`,
-    { method: 'POST', headers: authHeaders() },
-  );
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Forget skill failed: ${res.status}`);
-  }
 }

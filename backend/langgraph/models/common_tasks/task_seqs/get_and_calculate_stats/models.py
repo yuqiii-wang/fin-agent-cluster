@@ -33,12 +33,12 @@ class GetAndCalculateStatsInput(BaseModel):
         maturity_horizon: Optional horizon for time-bounded products
                           (options, futures, bonds, repo, ...).  Controls how
                           far out to pull maturities.  Accepts a
-                          :class:`~backend.quant.stats.constants.FUTURES_OPTIONS_PERIODS`
+                          :class:`~backend.quant.stats.constants.OPTIONS_PERIODS`
                           member, one of its ``display_name`` strings
                           (``'next'``, ``'one week'``, ``'one month'``,
                           ``'one quarter'``, ``'half year'``, ``'one year'``),
                           or a raw number of seconds.  ``None`` →
-                          ``FUTURES_OPTIONS_PERIODS.ONE_YEAR``.
+                          ``OPTIONS_PERIODS.ONE_YEAR``.
         src_task_id:      Optional source task id for provenance.
     """
 
@@ -51,9 +51,9 @@ class GetAndCalculateStatsInput(BaseModel):
         default=None,
         description=(
             "Horizon for time-bounded products (options, futures, bonds, "
-            "repo, ...). Accepts a FUTURES_OPTIONS_PERIODS member, its "
+            "repo, ...). Accepts a OPTIONS_PERIODS member, its "
             "display_name string, or a raw number of seconds. None → "
-            "FUTURES_OPTIONS_PERIODS.ONE_YEAR."
+            "OPTIONS_PERIODS.ONE_YEAR."
         ),
     )
     src_task_id: str | None = Field(default=None, description="Source task id for provenance.")
@@ -61,6 +61,7 @@ class GetAndCalculateStatsInput(BaseModel):
 
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_ohlcv_stats import CalculateOhlcvStatsOutput
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_option_stats import CalculateOptionStatsOutput
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_futures_stats import CalculateFuturesStatsOutput
 
 class GetAndCalculateStatsOutput(BaseModel):
     """Combined output from the get_stats -> calculate_stats pipeline.
@@ -71,7 +72,7 @@ class GetAndCalculateStatsOutput(BaseModel):
     """
 
     get_stats: GetStatsOutput
-    calculate_stats: CalculateOhlcvStatsOutput | CalculateOptionStatsOutput
+    calculate_stats: CalculateOhlcvStatsOutput | CalculateOptionStatsOutput | CalculateFuturesStatsOutput
 
 
 __all__ = ["GetAndCalculateStatsInput", "GetAndCalculateStatsOutput", "CalculateStatsBaseOutput"]

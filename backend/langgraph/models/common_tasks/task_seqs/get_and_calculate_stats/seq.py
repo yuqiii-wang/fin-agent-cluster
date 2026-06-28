@@ -2,8 +2,8 @@
 
 get_stats -- fetch by requesting a stats provider (yfinance/FMP/mock) with
     provider- and period-fallback, or inject ``json_input`` / ``text_content``
-    handed down from a previous task.  Hard failure: if this step fails, the
-    whole pipeline fails and raises.
+    handed down from a previous task.
+    Hard failure: if this step fails, the whole pipeline fails and raises.
 calculate_stats -- dispatch by ``pipeline`` label to the appropriate handler:
     - ``'ohlcv'`` / ``'futures'`` -> calculate_ohlcv_stats (compute indicators,
       upsert quant_stats / quant_index_stats / quant_futures_stats)
@@ -51,18 +51,21 @@ async def _pipeline(
     Returns:
         Combined output from both tasks.
     """
-    # 1. get_stats -- hard failure (propagates).
+    # 1. get_stats -- hard failure (propagates).  We defer to whatever
+    #    the sequence input already supplied (json_input / text_content).
+    stats_inp = GetStatsInput(
+        symbol=seq_input.symbol,
+        period=seq_input.period,
+        text_content=seq_input.text_content,
+        json_input=seq_input.json_input,
+        maturity_horizon=seq_input.maturity_horizon,
+        pipeline=seq_input.pipeline,
+        src_task_id=seq_input.src_task_id,
+    )
     gs_result = await run_task_fn(
         get_stats,
         ctx,
-        GetStatsInput(
-            symbol=seq_input.symbol,
-            period=seq_input.period,
-            text_content=seq_input.text_content,
-            json_input=seq_input.json_input,
-            maturity_horizon=seq_input.maturity_horizon,
-            src_task_id=seq_input.src_task_id,
-        ),
+        stats_inp,
     )
     gs_output = gs_result.content
 
@@ -90,9 +93,9 @@ async def _pipeline(
 get_and_calculate_stats: TaskSeq[GetAndCalculateStatsInput, GetAndCalculateStatsOutput] = TaskSeq(
     name=_SEQ_NAME,
     description=(
-        "Sequential pipeline: resolve an OHLCV StatsRecord (get_stats -- provider "
-        "fetch with provider/period fallback, or json_input/text_content injection), "
-        "then compute technical indicators and upsert each bar into "
+        "Sequential pipeline: resolve an OHLCV StatsRecord (get_stats -- "
+        "provider fetch with provider/period fallback, or json_input/text_content "
+        "injection).  Then compute technical indicators and upsert each bar into "
         "fin_markets.quant_stats (calculate_stats)."
     ),
     tasks=[get_stats, calculate_stats],

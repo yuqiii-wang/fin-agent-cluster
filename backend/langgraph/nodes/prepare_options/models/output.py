@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from backend.langgraph.nodes.prepare_options.models.input import (
     MaturityRequest,
+    PrepareOptionsRequestItem,
 )
 
 __all__ = [
@@ -22,22 +23,36 @@ class OptionsStatResult(BaseModel):
     """Stats result for a single instrument / pipeline executed by prepare_options.
 
     Attributes:
-        pipeline:       Which pipeline produced this result -- ``'ohlcv'`` or ``'options'``.
+        pipeline:       Which pipeline produced this result -- ``'ohlcv'``,
+                        ``'options'``, or ``'futures'``.
         symbol:         Ticker this result covers.
-        maturity_label: For options pipelines, the maturity-window identifier
-                        (e.g. ``'one_week'``).  ``None`` for OHLCV.
+        maturity_label: For options / futures pipelines, the maturity-window
+                        identifier (e.g. ``'one_week'`` / ``'one_year'``).
+                        ``None`` for plain OHLCV.
+        maturity_seconds: Width of the maturity window in seconds; ``None``
+                          for plain OHLCV items.
         rows_upserted:  Number of rows written by the calculate step.
         from_cache:     Whether the raw stats were served from cache.
     """
 
-    pipeline: str = Field(description="Pipeline that produced this result: 'ohlcv' or 'options'.")
+    pipeline: str = Field(
+        description="Pipeline that produced this result: 'ohlcv', 'options', or 'futures'."
+    )
     symbol: str = Field(description="Ticker this result covers.")
     maturity_label: str | None = Field(
         default=None,
-        description="For options, the maturity-window identifier such as 'one_week'; None for OHLCV.",
+        description="Maturity-window identifier (e.g. 'one_year'); None for plain OHLCV items.",
     )
-    rows_upserted: int = Field(default=0, description="Rows written by the calculate step.")
-    from_cache: bool = Field(default=False, description="Whether raw stats were cache-served.")
+    maturity_seconds: int | None = Field(
+        default=None,
+        description="Width of the maturity window in seconds; None for plain OHLCV items.",
+    )
+    rows_upserted: int = Field(
+        default=0, description="Rows written by the calculate step."
+    )
+    from_cache: bool = Field(
+        default=False, description="Whether raw stats were cache-served."
+    )
 
 
 class PrepareOptionsOutput(BaseModel):
@@ -46,9 +61,11 @@ class PrepareOptionsOutput(BaseModel):
     Persisted to ``fin_agents.node_executions`` for downstream nodes / rendering.
 
     Attributes:
-        stock_symbol:  Equity ticker under analysis.
-        results:       Per-pipeline execution summaries.
-        df_splits:     Per-symbol OHLCV df_split payloads for StackCandleStick rendering.
+        stock_symbol: Equity ticker under analysis.
+        results:      Per-pipeline execution summaries.
+        df_splits:    Per-symbol OHLCV df_split payloads for StackCandleStick rendering.
+        requests:     Optional copy of the plan items that were actually
+                      executed, useful for rendering the node's own progress view.
     """
 
     stock_symbol: str = Field(default="", description="Equity ticker under analysis.")
@@ -60,87 +77,60 @@ class PrepareOptionsOutput(BaseModel):
         default_factory=list,
         description="Per-symbol OHLCV df_split payloads for StackCandleStick rendering.",
     )
-
-
-class PrepareOptionsRequestItem(BaseModel):
-    """A single ``get_and_calculate_stats`` request proposed by prepare_options_requests.
-
-    These items are **directly consumable** by
-    :class:`~backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.GetAndCalculateStatsInput`,
-    so the hosting node can fan them out without re-interpreting the plan.
-
-    Attributes:
-        symbol:           Ticker to fetch stats for (mirrors ``GetAndCalculateStatsInput.symbol``).
-        period:           Aggregation period (mirrors
-                          ``GetAndCalculateStatsInput.period``).
-        pipeline:         Target pipeline, e.g. ``'options'`` or ``'ohlcv'``.
-        maturity_horizon: Maturity horizon forwarded verbatim to ``get_and_calculate_stats``
-                          when ``pipeline='options'``.  ``None`` for plain OHLCV pipelines.
-        maturity_label:   Stable identifier for the maturity window (e.g. ``'one_week'``);
-                          used for provenance and downstream result grouping.
-        maturity_seconds: Width of the maturity window in seconds.
-    """
-
-    symbol: str = Field(description="Ticker to fetch stats for.")
-    period: str = Field(description="Aggregation period, e.g. '1y'.")
-    pipeline: str = Field(default="options", description="Target pipeline: 'options' or 'ohlcv'.")
-    maturity_horizon: Any = Field(
-        default=None,
+    requests: list[dict[str, Any]] = Field(
+        default_factory=list,
         description=(
-            "Maturity horizon forwarded to get_and_calculate_stats for the 'options' pipeline. "
-            "Stored as the raw seconds int so the provider can snap/interpret it directly."
+            "Copy of the plan items that were executed (explicit from the "
+            "caller, or synthesised from the catalogue). Used for rendering "
+            "and downstream audit."
         ),
-    )
-    maturity_label: str | None = Field(
-        default=None,
-        description="Stable identifier (e.g. 'one_week') for provenance / result grouping; None for plain OHLCV items.",
-    )
-    maturity_seconds: int | None = Field(
-        default=None,
-        description="Width of the maturity window in seconds; None for plain OHLCV items.",
     )
 
 
 class PrepareOptionsRequestsOutput(BaseModel):
     """Output from the ``prepare_options_requests`` task.
 
-    Describes which maturity windows the node should run a full
-    ``get_and_calculate_stats`` pipeline for.
+    Two production modes:
 
-    ``prepare_options_requests`` no longer accepts ``maturity_horizon`` in
-    its input -- it always emits the full catalogue of available windows
-    (ordered by ascending seconds).  The hosting node decides which ones to
-    actually run based on its own ``maturity_horizon``.
+    * ``explicit_requests=True``: the caller supplied ``requests`` verbatim.
+      ``requests`` is returned as-is (validated into
+      :class:`PrepareOptionsRequestItem` objects) and ``maturities`` is
+      synthesised from the explicit items.
+    * ``explicit_requests=False`` (legacy): the task built a plan from the
+      ``OPTIONS_PERIODS`` catalogue.
 
     Attributes:
-        maturities:     One entry per maturity window known to the system;
-                        ordered by ascending ``seconds`` so the node can
-                        dispatch short-dated pipelines first.
-        requests:       The same windows expressed as items ready to feed
-                        directly into ``get_and_calculate_stats`` -- each
-                        carries ``symbol``, ``period``, ``pipeline='options'``
-                        and a ``maturity_horizon`` equal to the window's
-                        ``seconds``.  The caller overrides ``period`` /
-                        ``symbol`` as needed before launching.
-        source_symbol:  Equity ticker this plan covers (provenance only).
+        maturities:         One entry per maturity window in the plan.
+        requests:           The same windows expressed as items ready to feed
+                             directly into ``get_and_calculate_stats``.
+        source_symbol:      Symbol this plan is keyed to (provenance).
+        explicit_requests:  ``True`` when ``requests`` was provided verbatim
+                             by the caller; ``False`` when the plan was
+                             synthesised from the catalogue.
     """
 
     maturities: list[MaturityRequest] = Field(
         default_factory=list,
         description=(
-            "One entry per maturity window known to the system; ordered by "
-            "ascending seconds so short-dated pipelines are dispatched first."
+            "One entry per maturity window in the plan; ordered by ascending "
+            "seconds so short-dated pipelines are dispatched first."
         ),
     )
     requests: list[PrepareOptionsRequestItem] = Field(
         default_factory=list,
         description=(
-            "The same maturity windows expressed as items ready to feed "
-            "directly into get_and_calculate_stats. Each carries pipeline='options' "
-            "and maturity_horizon equal to the window seconds."
+            "Plan items ready to feed directly into get_and_calculate_stats. "
+            "Each carries pipeline, period, symbol, and maturity_horizon."
         ),
     )
     source_symbol: str = Field(
         default="",
-        description="Equity ticker this plan covers (provenance only).",
+        description="Symbol this plan is keyed to (provenance only).",
+    )
+    explicit_requests: bool = Field(
+        default=False,
+        description=(
+            "True when requests was provided verbatim by the caller; "
+            "False when the plan was synthesised from the catalogue."
+        ),
     )

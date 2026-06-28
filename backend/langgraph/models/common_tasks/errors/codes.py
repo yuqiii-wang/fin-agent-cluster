@@ -39,7 +39,7 @@ DERIV_TASK_ERRORS: dict[str, str] = {
     DERIV_TASK_FUTURES_FETCH_ERROR: "Failed to fetch futures contract OHLCV; result skipped.",
     DERIV_TASK_NO_OPTIONS: "No options data returned for the symbol after processing all expiry dates.",
     DERIV_TASK_CONTRACT_PARSE_WARN: "OSI contract_name could not be parsed; contract row skipped.",
-    DERIV_TASK_CALC_ERROR: "Failed to persist options stats to quant_options_stats / quant_derivative_stats.",
+    DERIV_TASK_CALC_ERROR: "Failed to persist options stats to quant_options_stats.",
     DERIV_TASK_NO_CROSS: "No strike is shared by both calls and puts for an expiry; aggregate row skipped.",
 }
 

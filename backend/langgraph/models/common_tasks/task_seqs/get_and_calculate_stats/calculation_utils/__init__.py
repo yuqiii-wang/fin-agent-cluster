@@ -1,5 +1,7 @@
 """calculation_utils -- instrument-specific calculation handlers for get_and_calculate_stats."""
 
+from __future__ import annotations
+
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_fundamental_stats import (
     FundamentalsDataItem,
     CalculateFundamentalStatsInput,
@@ -18,6 +20,11 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.cal
     calculate_ohlcv_stats_handler,
     PERIOD_TO_GRANULARITY,
 )
+from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.calculation_utils.calculate_futures_stats import (
+    CalculateFuturesStatsInput,
+    CalculateFuturesStatsOutput,
+    calculate_futures_stats_handler,
+)
 
 HANDLERS: dict = {**_OPT_HANDLERS}
 
@@ -33,6 +40,9 @@ __all__ = [
     "CalculateOhlcvStatsOutput",
     "calculate_ohlcv_stats_handler",
     "PERIOD_TO_GRANULARITY",
+    "CalculateFuturesStatsInput",
+    "CalculateFuturesStatsOutput",
+    "calculate_futures_stats_handler",
     "HANDLERS",
 ]
 

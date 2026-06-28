@@ -15,4 +15,4 @@ class AnalyzeEconomicsInput(BaseModel):
                 for all economics instruments.
     """
 
-    period: str = Field(default="2y", description="Stats aggregation period, e.g. '2y'.")
+    period: str = Field(default="1y", description="Stats aggregation period, e.g. '1y'.")

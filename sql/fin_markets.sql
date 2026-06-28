@@ -146,42 +146,6 @@ CREATE INDEX IF NOT EXISTS fin_markets_quant_options_stats_created_at_idx
     ON fin_markets.quant_options_stats (symbol, source, created_at DESC);
 
 
--- quant_derivative_stats: aggregated per-expiry derivative snapshot.
---   options → one row per (symbol, source, expiry_date); contract_name is NULL.
---            estimated_price is the underlying price where the call breakeven
---            (strike + call cost) and the put breakeven (strike - put cost) meet,
---            taken at the ATM strike (smallest call+put straddle cost).  cross_strike
---            records that ATM strike.  Written by step 2 of calculate_option_stats.
---   futures → one row per dated contract; contract_name is the contract ticker
---            (e.g. 'ESM25') and estimated_price is the traded price.
-CREATE TABLE IF NOT EXISTS fin_markets.quant_derivative_stats (
-    id              BIGSERIAL PRIMARY KEY,
-    symbol          TEXT          NOT NULL,                    -- underlying ticker, e.g. 'AAPL', 'ES'
-    derivative_type TEXT          NOT NULL
-                        CHECK (derivative_type IN ('futures', 'options')),
-    source          TEXT          NOT NULL,                    -- 'web_content', 'yfinance', 'alpha_vantage'
-    contract_name   TEXT,                                      -- futures: dated contract ticker; options: NULL (aggregate per expiry)
-    expiry_date     TIMESTAMPTZ   NOT NULL,                    -- contract maturity datetime (UTC)
-    estimated_price NUMERIC(20,8),                             -- options: underlying price where call/put breakevens cross
-                                                               -- futures: traded price of the contract
-    cross_strike    NUMERIC(20,8),                             -- options: ATM strike at which calls/puts cross
-    created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
-);
-
--- Unique key covers both row kinds via COALESCE on the nullable contract_name:
---   options:  one row per (derivative_type, symbol, source, expiry_date, '')
---   futures:  one row per (derivative_type, symbol, source, expiry_date, contract_name)
-CREATE UNIQUE INDEX IF NOT EXISTS quant_derivative_stats_uniq
-    ON fin_markets.quant_derivative_stats (
-        derivative_type, symbol, source, expiry_date,
-        COALESCE(contract_name, '')
-    );
-CREATE INDEX IF NOT EXISTS fin_markets_quant_derivative_stats_lookup_idx
-    ON fin_markets.quant_derivative_stats (symbol, derivative_type, created_at DESC);
-CREATE INDEX IF NOT EXISTS fin_markets_quant_derivative_stats_expiry_idx
-    ON fin_markets.quant_derivative_stats (symbol, derivative_type, expiry_date DESC);
-
-
 -- news_stats: one row per normalised news article with AI-generated enrichment fields
 -- deduped by url (or cache_key when url is absent); upsert on (source, url_hash)
 CREATE TABLE IF NOT EXISTS fin_markets.news_stats (
@@ -223,13 +187,13 @@ CREATE INDEX IF NOT EXISTS fin_markets_news_stats_embedding_hnsw_idx
     WITH (m = 16, ef_construction = 64)
     WHERE summary_embedding IS NOT NULL;
 
-
+ 
 -- quant_static_stats: slow-changing fundamental and catalyst data per security
 -- unique key spans both types via COALESCE expression index
 CREATE TABLE IF NOT EXISTS fin_markets.quant_static_stats (
     id              BIGSERIAL PRIMARY KEY,
     symbol          TEXT          NOT NULL,
-    fin_report_date    TIMESTAMPTZ,                                -- financial report date
+    fin_report_date    TIMESTAMPTZ NOT NULL,                                -- financial report date
 
     revenue         NUMERIC(20,2),
     revenue_yoy     NUMERIC(8,4),                              -- YoY growth (%) — sourced from provider
@@ -269,12 +233,12 @@ CREATE TABLE IF NOT EXISTS fin_markets.quant_static_stats (
     ev_ebitda       NUMERIC(10,4),
     market_cap      NUMERIC(24,2),
     -- Dividend
-    dividend_per_share   NUMERIC(10,4),                        -- declared dividend amount per share
+    dividend_per_share   NUMERIC(10,4) NOT NULL,                        -- declared dividend amount per share
     dividend_stability NUMERIC(4,2),                           -- dividend stability (%)
     dividend_record_date TIMESTAMPTZ,                           -- date of the dividend record
     dividend_payment_date TIMESTAMPTZ,                           -- date of the dividend payment
 
-    fin_report_date_news_stats_id   BIGINT        REFERENCES fin_markets.news_stats(id) ON DELETE SET NULL,
+    fin_report_news_stats_id   BIGINT        REFERENCES fin_markets.news_stats(id) ON DELETE SET NULL,
     -- Index memberships (flattened from exchange lookup; primary + up to 3 others)
     primary_index_name      TEXT,                              -- primary index code, e.g. 'SP500', 'NASDAQ_100'
     primary_index_weight    NUMERIC(8,4),                      -- stock weight (%) in primary index; NULL if unavailable
@@ -297,8 +261,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS quant_static_stats_symbol_fin_report_date_uniq
     ON fin_markets.quant_static_stats (symbol, fin_report_date)
     WHERE fin_report_date IS NOT NULL;
 CREATE INDEX IF NOT EXISTS fin_markets_quant_static_stats_fin_report_date_news_idx
-    ON fin_markets.quant_static_stats (fin_report_date_news_stats_id)
-    WHERE fin_report_date_news_stats_id IS NOT NULL;
+    ON fin_markets.quant_static_stats (fin_report_news_stats_id)
+    WHERE fin_report_news_stats_id IS NOT NULL;
 
 
 

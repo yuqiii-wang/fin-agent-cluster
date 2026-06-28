@@ -11,10 +11,14 @@ class PrepareFundamentalsInput(BaseModel):
     """Typed input for ``prepare_fundamentals``.
 
     Attributes:
-        stock_symbol: Ticker of the stock under analysis (from query_node output).
+        stock_symbol: Equity ticker resolved from ``query_node`` output.
+        endpoint_types: Fundamental endpoint labels to fetch
+                        (e.g. ``income_statement`` / ``balance_sheet`` /
+                        ``cash_flow`` / ``key_metrics``).
     """
 
-    stock_symbol: str = Field(
-        default="",
-        description="Ticker of the stock under analysis; resolved from query_node output.",
+    stock_symbol: str = Field(default="", description="Equity ticker, e.g. 'AAPL'.")
+    endpoint_types: list[str] = Field(
+        default_factory=list,
+        description="Fundamental endpoint labels to fetch.",
     )

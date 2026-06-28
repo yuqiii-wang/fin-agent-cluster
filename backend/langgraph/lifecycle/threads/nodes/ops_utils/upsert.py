@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -19,6 +20,15 @@ from backend.langgraph.lifecycle.threads.nodes.sql import (
 from backend.langgraph.lifecycle.threads.nodes.sse import emit_node_sse
 
 logger = logging.getLogger(__name__)
+
+_DEADLOCK_MAX_RETRIES = 3
+_DEADLOCK_BASE_DELAY = 0.05  # 50ms base, doubles each retry
+
+
+def _is_deadlock(exc: Exception) -> bool:
+    """Return True when *exc* is a PostgreSQL deadlock-detected error."""
+    exc_msg = str(exc).lower()
+    return "deadlock detected" in exc_msg or "40p01" in exc_msg
 
 
 async def _sync_parallel_snapshots(
@@ -44,6 +54,12 @@ async def _sync_parallel_snapshots(
        the currently stored node_id for that branch started earlier than this
        node (guards against sequential ordering: a2 must not be replaced by a1).
 
+    Both steps are best-effort: on deadlock (which can occur when multiple
+    parallel nodes start concurrently and each tries to update sibling rows),
+    the operation is retried with exponential backoff.  If retries are
+    exhausted the error is logged as a warning and the node proceeds —
+    snapshots will eventually converge as other sibling nodes sync.
+
     Args:
         thread_id:       LangGraph thread UUID.
         node_id:         The node that just started (result of ``_UPSERT_NODE``).
@@ -51,31 +67,46 @@ async def _sync_parallel_snapshots(
         parallel_branch: This node's branch identity within the group.
         parent_node_id:  Parent subgraph node ID (``None`` for top-level nodes).
     """
-    try:
-        async with raw_conn() as conn:
-            await conn.execute(
-                _REFRESH_OWN_PARALLEL_SNAPSHOT,
-                (thread_id, parallel_group, parent_node_id, parallel_branch, node_id),
-            )
-    except Exception as exc:
-        logger.error(
-            "[%s] _sync_parallel_snapshots refresh_own error node_id=%s: %s",
-            LIFECYCLE_DB_ERROR, node_id, exc,
-        )
-        raise
 
-    try:
-        async with raw_conn() as conn:
-            await conn.execute(
-                _PROPAGATE_TO_PARALLEL_SIBLINGS,
-                (parallel_branch, node_id, node_id, parallel_branch, parallel_branch, parallel_branch),
-            )
-    except Exception as exc:
-        logger.error(
-            "[%s] _sync_parallel_snapshots propagate error node_id=%s: %s",
-            LIFECYCLE_DB_ERROR, node_id, exc,
-        )
-        raise
+    async def _run_with_retry(label: str, sql: str, params: tuple) -> None:
+        for attempt in range(_DEADLOCK_MAX_RETRIES):
+            try:
+                async with raw_conn() as conn:
+                    await conn.execute(sql, params)
+                return
+            except Exception as exc:
+                if _is_deadlock(exc) and attempt < _DEADLOCK_MAX_RETRIES - 1:
+                    delay = _DEADLOCK_BASE_DELAY * (2 ** attempt)
+                    logger.warning(
+                        "[lifecycle] _sync_parallel_snapshots %s deadlock retry "
+                        "%d/%d node_id=%s delay=%.3fs",
+                        label, attempt + 1, _DEADLOCK_MAX_RETRIES, node_id, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                if _is_deadlock(exc):
+                    logger.warning(
+                        "[%s] _sync_parallel_snapshots %s deadlock exhausted "
+                        "retries node_id=%s — snapshots will converge lazily",
+                        LIFECYCLE_DB_ERROR, label, node_id,
+                    )
+                    return  # non-fatal: best-effort sync
+                logger.error(
+                    "[%s] _sync_parallel_snapshots %s error node_id=%s: %s",
+                    LIFECYCLE_DB_ERROR, label, node_id, exc,
+                )
+                raise
+
+    await _run_with_retry(
+        "refresh_own",
+        _REFRESH_OWN_PARALLEL_SNAPSHOT,
+        (thread_id, parallel_group, parent_node_id, parallel_branch, node_id),
+    )
+    await _run_with_retry(
+        "propagate",
+        _PROPAGATE_TO_PARALLEL_SIBLINGS,
+        (parallel_branch, node_id, node_id, parallel_branch, parallel_branch, parallel_branch),
+    )
 
 
 async def upsert_node(
@@ -149,6 +180,11 @@ async def upsert_node(
     t0 = time.monotonic()
     try:
         async with raw_conn() as conn:
+            logger.info(
+                "[lifecycle:upsert_node] upserting node node_id=%s thread_id=%s "
+                "node_name=%s node_type=%s version=%s",
+                node_id, thread_id, node_name, node_type, version,
+            )
             await conn.execute(
                 _UPSERT_NODE,
                 (

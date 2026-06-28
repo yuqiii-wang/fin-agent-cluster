@@ -67,14 +67,14 @@ from backend.langgraph.nodes.prepare_options.tasks.prepare_options_requests impo
     prepare_options_requests,
 )
 from backend.langgraph.state import GraphState
-from backend.quant.stats.constants import FUTURES_OPTIONS_PERIODS
+from backend.quant.stats.constants import OPTIONS_PERIODS
 
 logger = logging.getLogger(__name__)
 
 _OHLCV_PERIOD: str = "1y"
 _OPTIONS_PERIOD: str = "1y"
-_DEFAULT_OPTIONS_HORIZON: FUTURES_OPTIONS_PERIODS = (
-    FUTURES_OPTIONS_PERIODS.ONE_YEAR
+_DEFAULT_OPTIONS_HORIZON: OPTIONS_PERIODS = (
+    OPTIONS_PERIODS.ONE_YEAR
 )
 
 
@@ -83,7 +83,7 @@ def _coerce_horizon_seconds(value: object) -> int:
 
     Accepts:
       * ``None`` → ``ONE_YEAR.seconds``.
-      * A ``FUTURES_OPTIONS_PERIODS`` member.
+      * A ``OPTIONS_PERIODS`` member.
       * A string matching ``display_name`` or ``name``.
       * A raw int / float seconds (snapped to the enum member with the
         largest ``seconds`` still <= the value).
@@ -95,13 +95,13 @@ def _coerce_horizon_seconds(value: object) -> int:
 
     if value is None:
         return int(_DEFAULT_OPTIONS_HORIZON.seconds)
-    if isinstance(value, FUTURES_OPTIONS_PERIODS):
+    if isinstance(value, OPTIONS_PERIODS):
         return int(value.seconds)
     if isinstance(value, str):
         key = value.strip().lower().replace("_", " ")
         if not key:
             return int(_DEFAULT_OPTIONS_HORIZON.seconds)
-        for member in FUTURES_OPTIONS_PERIODS:
+        for member in OPTIONS_PERIODS:
             if member.display_name.lower() == key or member.name.lower() == key:
                 return int(member.seconds)
         try:
@@ -109,7 +109,7 @@ def _coerce_horizon_seconds(value: object) -> int:
         except ValueError as exc:
             raise ValueError(
                 f"maturity_horizon string {value!r} is not a recognised "
-                f"FUTURES_OPTIONS_PERIODS label."
+                f"OPTIONS_PERIODS label."
             ) from exc
         return _snap_seconds(seconds)
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -130,7 +130,7 @@ def _snap_seconds(seconds: int) -> int:
 
     if seconds < 0:
         raise ValueError(f"maturity_horizon seconds must be >= 0, got {seconds}")
-    ordered = sorted(FUTURES_OPTIONS_PERIODS, key=lambda m: m.seconds)
+    ordered = sorted(OPTIONS_PERIODS, key=lambda m: m.seconds)
     chosen = ordered[0]
     for member in ordered:
         if member.seconds <= seconds:
@@ -167,7 +167,7 @@ class PrepareOptionsNode(BaseNode[PrepareOptionsInput, PrepareOptionsOutput]):
         Returns:
             :class:`PrepareOptionsInput` with the resolved symbol and default
             stats periods.  ``maturity_horizon`` is set to
-            ``FUTURES_OPTIONS_PERIODS.ONE_YEAR`` by default.  This is the
+            ``OPTIONS_PERIODS.ONE_YEAR`` by default.  This is the
             single place the horizon lives -- it is intentionally NOT forwarded
             to ``prepare_options_requests``; this node filters the returned
             plan instead.

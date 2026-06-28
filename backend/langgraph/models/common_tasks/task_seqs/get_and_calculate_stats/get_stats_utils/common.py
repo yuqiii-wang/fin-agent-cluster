@@ -38,7 +38,7 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.get
     GetStatsOutput,
 )
 from backend.quant.stats import STATS_DATA_TYPE
-from backend.quant.stats.constants import FUTURES_OPTIONS_PERIODS
+from backend.quant.stats.constants import OPTIONS_PERIODS
 from backend.resources.stats.models import StatsRecord
 from backend.resources.stats.routing import provider_for_symbol
 
@@ -74,10 +74,10 @@ _HORIZON_LABELS: dict[str, str] = {
 def _horizon_label_and_seconds(value: object) -> tuple[str, int]:
     """Translate ``maturity_horizon`` inputs into a ``(label, seconds)`` pair.
 
-    ``None`` → ``FUTURES_OPTIONS_PERIODS.ONE_YEAR``.
+    ``None`` → ``OPTIONS_PERIODS.ONE_YEAR``.
     """
 
-    if isinstance(value, FUTURES_OPTIONS_PERIODS):
+    if isinstance(value, OPTIONS_PERIODS):
         return (
             _HORIZON_LABELS.get(
                 value.name.lower(), f"{int(value.seconds)}s"
@@ -86,15 +86,15 @@ def _horizon_label_and_seconds(value: object) -> tuple[str, int]:
         )
 
     if value is None:
-        member = FUTURES_OPTIONS_PERIODS.ONE_YEAR
+        member = OPTIONS_PERIODS.ONE_YEAR
         return _HORIZON_LABELS[member.name.lower()], int(member.seconds)
 
     if isinstance(value, str):
         key = value.strip().lower().replace("_", " ")
         if not key:
-            member = FUTURES_OPTIONS_PERIODS.ONE_YEAR
+            member = OPTIONS_PERIODS.ONE_YEAR
             return _HORIZON_LABELS[member.name.lower()], int(member.seconds)
-        for member in FUTURES_OPTIONS_PERIODS:
+        for member in OPTIONS_PERIODS:
             if member.display_name.lower() == key or member.name.lower() == key:
                 return (
                     _HORIZON_LABELS.get(
@@ -108,7 +108,7 @@ def _horizon_label_and_seconds(value: object) -> tuple[str, int]:
         except ValueError as exc:
             raise ValueError(
                 f"maturity_horizon string {value!r} is not a recognised "
-                f"FUTURES_OPTIONS_PERIODS label."
+                f"OPTIONS_PERIODS label."
             ) from exc
         if seconds < 0:
             raise ValueError(f"maturity_horizon seconds must be >= 0, got {value}")
@@ -136,7 +136,7 @@ def _horizon_label_and_seconds(value: object) -> tuple[str, int]:
 
 def _snap_seconds_to_label(seconds: int) -> tuple[str, int]:
     """Pick the enum member with the largest ``seconds`` still <= ``seconds``."""
-    ordered = sorted(FUTURES_OPTIONS_PERIODS, key=lambda m: m.seconds)
+    ordered = sorted(OPTIONS_PERIODS, key=lambda m: m.seconds)
     chosen_label = f"{seconds}s"
     chosen_seconds = seconds
     for member in ordered:
@@ -151,16 +151,34 @@ def _snap_seconds_to_label(seconds: int) -> tuple[str, int]:
 
 
 # Provider fallback chains: when the primary provider yields no data, try the
-# next provider in the chain.
+# next provider in the chain.  Used as the default matrix when
+# ``symbol_config.provider_preference_for_symbol`` does not return a
+# product-specific ordered preference list.
 _PROVIDER_FALLBACK_CHAINS: dict[str, list[str]] = {
     "fmp":      ["fmp", "yfinance"],
     "yfinance": ["yfinance", "fmp"],
-    "mock":     ["mock"],
+    "mock":     ["mock", "yfinance"],
+    "akshare":  ["yfinance", "fmp"],
 }
 
 
 def _build_provider_chain(symbol: str) -> list[str]:
     """Return the ordered provider list for stats fetching.
+
+    Provider priority (highest → lowest):
+      1. Per-symbol provider preferences from
+         :func:`backend.resources.stats.symbol_config.provider_preference_for_symbol`
+         (product-aware: futures / crypto spot / macro FX-yields / index tickers
+         all carry explicit, ordered provider lists so they never accidentally
+         hit a provider with zero coverage for that asset class).
+      2. Fallback to :func:`provider_for_symbol` (index-driven cache lookup keyed
+         off ticker suffix → yf_exchange → market_indexes.stats_provider).
+      3. Final fallback: ``Settings.STATS_PROVIDER`` or ``mock``, resolved via
+         the static ``_PROVIDER_FALLBACK_CHAINS`` matrix.
+
+    ``"fmp"`` is unconditionally stripped when ``Settings.FMP_API_KEY`` is not
+    set, so providers that only exist on FMP fall through cleanly to the next
+    candidate.
 
     Args:
         symbol: Normalised (uppercase) ticker symbol.
@@ -168,10 +186,30 @@ def _build_provider_chain(symbol: str) -> list[str]:
     Returns:
         Non-empty list of provider labels in priority order.
     """
+
+    from backend.resources.stats.symbol_config import (
+        provider_preference_for_symbol as _sym_provider_prefs,
+    )
+
     settings = get_settings()
+    fmp_key_ok = bool(settings.FMP_API_KEY)
+
+    per_symbol_chain = _sym_provider_prefs(symbol)
+    if per_symbol_chain:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for p in per_symbol_chain:
+            if p == "fmp" and not fmp_key_ok:
+                continue
+            if p not in seen:
+                seen.add(p)
+                ordered.append(p)
+        if ordered:
+            return ordered
+
     primary = provider_for_symbol(symbol) or (settings.STATS_PROVIDER or "mock").strip().lower()
-    chain = _PROVIDER_FALLBACK_CHAINS.get(primary, [primary])
-    if not settings.FMP_API_KEY:
+    chain = list(_PROVIDER_FALLBACK_CHAINS.get(primary, [primary]))
+    if not fmp_key_ok:
         chain = [p for p in chain if p != "fmp"]
     return chain or ["mock"]
 

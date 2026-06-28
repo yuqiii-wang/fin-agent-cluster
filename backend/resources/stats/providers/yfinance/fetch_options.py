@@ -16,8 +16,8 @@ options-chain use-case is implemented here today.
 
 Accepted values:
 
-* A :class:`~backend.quant.stats.constants.FUTURES_OPTIONS_PERIODS` enum
-  member (preferred).  Defaults to ``FUTURES_OPTIONS_PERIODS.ONE_YEAR``.
+* A :class:`~backend.quant.stats.constants.OPTIONS_PERIODS` enum
+  member (preferred).  Defaults to ``OPTIONS_PERIODS.ONE_YEAR``.
 * One of its ``display_name`` strings: ``'next'``, ``'one week'``,
   ``'one month'``, ``'one quarter'``, ``'half year'``, ``'one year'``.
 * A plain ``int`` / ``float`` number of seconds.
@@ -65,7 +65,7 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
-from backend.quant.stats.constants import FUTURES_OPTIONS_PERIODS
+from backend.quant.stats.constants import OPTIONS_PERIODS
 from backend.resources.stats.models import StatsRecord
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ _COLUMN_MAP: dict[str, str] = {
 
 async def fetch_options(
     symbol: str,
-    maturity_horizon: FUTURES_OPTIONS_PERIODS | str | int | float | None = None,
+    maturity_horizon: OPTIONS_PERIODS | str | int | float | None = None,
 ) -> StatsRecord:
     """Download the option chain for ``symbol`` within the given horizon.
 
@@ -102,11 +102,11 @@ async def fetch_options(
         maturity_horizon:     How far out to pull maturities.  The type is kept
                              generic so it can be reused for other
                              time-bounded products (options, futures, bonds,
-                             repo, ...).  Accepts a :class:`FUTURES_OPTIONS_PERIODS`
+                             repo, ...).  Accepts a :class:`OPTIONS_PERIODS`
                              member, one of its ``display_name``
                              strings, or a raw number of seconds.
                              ``None`` (default) maps to
-                             ``FUTURES_OPTIONS_PERIODS.ONE_YEAR``.
+                             ``OPTIONS_PERIODS.ONE_YEAR``.
 
     Returns:
         :class:`~backend.resources.stats.models.StatsRecord` with
@@ -164,7 +164,7 @@ async def fetch_options(
 
 
 # Helpers for recording the horizon in a friendly id string.
-# Mapping from FUTURES_OPTIONS_PERIODS member name (lowercased) to the
+# Mapping from OPTIONS_PERIODS member name (lowercased) to the
 # short suffix used in StatsRecord.id / cache key.
 _HORIZON_LABELS: dict[str, str] = {
     "next": "next",
@@ -177,30 +177,30 @@ _HORIZON_LABELS: dict[str, str] = {
 
 
 def _horizon_label_and_seconds(
-    value: FUTURES_OPTIONS_PERIODS | str | int | float | None,
+    value: OPTIONS_PERIODS | str | int | float | None,
 ) -> tuple[str, int]:
     """Return a ``(label, seconds)`` pair for the given horizon input.
 
-    ``None`` maps to ``FUTURES_OPTIONS_PERIODS.ONE_YEAR``. Values that do not
+    ``None`` maps to ``OPTIONS_PERIODS.ONE_YEAR``. Values that do not
     match an enum member exactly are snapped to the member with the largest
     ``seconds`` that is still <= ``value``; if no member matches at all the
     raw seconds value is used for the label (``"{seconds}s"``).
     """
 
-    if isinstance(value, FUTURES_OPTIONS_PERIODS):
+    if isinstance(value, OPTIONS_PERIODS):
         return _HORIZON_LABELS.get(value.name.lower(), f"{int(value.seconds)}s"), int(value.seconds)
 
     if value is None:
-        member = FUTURES_OPTIONS_PERIODS.ONE_YEAR
+        member = OPTIONS_PERIODS.ONE_YEAR
         return _HORIZON_LABELS[member.name.lower()], int(member.seconds)
 
     if isinstance(value, str):
         key = value.strip().lower().replace("_", " ")
         if not key:
-            member = FUTURES_OPTIONS_PERIODS.ONE_YEAR
+            member = OPTIONS_PERIODS.ONE_YEAR
             return _HORIZON_LABELS[member.name.lower()], int(member.seconds)
         # Try by display name and then by enum name
-        for member in FUTURES_OPTIONS_PERIODS:
+        for member in OPTIONS_PERIODS:
             if member.display_name.lower() == key or member.name.lower() == key:
                 return _HORIZON_LABELS[member.name.lower()], int(member.seconds)
         # Try to parse as seconds int
@@ -209,7 +209,7 @@ def _horizon_label_and_seconds(
         except ValueError as exc:
             raise ValueError(
                 f"maturity_horizon string {value!r} is not a recognised "
-                f"FUTURES_OPTIONS_PERIODS label."
+                f"OPTIONS_PERIODS label."
             ) from exc
         if seconds < 0:
             raise ValueError(f"maturity_horizon seconds must be >= 0, got {value}")
@@ -236,12 +236,12 @@ def _horizon_label_and_seconds(
 
 
 def _snap_seconds_to_label(seconds: int) -> tuple[str, int]:
-    """Pick the ``FUTURES_OPTIONS_PERIODS`` member whose seconds are the largest
+    """Pick the ``OPTIONS_PERIODS`` member whose seconds are the largest
     value still <= ``seconds`` and return ``(label, member_seconds)``. Falls
     back to ``("{seconds}s", seconds)`` when even ``ONE_YEAR`` is too short.
     """
 
-    ordered = sorted(FUTURES_OPTIONS_PERIODS, key=lambda m: m.seconds)
+    ordered = sorted(OPTIONS_PERIODS, key=lambda m: m.seconds)
     chosen_label = f"{seconds}s"
     chosen_seconds = seconds
     for member in ordered:
@@ -411,4 +411,4 @@ def _record_id(symbol: str, horizon_label: str) -> str:
     return f"yf-{symbol.lower()}-options-{horizon_label}"
 
 
-__all__ = ["fetch_options", "FUTURES_OPTIONS_PERIODS"]
+__all__ = ["fetch_options", "OPTIONS_PERIODS"]

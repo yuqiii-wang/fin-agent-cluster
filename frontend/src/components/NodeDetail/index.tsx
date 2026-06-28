@@ -14,7 +14,6 @@ import { Button, Descriptions, Space, Tag, Tooltip, Typography, message } from '
 import { ArrowLeftOutlined, BranchesOutlined, ClearOutlined, StopOutlined } from '@ant-design/icons';
 import { viewTypeToMode } from '../DataViewer/index';
 import TaskDetail from './TaskDetail';
-import AgentNodeDetail from './Agent';
 import SubgraphNode from './SubgraphNode';
 import { COLOR_SURFACE_RAISED, COLOR_TEXT_SECONDARY } from '../../constants/styleColors';
 import { STATUS_HEX, STATUS_TAG_COLOR } from '../../constants/statusColors';
@@ -39,7 +38,7 @@ interface Props {
   /** Active version being viewed; used to mark shared nodes from older versions. */
   activeVersion?: number;
   /** Called when the user wants to inspect data in the bottom DataViewer panel. */
-  onViewData?: (label: string, data: unknown, opts?: { mode?: DataViewerMode; viewSchema?: Record<string, string>; fieldList?: boolean; nodeContext?: 'input' | 'output'; activeStatsView?: string }) => void;
+  onViewData?: (label: string, data: unknown, opts?: { mode?: DataViewerMode; viewSchema?: Record<string, string>; fieldList?: boolean; nodeContext?: 'input' | 'output'; nodeId?: string; taskId?: string; activeStatsView?: string }) => void;
   /** Called when the user clicks a child node (subgraph navigation). */
   onSelectNode?: (nodeId: string) => void;
   /** Called when the user cancels the node. */
@@ -102,28 +101,6 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
           <Text type="secondary">Task not found.</Text>
         )}
       </div>
-    );
-  }
-
-  // ── Agent node view ───────────────────────────────────────────────────────
-  // topology-only placeholders have a synthetic node_id (e.g. "topology-prepare_peers")
-  // and no real DB record yet — skip AgentNodeDetail to avoid 404 on capabilities fetch.
-  if (node.type === 'Agent' && !node.is_topology_only) {
-    return (
-      <AgentNodeDetail
-        node={node}
-        tasks={nodeTasks}
-        threadId={threadId}
-        tokenStreams={tokenStreams}
-        taskRunLog={taskRunLog.filter((e) => e.node_id === node.node_id)}
-        threadActive={threadActive}
-        activeVersion={activeVersion}
-        onViewData={onViewData}
-        onCancelNode={onCancelNode}
-        onCancelTask={onCancelTask}
-        cancellingId={cancellingId}
-        onReExplore={onReExplore}
-      />
     );
   }
 
@@ -217,7 +194,7 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
         </Descriptions.Item>
       </Descriptions>
 
-      {(node.input || node.output) && (
+      {(node.input || node.output || !node.is_topology_only) && (
         <Space size="small" style={{ marginBottom: 12 }}>
           {node.input && (
             <Button
@@ -227,13 +204,13 @@ const NodeDetail: React.FC<Props> = ({ node, nodes = [], tasks, threadId, tokenS
               Input
             </Button>
           )}
-          {node.output && (
+          {(node.output || taskRunLog.length > 0) && (
             <Button
               size="small"
               onClick={() => onViewData?.(`${node.node_name} · Output`, node.output, {
-                mode: viewTypeToMode(node.view_type),
+                mode: node.output ? viewTypeToMode(node.view_type) : undefined,
                 viewSchema: node.view_schema as Record<string, string> | undefined,
-                fieldList: true,
+                fieldList: !!node.output,
                 nodeContext: 'output',
               })}
             >

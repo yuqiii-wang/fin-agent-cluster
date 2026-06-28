@@ -8,6 +8,11 @@ export interface TopologyNodeDef {
   conditional_group?: string;
   /** When set, this node belongs to a parallel fan-out/fan-in group at the top level. */
   parallel_group?: string;
+  /** When set, this node should be drawn on the same y-coordinate / "horizon" as
+   *  the referenced node.  Used for multi-step branches such as
+   *  ``prepare_peers -> load_peers_stats``: the second node sits in a later
+   *  topology slot but must share its predecessor's row. */
+  align_with_node_name?: string;
 }
 
 export interface TopologyEdgeDef {

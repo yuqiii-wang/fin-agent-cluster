@@ -36,13 +36,17 @@ from langgraph.graph import StateGraph, START, END
 from backend.langgraph.state import GraphState
 from backend.langgraph.nodes.query_node import query_node
 from backend.langgraph.nodes.prepare_peers import prepare_peers_node
+from backend.langgraph.nodes.load_peers_stats import load_peers_stats_node
 from backend.langgraph.nodes.prepare_macro_stats import prepare_macro_stats_node
 from backend.langgraph.nodes.prepare_index import prepare_index_node
 from backend.langgraph.nodes.prepare_news import prepare_news_node
 from backend.langgraph.nodes.prepare_industry_news import prepare_industry_news_node
 from backend.langgraph.nodes.prepare_macro_news import prepare_macro_news_node
+from backend.langgraph.nodes.load_symbol_stats import load_symbol_stats_node
 from backend.langgraph.nodes.prepare_options import prepare_options_node
 from backend.langgraph.nodes.prepare_futures import prepare_futures_node
+from backend.langgraph.nodes.prepare_fundamentals import prepare_fundamentals_node
+from backend.langgraph.nodes.final_report import final_report_node
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +65,17 @@ def build_graph_builder() -> StateGraph:
 
     builder.add_node("query_node", query_node)
     builder.add_node("prepare_peers", prepare_peers_node)
+    builder.add_node("load_peers_stats", load_peers_stats_node)
     builder.add_node("prepare_macro_stats", prepare_macro_stats_node)
     builder.add_node("prepare_index", prepare_index_node)
     builder.add_node("prepare_news", prepare_news_node)
     builder.add_node("prepare_industry_news", prepare_industry_news_node)
     builder.add_node("prepare_macro_news", prepare_macro_news_node)
+    builder.add_node("load_symbol_stats", load_symbol_stats_node)
     builder.add_node("prepare_options", prepare_options_node)
     builder.add_node("prepare_futures", prepare_futures_node)
+    builder.add_node("prepare_fundamentals", prepare_fundamentals_node)
+    builder.add_node("final_report", final_report_node)
 
     builder.add_edge(START, "query_node")
     builder.add_edge("query_node", "prepare_peers")
@@ -76,16 +84,22 @@ def build_graph_builder() -> StateGraph:
     builder.add_edge("query_node", "prepare_news")
     builder.add_edge("query_node", "prepare_industry_news")
     builder.add_edge("query_node", "prepare_macro_news")
+    builder.add_edge("query_node", "load_symbol_stats")
     builder.add_edge("query_node", "prepare_options")
     builder.add_edge("query_node", "prepare_futures")
-    builder.add_edge("prepare_peers", END)
-    builder.add_edge("prepare_macro_stats", END)
-    builder.add_edge("prepare_index", END)
-    builder.add_edge("prepare_news", END)
-    builder.add_edge("prepare_industry_news", END)
-    builder.add_edge("prepare_macro_news", END)
-    builder.add_edge("prepare_options", END)
-    builder.add_edge("prepare_futures", END)
+    builder.add_edge("query_node", "prepare_fundamentals")
+    builder.add_edge("prepare_peers", "load_peers_stats")
+    builder.add_edge("load_peers_stats", "final_report")
+    builder.add_edge("prepare_macro_stats", "final_report")
+    builder.add_edge("prepare_index", "final_report")
+    builder.add_edge("prepare_news", "final_report")
+    builder.add_edge("prepare_industry_news", "final_report")
+    builder.add_edge("prepare_macro_news", "final_report")
+    builder.add_edge("load_symbol_stats", "final_report")
+    builder.add_edge("prepare_options", "final_report")
+    builder.add_edge("prepare_futures", "final_report")
+    builder.add_edge("prepare_fundamentals", "final_report")
+    builder.add_edge("final_report", END)
 
     return builder
 

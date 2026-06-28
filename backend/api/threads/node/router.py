@@ -18,13 +18,11 @@ from fastapi import APIRouter, HTTPException, Path
 from backend.api.errors import API_NODE_CACHE_INVALIDATE_DB_ERROR
 from backend.users.queries import cancel_node, get_node_executions, re_explore_node
 from backend.users.schemas import NodeExecutionInfo, QueryResponse, ReExploreRequest
-from backend.api.threads.node.agent.router import router as agent_router
 from backend.langgraph.lifecycle.threads.nodes.tasks.ops import invalidate_node_task_caches
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-router.include_router(agent_router)
 
 TThreadId = Annotated[str, Path(description="LangGraph thread UUID")]
 TNodeId = Annotated[str, Path(description="Node execution UUID")]

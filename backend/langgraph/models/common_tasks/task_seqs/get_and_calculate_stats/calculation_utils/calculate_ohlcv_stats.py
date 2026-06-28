@@ -7,6 +7,9 @@ indicators using ``pandas_ta``, then upserts all bar rows into the appropriate
 Instrument routing
 ------------------
 ``equity``        -> ``quant_stats``            (OhlcvStatsSQL)
+``stock``         -> ``quant_stats``            (OhlcvStatsSQL)
+``etf``           -> ``quant_stats``            (OhlcvStatsSQL)
+``futures``       -> ``quant_stats``            (OhlcvStatsSQL)
 ``index``         -> ``quant_index_stats``       (IndexStatsSQL)
 ``crypto``        -> ``quant_crypto_stats``      (CryptoStatsSQL)
 ``precious_metal``-> ``quant_precious_metal_stats`` (PreciousMetalStatsSQL)
@@ -87,6 +90,9 @@ _STATS_SQL_MAP: dict[str, type] = {
     "precious_metal": PreciousMetalStatsSQL,
     "commodity":      CommodityStatsSQL,
     "equity":         OhlcvStatsSQL,
+    "stock":          OhlcvStatsSQL,
+    "etf":            OhlcvStatsSQL,
+    "futures":        OhlcvStatsSQL,
 }
 
 
@@ -189,6 +195,7 @@ def _row_to_params(
     row: "pd.Series",
     *,
     symbol: str,
+    instrument_type: str,
     currency_code: str,
     source: str,
     granularity: str,
@@ -197,13 +204,15 @@ def _row_to_params(
     """Build the named-parameter dict for :attr:`OhlcvStatsSQL.UPSERT`.
 
     Args:
-        bar_time:      UTC bar open timestamp.
-        row:           Pandas Series containing OHLCV and indicator columns.
-        symbol:        Ticker symbol.
-        currency_code: ISO 4217 currency code.
-        source:        Provider source label.
-        granularity:   Bar granularity string.
-        index_code:    Primary market index code or ``None``.
+        bar_time:        UTC bar open timestamp.
+        row:             Pandas Series containing OHLCV and indicator columns.
+        symbol:          Ticker symbol.
+        instrument_type: ``fin_markets.quant_stats.instrument_type`` value
+                         (``'equity'``, ``'stock'``, ``'etf'``, ``'futures'``, etc.).
+        currency_code:   ISO 4217 currency code.
+        source:          Provider source label.
+        granularity:     Bar granularity string.
+        index_code:      Primary market index code or ``None``.
 
     Returns:
         Dict of named parameters ready for ``psycopg3`` execute with named-param style.
@@ -212,6 +221,7 @@ def _row_to_params(
 
     return {
         "symbol": symbol,
+        "instrument_type": instrument_type,
         "currency_code": currency_code,
         "source": source,
         "granularity": granularity,
@@ -308,7 +318,9 @@ async def calculate_ohlcv_stats_handler(payload: dict) -> dict:
     if inp.from_cache:
         async with raw_conn(readonly=True) as conn:
             cur = await conn.execute(
-                _stats_sql.COUNT_BY_SYMBOL_GRANULARITY, (symbol, granularity)
+                _stats_sql.COUNT_BY_SYMBOL_GRANULARITY,
+                {"symbol": symbol, "instrument_type": _instrument_type, "granularity": granularity}
+                if _stats_sql is OhlcvStatsSQL else (symbol, granularity),
             )
             count_row = await cur.fetchone()
         bypass_df_split: dict[str, Any] = {}
@@ -344,6 +356,7 @@ async def calculate_ohlcv_stats_handler(payload: dict) -> dict:
             bar_time,
             row,
             symbol=symbol,
+            instrument_type=_instrument_type,
             currency_code=currency_code,
             source=source,
             granularity=granularity,

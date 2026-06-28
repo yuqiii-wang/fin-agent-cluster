@@ -20,10 +20,10 @@ The ``maturity_horizon`` argument controls how far out to fetch maturities
 for time-bounded products (options, futures, bonds, repo, ...).  It is
 forwarded verbatim to the backing provider, so it accepts anything
 recognised by that provider: a
-:class:`~backend.quant.stats.constants.FUTURES_OPTIONS_PERIODS` member, one
+:class:`~backend.quant.stats.constants.OPTIONS_PERIODS` member, one
 of its ``display_name`` strings (``'next'``, ``'one week'``, ``'one month'``,
 ``'one quarter'``, ``'half year'``, ``'one year'``), or a raw number of
-seconds.  ``None`` (default) maps to ``FUTURES_OPTIONS_PERIODS.ONE_YEAR``.
+seconds.  ``None`` (default) maps to ``OPTIONS_PERIODS.ONE_YEAR``.
 
 Contract
 --------
@@ -37,7 +37,7 @@ from __future__ import annotations
 import logging
 
 from _shared.httpx_client import AsyncClient
-from backend.quant.stats.constants import FUTURES_OPTIONS_PERIODS
+from backend.quant.stats.constants import OPTIONS_PERIODS
 from backend.resources.stats.models import StatsListResponse, StatsRecord
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ async def list_stats(
     http: AsyncClient | None,
     *,
     limit: int = 1,
-    maturity_horizon: FUTURES_OPTIONS_PERIODS | str | int | float | None = None,
+    maturity_horizon: OPTIONS_PERIODS | str | int | float | None = None,
 ) -> StatsListResponse:
     """Options-chain fetch.
 
@@ -90,7 +90,7 @@ async def get_stats(
     provider: str,
     http: AsyncClient | None,
     *,
-    maturity_horizon: FUTURES_OPTIONS_PERIODS | str | int | float | None = None,
+    maturity_horizon: OPTIONS_PERIODS | str | int | float | None = None,
 ) -> StatsRecord | None:
     """Options-chain fetch by record id.
 
@@ -111,14 +111,14 @@ async def get_stats(
 
 
 def _pick_horizon(
-    explicit: FUTURES_OPTIONS_PERIODS | str | int | float | None,
+    explicit: OPTIONS_PERIODS | str | int | float | None,
     period_fallback: str | None,
-) -> FUTURES_OPTIONS_PERIODS | str | int | float | None:
+) -> OPTIONS_PERIODS | str | int | float | None:
     """Resolve the effective horizon from (explicit, period).
 
     ``explicit`` wins when it is not ``None``; otherwise the legacy
     ``period`` string is forwarded to the fetcher (which knows how to map
-    it to a ``FUTURES_OPTIONS_PERIODS`` member or to a raw number of
+    it to a ``OPTIONS_PERIODS`` member or to a raw number of
     seconds).
     """
     if explicit is not None:
@@ -129,7 +129,7 @@ def _pick_horizon(
 async def _list_yfinance(
     symbol: str,
     *,
-    maturity_horizon: FUTURES_OPTIONS_PERIODS | str | int | float | None,
+    maturity_horizon: OPTIONS_PERIODS | str | int | float | None,
 ) -> StatsListResponse:
     from backend.resources.stats.providers.yfinance.fetch_options import fetch_options
 
@@ -146,7 +146,7 @@ async def _list_yfinance(
 async def _get_yfinance(
     record_id: str,
     *,
-    maturity_horizon: FUTURES_OPTIONS_PERIODS | str | int | float | None,
+    maturity_horizon: OPTIONS_PERIODS | str | int | float | None,
 ) -> StatsRecord | None:
     from backend.resources.stats.providers.yfinance.fetch_options import fetch_options
 
@@ -166,4 +166,4 @@ async def _get_yfinance(
         return None
 
 
-__all__ = ["list_stats", "get_stats", "supports_provider", "FUTURES_OPTIONS_PERIODS"]
+__all__ = ["list_stats", "get_stats", "supports_provider", "OPTIONS_PERIODS"]

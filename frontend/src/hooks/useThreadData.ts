@@ -32,20 +32,30 @@ interface ThreadData {
  * non-placeholder node so it renders with the correct colour instead of dimmed.
  */
 function mergeWithTopology(runtime: NodeInfo[], topology: GraphTopology, tasks: TaskInfo[], threadId: string): NodeInfo[] {
-  // Build lookup: node_name → topology def
+  // Build lookup: node_name -> topology def
   const topoMap = new Map(topology.nodes.map(t => [t.node_name, t]));
 
-  // Enrich runtime nodes with conditional_group and parallel_group from topology
+  // Enrich runtime nodes with conditional_group and parallel_group from topology.
+  // `align_with_node_name` is a *visual continuation* hint: when a node carries it,
+  // it belongs to the same logical branch as the referenced node but should render
+  // as its own topology slot on the same horizontal row -- NOT as another row
+  // stacked inside the referenced node's parallel group.  So whenever the topology
+  // declares `align_with_node_name`, we force the node out of any parallel group
+  // (even if the runtime node otherwise declares one via its backend ClassVar).
   const enriched = runtime.map(n => {
     const topo = topoMap.get(n.node_name);
-    if (topo?.conditional_group || topo?.parallel_group) {
-      return {
-        ...n,
-        ...(topo.conditional_group ? { conditional_group: topo.conditional_group } : {}),
-        ...(topo.parallel_group    ? { parallel_group:    topo.parallel_group    } : {}),
-      };
+    const merged: NodeInfo = { ...n };
+    if (topo) {
+      if (topo.conditional_group) merged.conditional_group = topo.conditional_group;
+      if (topo.align_with_node_name) {
+        merged.align_with_node_name = topo.align_with_node_name;
+        // Alignment hint wins over parallel_group for UI layout purposes.
+        delete (merged as { parallel_group?: string }).parallel_group;
+      } else if (topo.parallel_group) {
+        merged.parallel_group = topo.parallel_group;
+      }
     }
-    return n;
+    return merged;
   });
 
   // Build a task-based status lookup for nodes that may lack a DB record
@@ -97,17 +107,25 @@ function mergeWithTopology(runtime: NodeInfo[], topology: GraphTopology, tasks: 
 
     const inferredStatus = taskStatusByNode.get(topo.node_name);
     const isTopologyOnly = !inferredStatus;
-    enriched.push({
+    const placeholder: NodeInfo = {
       node_id: `topology-${topo.node_name}`,
       thread_id: threadId,
       node_name: topo.node_name,
       type: topo.node_type,
       status: inferredStatus ?? 'pending',
       elapsed_ms: 0,
-      parallel_group: topo.parallel_group,
       conditional_group: topo.conditional_group,
       is_topology_only: isTopologyOnly,
-    } as NodeInfo);
+    } as NodeInfo;
+    // Same rule as runtime nodes: if the node declares align_with_node_name,
+    // use that as the layout hint and skip parallel_group so it gets its own
+    // slot aligned to its predecessor.
+    if (topo.align_with_node_name) {
+      placeholder.align_with_node_name = topo.align_with_node_name;
+    } else if (topo.parallel_group) {
+      placeholder.parallel_group = topo.parallel_group;
+    }
+    enriched.push(placeholder);
   }
 
   // Return in topology order

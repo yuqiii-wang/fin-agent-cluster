@@ -5,8 +5,8 @@ Tasks
 ``get_stats``                   -- fetch OHLCV stats from a stats provider, cache in input_raw.
 ``calculate_stats``             -- compute technical indicators from a StatsRecord, upsert to quant_stats.
 ``calculate_corr``              -- compute pairwise Pearson correlation of close prices from quant_stats.
-``propose_web_knowledge_urls``  -- map a symbol to its Yahoo Finance options URL for downstream web navigation.
-``llm_orchestration_on_failure``           -- streaming LLM recovery decision; selects an earlier LLM streaming step to regenerate after a failure.
+``run_sandbox``                 -- execute LLM-generated Python or bash inside an isolated sandbox.
+``dummy_task``                  -- placeholder task that ticks until a parent signal.
 
 HANDLERS registry
 -----------------
@@ -42,71 +42,11 @@ from backend.langgraph.models.common_tasks.calculate_corr import (
     CalculateCorrOutput,
     HANDLERS as _CC_HANDLERS,
 )
-from backend.langgraph.models.common_tasks.task_seqs.get_and_digest_news import (
-    get_news,
-    GetNewsInput,
-    GetNewsOutput,
-    digest_news,
-    DigestNewsInput,
-    DigestNewsOutput,
-    get_and_digest_news,
-    GetAndDigestNewsInput,
-    GetAndDigestNewsOutput,
-    HANDLERS as _GDN_HANDLERS,
-    STREAM_PROMPT_BUILDERS as _GDN_SPB,
-)
-from backend.langgraph.models.common_tasks.pdf_to_markdown import (
-    pdf_to_markdown,
-    PdfToMarkdownInput,
-    PdfToMarkdownOutput,
-    HANDLERS as _PTM_HANDLERS,
-)
-from backend.langgraph.models.common_tasks.do_summary import (
-    do_summary,
-    DoSummaryInput,
-    DoSummaryOutput,
-    SummaryRecord,
-    HANDLERS as _DS_HANDLERS,
-    STREAM_PROMPT_BUILDERS as _DS_SPB,
-)
 from backend.langgraph.models.common_tasks.dummy_task import (
     dummy_task,
     DummyTaskInput,
     DummyTaskOutput,
     HANDLERS as _DT_HANDLERS,
-)
-from backend.langgraph.models.common_tasks.llm_orchestration_for_validation import (
-    llm_orchestration_for_validation,
-    ValidationViolation,
-    LlmValidationInput,
-    LlmValidationOutput,
-    HANDLERS as _LOFV_HANDLERS,
-    STREAM_PROMPT_BUILDERS as _LOFV_SPB,
-)
-from backend.langgraph.models.common_tasks.task_seqs.navigate_web import (
-    crawl_url,
-    CrawlUrlInput,
-    CrawlUrlOutput,
-    html_to_markdown,
-    HtmlToMarkdownInput,
-    HtmlToMarkdownOutput,
-    load_md_from_url,
-    LoadMdFromUrlInput,
-    LoadMdFromUrlOutput,
-    study_web_content,
-    StudyWebContentInput,
-    StudyWebContentOutput,
-    llm_orchestration_on_failure,
-    LlmOrchestrationInput,
-    LlmOrchestrationOutput,
-    HANDLERS as _NW_HANDLERS,
-    STREAM_PROMPT_BUILDERS as _NW_SPB,
-)
-from backend.langgraph.models.common_tasks.task_seqs.navigate_web.propose_web_knowledge_urls import (
-    propose_web_knowledge_urls,
-    ProposeWebKnowledgeUrlsInput,
-    ProposeWebKnowledgeUrlsOutput,
-    HANDLERS as _PWKU_HANDLERS,
 )
 from backend.langgraph.models.common_tasks.run_sandbox import (
     run_sandbox,
@@ -114,32 +54,16 @@ from backend.langgraph.models.common_tasks.run_sandbox import (
     RunSandboxOutput,
     HANDLERS as _SB_HANDLERS,
 )
-from backend.langgraph.models.common_tasks.task_seqs.prepare_fundamentals import (
-    get_fundamentals,
-    GetFundamentalsInput,
-    GetFundamentalsOutput,
-    calculate_fundamental_stats,
-    CalculateFundamentalStatsInput,
-    CalculateFundamentalStatsOutput,
-    HANDLERS as _PF_HANDLERS,
-)
 
 HANDLERS: dict = {
     **_GS_HANDLERS,
     **_CS_HANDLERS,
     **_COS_HANDLERS,
     **_CC_HANDLERS,
-    **_GDN_HANDLERS,
-    **_PTM_HANDLERS,
-    **_DS_HANDLERS,
     **_DT_HANDLERS,
-    **_LOFV_HANDLERS,
-    **_NW_HANDLERS,
-    **_PWKU_HANDLERS,
     **_SB_HANDLERS,
-    **_PF_HANDLERS,
 }
-STREAM_PROMPT_BUILDERS: dict = {**_GDN_SPB, **_NW_SPB, **_DS_SPB, **_LOFV_SPB}
+STREAM_PROMPT_BUILDERS: dict = {}
 
 __all__ = [
     "get_stats",
@@ -155,56 +79,12 @@ __all__ = [
     "calculate_corr",
     "CalculateCorrInput",
     "CalculateCorrOutput",
-    "get_news",
-    "GetNewsInput",
-    "GetNewsOutput",
-    "digest_news",
-    "DigestNewsInput",
-    "DigestNewsOutput",
-    "get_and_digest_news",
-    "GetAndDigestNewsInput",
-    "GetAndDigestNewsOutput",
-    "propose_web_knowledge_urls",
-    "ProposeWebKnowledgeUrlsInput",
-    "ProposeWebKnowledgeUrlsOutput",
-    "pdf_to_markdown",
-    "PdfToMarkdownInput",
-    "PdfToMarkdownOutput",
-    "run_sandbox",
-    "RunSandboxInput",
-    "RunSandboxOutput",
-    "crawl_url",
-    "CrawlUrlInput",
-    "CrawlUrlOutput",
-    "html_to_markdown",
-    "HtmlToMarkdownInput",
-    "HtmlToMarkdownOutput",
-    "load_md_from_url",
-    "LoadMdFromUrlInput",
-    "LoadMdFromUrlOutput",
-    "study_web_content",
-    "StudyWebContentInput",
-    "StudyWebContentOutput",
-    "llm_orchestration_on_failure",
-    "LlmOrchestrationInput",
-    "LlmOrchestrationOutput",
-    "llm_orchestration_for_validation",
-    "ValidationViolation",
-    "LlmValidationInput",
-    "LlmValidationOutput",
-    "get_fundamentals",
-    "GetFundamentalsInput",
-    "GetFundamentalsOutput",
-    "calculate_fundamental_stats",
-    "CalculateFundamentalStatsInput",
-    "CalculateFundamentalStatsOutput",
-    "do_summary",
-    "DoSummaryInput",
-    "DoSummaryOutput",
-    "SummaryRecord",
     "dummy_task",
     "DummyTaskInput",
     "DummyTaskOutput",
+    "run_sandbox",
+    "RunSandboxInput",
+    "RunSandboxOutput",
     "HANDLERS",
     "STREAM_PROMPT_BUILDERS",
 ]

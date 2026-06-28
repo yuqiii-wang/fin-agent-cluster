@@ -221,6 +221,25 @@ class VolSmileExpiry(BaseModel):
 
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats.models import CalculateStatsBaseOutput
 
+
+class PcRatioPoint(BaseModel):
+    """Per-expiry Put/Call ratio summary.
+
+    Each ratio is ``None`` when the denominator (call side) is zero -- that is
+    the expected state when an upstream provider returns no volume or no
+    open interest for the call leg.  Column names mirror the schema:
+    ``put_call_volume_ratio`` and ``put_call_open_interest_ratio``.
+    """
+
+    expiry_date: str
+    call_volume: float | None = None
+    put_volume: float | None = None
+    call_open_interest: float | None = None
+    put_open_interest: float | None = None
+    put_call_volume_ratio: float | None = None
+    put_call_open_interest_ratio: float | None = None
+
+
 class CalculateOptionStatsOutput(CalculateStatsBaseOutput):
     """Output from the calculate_option_stats handler.
 
@@ -233,15 +252,19 @@ class CalculateOptionStatsOutput(CalculateStatsBaseOutput):
     - Put options (solid orange line): IV and cost for right-to-sell contracts
 
     Attributes:
-        rows_upserted:       Total rows upserted (contracts_upserted + expiries_aggregated).
+        rows_upserted:       Total rows upserted (contracts_upserted only; expiries
+                             counted separately for informational purposes).
         symbol:              Underlying ticker symbol.
         source:              Data source label.
         contracts_upserted:  Per-contract rows written to ``quant_options_stats``.
         contracts_skipped:   Contracts skipped because ``contract_name`` failed to parse.
-        expiries_aggregated: Aggregate rows written to ``quant_derivative_stats``.
+        expiries_aggregated: Expiries where calls and puts share at least one strike
+                             (informational counter; no longer persisted to a separate table).
         expiries_skipped:    Expiries skipped because calls and puts shared no strike.
         stats_views:         Frontend view type list; always ``["VolatilitySmile"]``.
         vol_smile:           Per-expiry volatility smile data with IV and cost for calls/puts.
+        put_call_ratios:     Per-expiry put/call ratio points computed from volume + OI.
+        put_call_ratio_overall: Best-effort overall PC ratio across all expiries (NULL if no data).
     """
 
     contracts_upserted: int
@@ -250,6 +273,8 @@ class CalculateOptionStatsOutput(CalculateStatsBaseOutput):
     expiries_skipped: int
     stats_views: list[str] = Field(default_factory=lambda: ["VolatilitySmile"])
     vol_smile: list[VolSmileExpiry] = Field(default_factory=list)
+    put_call_ratios: list[PcRatioPoint] = Field(default_factory=list)
+    put_call_ratio_overall: float | None = None
 
 
 __all__ = [

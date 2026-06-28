@@ -70,9 +70,22 @@ export function buildTopSlots(topLevel: NodeInfo[]): TopSlot[] {
 
 /** Compute x/y positions, bubble bounds, and edge lists for all nodes. */
 export function computeLayout(nodes: NodeInfo[], expandedSubgraphIds: Set<string> = new Set()): Layout {
-  const topLevel = nodes.filter(n => !n.parent_node_id);
+  // Defensive step: `align_with_node_name` means "render me as my own topology
+  // slot on the same horizontal row as the referenced node".  Some backend nodes
+  // also declare a non-empty `parallel_group` for database branch-identity
+  // purposes, which would otherwise cause the UI to stack them as siblings.
+  // Strip parallel_group whenever align_with_node_name is present so the
+  // alignment hint always wins.
+  const sanitizedNodes: NodeInfo[] = nodes.map(n => {
+    if (!n.align_with_node_name) return n;
+    const clone: NodeInfo = { ...n };
+    delete (clone as { parallel_group?: string }).parallel_group;
+    return clone;
+  });
+
+  const topLevel = sanitizedNodes.filter(n => !n.parent_node_id);
   const innerByParentId = new Map<string, NodeInfo[]>();
-  for (const n of nodes) {
+  for (const n of sanitizedNodes) {
     if (n.parent_node_id) {
       const arr = innerByParentId.get(n.parent_node_id) ?? [];
       arr.push(n);
@@ -122,7 +135,16 @@ export function computeLayout(nodes: NodeInfo[], expandedSubgraphIds: Set<string
       });
     } else {
       const n = slot.node;
-      positions[n.node_name] = { x: cx, y: CENTER_Y };
+      // If this node is a "continuation" of another node (e.g. load_peers_stats
+      // continues prepare_peers), align it vertically with its predecessor so
+      // the two-node branch shares the same horizon instead of jumping back to
+      // CENTER_Y.  The predecessor was laid out in an earlier slot.
+      let y = CENTER_Y;
+      const alignRef = n.align_with_node_name;
+      if (alignRef && positions[alignRef]) {
+        y = positions[alignRef].y;
+      }
+      positions[n.node_name] = { x: cx, y };
 
       const children = innerByParentId.get(n.node_id) ?? [];
       if (children.length > 0) {
@@ -138,7 +160,13 @@ export function computeLayout(nodes: NodeInfo[], expandedSubgraphIds: Set<string
         innerSlots.forEach((innerSlot, j) => {
           const slotX = startX + j * INNER_STEP;
           if (innerSlot.type === 'single') {
-            positions[innerSlot.node.node_name] = { x: slotX, y: CENTER_Y };
+            const innerN = innerSlot.node;
+            let innerY = CENTER_Y;
+            const innerAlign = innerN.align_with_node_name;
+            if (innerAlign && positions[innerAlign]) {
+              innerY = positions[innerAlign].y;
+            }
+            positions[innerN.node_name] = { x: slotX, y: innerY };
           } else {
             const cnt = innerSlot.nodes.length;
             innerSlot.nodes.forEach((cn, k) => {
@@ -150,7 +178,7 @@ export function computeLayout(nodes: NodeInfo[], expandedSubgraphIds: Set<string
 
         const bx = startX - INNER_RADIUS - BUBBLE_PAD_X;
         const bw = innerSpan + (INNER_RADIUS + BUBBLE_PAD_X) * 2;
-        const by = CENTER_Y - halfH;
+        const by = y - halfH;
         const bh = halfH * 2;
         bubbles.set(n.node_id, { x: bx, y: by, w: bw, h: bh });
       }
@@ -159,8 +187,31 @@ export function computeLayout(nodes: NodeInfo[], expandedSubgraphIds: Set<string
     curX += slotW;
   });
 
-  // Build top-level edges from slot transitions, carrying EdgeKind
+  // Build top-level edges from slot transitions, carrying EdgeKind.
+  //
+  // Two-pass model:
+  //   Pass 1 — emit edges between adjacent slots (slot-adjacency heuristic).
+  //            Single→parallel produces `fan-out`; parallel→single produces
+  //            `fan-in`; single→single produces `sequential`.
+  //   Pass 2 — for every top-level slot whose members appear as predecessors
+  //            of a *later* non-adjacent single-node slot (e.g. the 7 analysis
+  //            nodes inside the parallel fan-out pointing to `final_report`
+  //            even though `load_peers_stats` sits between them), emit extra
+  //            `fan-in` edges.  This ensures multi-source merge nodes are drawn
+  //            as a right-angle bus.
+  //
+  // `groupEdges` in NodeGraph.tsx then merges edges sharing the same source or
+  // destination into a single `FanEdgeGroup`.  The runtime topology filter
+  // (`isEdgeInTopology`) drops any spur that wasn't actually declared, so it is
+  // safe to over-declare fan-in/fan-out candidates here.
   const topEdges: Array<[string, string, EdgeKind]> = [];
+
+  // --- Pass 1: adjacent slot transitions ---
+  function slotNodeNames(slot: TopSlot): string[] {
+    if (slot.type === 'single') return [slot.node.node_name];
+    return slot.nodes.map(n => n.node_name);
+  }
+
   for (let i = 0; i < topSlots.length - 1; i++) {
     const curr = topSlots[i];
     const next = topSlots[i + 1];
@@ -168,12 +219,10 @@ export function computeLayout(nodes: NodeInfo[], expandedSubgraphIds: Set<string
     if (curr.type === 'single' && next.type === 'single') {
       topEdges.push([curr.node.node_name, next.node.node_name, 'sequential']);
     } else if (curr.type === 'single' && next.type === 'conditional') {
-      // Always cond-fan-out; per-spur solid/dashed is resolved at render time
       for (const toNode of next.nodes) {
         topEdges.push([curr.node.node_name, toNode.node_name, 'cond-fan-out']);
       }
     } else if (curr.type === 'conditional' && next.type === 'single') {
-      // Always cond-fan-in; per-spur solid/dashed is resolved at render time
       for (const fromNode of curr.nodes) {
         topEdges.push([fromNode.node_name, next.node.node_name, 'cond-fan-in']);
       }
@@ -185,13 +234,41 @@ export function computeLayout(nodes: NodeInfo[], expandedSubgraphIds: Set<string
       for (const fromNode of curr.nodes) {
         topEdges.push([fromNode.node_name, next.node.node_name, 'fan-in']);
       }
+    } else if (curr.type === 'parallel' && next.type === 'parallel') {
+      for (const fromNode of curr.nodes) {
+        for (const toNode of next.nodes) {
+          topEdges.push([fromNode.node_name, toNode.node_name, 'fan-in']);
+        }
+      }
     } else {
-      // cross: conditional → conditional, parallel → parallel, etc.
-      const fromNames = curr.type === 'single' ? [curr.node.node_name] : curr.nodes.map(n => n.node_name);
-      const toNames   = next.type === 'single' ? [next.node.node_name] : next.nodes.map(n => n.node_name);
+      const fromNames = slotNodeNames(curr);
+      const toNames = slotNodeNames(next);
       for (const from of fromNames) {
         for (const to of toNames) {
           topEdges.push([from, to, 'cond-fan-out']);
+        }
+      }
+    }
+  }
+
+  // --- Pass 2: non-adjacent fan-in (multi-source merge points) ---
+  // For each later single-node slot `S`, look at ALL earlier parallel-group
+  // members and emit a fan-in edge from each member that could plausibly
+  // point to `S`.  `isEdgeInTopology` in NodeGraph.tsx filters spurious spurs,
+  // so over-approximation is safe and cheap.
+  for (let j = 1; j < topSlots.length; j++) {
+    const next = topSlots[j];
+    if (next.type !== 'single') continue;
+    const destName = next.node.node_name;
+    for (let i = 0; i < j - 1; i++) {
+      const curr = topSlots[i];
+      if (curr.type === 'parallel') {
+        for (const fromNode of curr.nodes) {
+          topEdges.push([fromNode.node_name, destName, 'fan-in']);
+        }
+      } else if (curr.type === 'conditional') {
+        for (const fromNode of curr.nodes) {
+          topEdges.push([fromNode.node_name, destName, 'cond-fan-in']);
         }
       }
     }

@@ -1,5 +1,12 @@
 
-"""BaseLLM — base chat model that normalizes prompts to replace multiple spaces with single ones."""
+"""BaseLLM — base chat model that normalizes prompts and exposes a ``search_and_summary`` capability.
+
+The optional :meth:`search_and_summary` method lets callers ask the LLM (or its built-in
+web-search API) run a web search and return both the summarised answer and the
+raw search citations.  Providers with native search-and-summary (ARK/Doubao
+``web_search``) override it; generic providers (Ollama, mock) return
+``None`` so the caller falls back to DDGS + LLM summary.
+"""
 
 from __future__ import annotations
 
@@ -12,16 +19,34 @@ from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 
 
 def normalize_spaces(text: str) -> str:
-    """Replace multiple consecutive spaces with a single space.
-    Also normalizes newlines and tabs to single space if needed,
-    but preserves intentional single line breaks.
-    """
-    # Replace any whitespace sequence (multiple spaces, tabs, newlines)
-    # with a single space, but trim leading/trailing.
+    """Replace multiple consecutive spaces with a single space."""
     return re.sub(r"\s+", " ", text).strip()
+
+
+class SearchAndSummaryResult(BaseModel):
+    """Result returned by :meth:`BaseLLM.search_and_summary` when the provider
+    supports native web search.
+
+    Attributes:
+        answer:       The summarised textual answer produced by the model after
+                      searching the web.
+        sources:      Optional list of source URLs / citations (title + url).
+        raw:          Optional raw provider-specific payload (for diagnostics).
+    """
+
+    answer: str = Field(description="Summarised textual answer.")
+    sources: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of source/citation dicts with keys like title, url, snippet.",
+    )
+    raw: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional provider-specific raw payload for diagnostics.",
+    )
 
 
 class BaseLLM(BaseChatModel, ABC):
@@ -97,6 +122,33 @@ class BaseLLM(BaseChatModel, ABC):
     ):
         """Asynchronous streaming — subclasses must implement this, and should call _normalize_messages first."""
 
+    # ------------------------------------------------------------------
+    # Optional: native LLM search-and-summary
+    # ------------------------------------------------------------------
 
-__all__ = ["BaseLLM", "normalize_spaces"]
+    async def search_and_summary(
+        self,
+        query: str,
+        **kwargs: Any,
+    ) -> Optional["SearchAndSummaryResult"]:
+        """Optional native search-and-summary capability.
+
+        Providers with a built-in web search API (ARK Doubao ``web_search``)
+        override this to produce an answer plus citation links in a single
+        API call.  Generic providers (Ollama, mock) return ``None`` so the
+        caller can fall back to an external search (e.g. DDGS) plus a
+        separate summarising LLM call.
+
+        Args:
+            query: Free-form query string in any language.
+            **kwargs: Provider-specific options forwarded to the implementation.
+
+        Returns:
+            A :class:`SearchAndSummaryResult` on success, or ``None`` if the
+            provider does not support native search-and-summary.
+        """
+        return None
+
+
+__all__ = ["BaseLLM", "SearchAndSummaryResult", "normalize_spaces"]
 

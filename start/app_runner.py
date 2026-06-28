@@ -11,6 +11,7 @@ from backend.config import get_settings
 from backend.log_config import configure_logging, get_logging_config
 
 from start.celery_cluster import start_celery_cluster, wait_for_ondemand_workers
+from start.docker_check import ensure_docker_running
 from start.log_config_writer import write_log_config
 from start.proxy_config import configure_proxy
 from start.shutdown_cancel import run_shutdown_cancel
@@ -44,6 +45,8 @@ def start_app(no_proxy: bool = False) -> int:
         print(f"  {_k} = {_v}")
 
     configure_proxy(None if no_proxy else settings.HTTP_PROXY)
+
+    ensure_docker_running()
 
     if sys.platform == "win32":
         # psycopg requires SelectorEventLoop on Windows.

@@ -48,7 +48,6 @@ class EntrypointMixin:
         cancelled via the API.  Returns a ``cancelled`` state delta without
         raising so the other parallel branches continue unaffected.
         """
-        from backend.langgraph.agent.errors import AgentPausedError
         from backend.langgraph.lifecycle.errors import NodeCancelledError, TaskPausedError
 
         thread_id: str = state["thread_id"]
@@ -144,14 +143,28 @@ class EntrypointMixin:
                 for record in (state.get("nodes") or {}).values():
                     meta = record.get("metadata") or {}
                     if meta.get("node_name") == name and meta.get("status") == "failed":
+                        _upstream_err = (
+                            meta.get("error")
+                            or (record.get("data") or {}).get("error")
+                            or "<error not captured>"
+                        )
+                        _upstream_node_id = (
+                            meta.get("node_id")
+                            or record.get("node_id")
+                            or "<unknown>"
+                        )
                         logger.error(
-                            "[base_node] predecessor '%s' failed; auto-failing workflow '%s' "
-                            "thread_id=%s node_id=%s",
-                            name, self.node_name, thread_id, node_id,  # type: ignore[attr-defined]
+                            "[base_node] predecessor '%s' (node_id=%s) FAILED; "
+                            "auto-failing workflow '%s' thread_id=%s node_id=%s "
+                            "upstream_error=%s",
+                            name, _upstream_node_id, self.node_name, thread_id, node_id,  # type: ignore[attr-defined]
+                            _upstream_err,
                         )
                         return await self._fail_self_and_cascade(  # type: ignore[attr-defined]
                             thread_id, node_id, version, prev_node_ids,
-                            error=f"predecessor '{name}' failed",
+                            error=(
+                                f"predecessor '{name}' failed: {_upstream_err}"
+                            ),
                         )
 
         try:
@@ -164,31 +177,9 @@ class EntrypointMixin:
             # parallel branches continue unaffected.
             cancelled_record = self._build_node_record(node_id, version, prev_node_ids, "cancelled")  # type: ignore[attr-defined]
             cancelled_record["task_ids"] = list(ctx.task_ids)
+            cancelled_record["metadata"]["error"] = "cancelled"
+            cancelled_record["metadata"]["node_id"] = node_id
             return {"nodes": {node_id: cancelled_record}}
-        except AgentPausedError as exc:
-            # Agent-level pause detected between LLM iterations.  Pause the node
-            # then, if auto_resume is set, schedule a background re-dispatch so
-            # the agent restarts with the updated skill / memory context.
-            from backend.langgraph.lifecycle import pause_node as _pause_node
-            await _pause_node(
-                thread_id, node_id, self.node_name,  # type: ignore[attr-defined]
-                is_last_paused_by_server=False,
-            )
-            if exc.auto_resume:
-                import asyncio
-
-                async def _trigger_auto_resume() -> None:
-                    from backend.users.queries import resume_query
-                    try:
-                        await resume_query(thread_id)
-                    except Exception as resume_err:
-                        logger.error(
-                            "[agent] auto-resume failed thread_id=%s: %s",
-                            thread_id, resume_err,
-                        )
-
-                asyncio.create_task(_trigger_auto_resume())
-            raise
         except TaskPausedError:
             from backend.langgraph.lifecycle import pause_node as _pause_node
             await _pause_node(
@@ -197,7 +188,13 @@ class EntrypointMixin:
             )
             raise
         except Exception as exc:
-            # Mark node failed in DB and update NodeRecord status.
+            # Mark node failed in DB and update NodeRecord status.  Log the
+            # full traceback so the root cause of the failure (rather than
+            # just the downstream auto-fail) is visible in the LangGraph log.
+            logger.exception(
+                "[base_node] node '%s' FAILED thread_id=%s node_id=%s: %s",
+                self.node_name, thread_id, node_id, exc,  # type: ignore[attr-defined]
+            )
             await complete_node(
                 thread_id=thread_id,
                 node_id=node_id,
@@ -230,6 +227,8 @@ class EntrypointMixin:
                     # Sibling branches still running -- absorb failure, let them finish.
                     failed_record = self._build_node_record(node_id, version, prev_node_ids, "failed")  # type: ignore[attr-defined]
                     failed_record["task_ids"] = list(ctx.task_ids)
+                    failed_record["metadata"]["error"] = str(exc)
+                    failed_record["metadata"]["node_id"] = node_id
                     return {"nodes": {node_id: failed_record}}
                 # No active siblings remain -- fall through to raise so the thread fails.
             raise
@@ -270,6 +269,9 @@ class EntrypointMixin:
         _terminal_status = "failed" if _node_failed else "completed"
         completed_record = self._build_node_record(node_id, version, prev_node_ids, _terminal_status)  # type: ignore[attr-defined]
         completed_record["task_ids"] = list(ctx.task_ids)
+        if _node_failed and _node_error:
+            completed_record["metadata"]["error"] = _node_error
+            completed_record["metadata"]["node_id"] = node_id
 
         # Return only the delta -- never spread the full state back.
         # Returning {**state, ...} causes INVALID_CONCURRENT_GRAPH_UPDATE when

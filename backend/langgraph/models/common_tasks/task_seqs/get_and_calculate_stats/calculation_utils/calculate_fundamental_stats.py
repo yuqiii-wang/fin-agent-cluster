@@ -233,7 +233,6 @@ async def calculate_fundamental_stats_handler(payload: dict) -> dict:
                     "dividend_stability":      None,
                     "dividend_record_date":    None,
                     "dividend_payment_date":   None,
-                    "published_at":            None,
                     "news_stats_id":           None,
                     "primary_index_name":      primary_index_name,
                     "primary_index_weight":    None,

@@ -13,6 +13,7 @@ from .models import (
     CalculateOptionStatsInput,
     CalculateOptionStatsOutput,
     OptionContractInput,
+    PcRatioPoint,
     VolSmileExpiry,
     VolSmilePoint,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "CalculateOptionStatsInput",
     "VolSmilePoint",
     "VolSmileExpiry",
+    "PcRatioPoint",
     "CalculateOptionStatsOutput",
     "parse_contract_name",
     "extract_value",

@@ -27,8 +27,6 @@ export type { GraphTopology, TopologyNodeDef, TopologyEdgeDef, NodeMeta, NodeCon
 
 export type { NodeConfig, UserPreference, UserPreferencesResponse } from './user';
 
-export type { AgentCapabilities, TaskMemory, Skill, ToolInfo, SkillStatus, NodeSkillFile, NodeSkillsResponse } from './agent';
-
 export type {
   AnalyzeQueryInput,
   AnalyzeQueryOutput,

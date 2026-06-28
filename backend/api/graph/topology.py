@@ -41,17 +41,28 @@ class TopologyNodeDef(BaseModel):
             group.  All nodes sharing the same ``conditional_group`` are laid
             out as a vertical fan in the UI, with only the executed branch
             highlighted at runtime.
+        align_with_node_name: When set, the UI lays out this node on the same
+            horizontal line (y-coordinate) as the referenced node instead of
+            centering it on ``CENTER_Y``.  Used for "continuation" nodes such
+            as ``load_peers_stats`` which is the second step of the
+            ``prepare_peers`` branch and should therefore sit on the same row.
     """
 
     node_name: str
     node_type: str
     conditional_group: Optional[str] = None
     parallel_group: Optional[str] = None
+    align_with_node_name: Optional[str] = None
 
     @field_validator("node_name", mode="before")
     @classmethod
     def _strip_node_name(cls, v: str) -> str:
         return strip_node_suffix(v)
+
+    @field_validator("align_with_node_name", mode="before")
+    @classmethod
+    def _strip_align_ref(cls, v: str | None) -> str | None:
+        return strip_node_suffix(v) if v is not None else None
 
 
 class TopologyEdgeDef(BaseModel):
@@ -100,25 +111,42 @@ class GraphTopologyResponse(BaseModel):
 
 GRAPH_TOPOLOGY = GraphTopologyResponse(
     nodes=[
-        TopologyNodeDef(node_name="query_node",       node_type="Workflow"),
-        TopologyNodeDef(node_name="prepare_peers",    node_type="Workflow",    parallel_group="analyze_parallel"),
-        TopologyNodeDef(node_name="prepare_macro_stats",    node_type="Workflow", parallel_group="analyze_parallel"),
-        TopologyNodeDef(node_name="prepare_index",    node_type="Workflow", parallel_group="analyze_parallel"),
-        TopologyNodeDef(node_name="prepare_news",        node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="query_node",         node_type="Workflow"),
+        TopologyNodeDef(node_name="prepare_peers",      node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_macro_stats", node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_index",      node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_news",       node_type="Workflow", parallel_group="analyze_parallel"),
         TopologyNodeDef(node_name="prepare_industry_news", node_type="Workflow", parallel_group="analyze_parallel"),
-        TopologyNodeDef(node_name="prepare_macro_news",    node_type="Workflow", parallel_group="analyze_parallel"),
-        TopologyNodeDef(node_name="prepare_options",       node_type="Workflow", parallel_group="analyze_parallel"),
-        TopologyNodeDef(node_name="prepare_futures",       node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_macro_news", node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="load_symbol_stats", node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_options",    node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_futures",    node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="prepare_fundamentals", node_type="Workflow", parallel_group="analyze_parallel"),
+        TopologyNodeDef(node_name="load_peers_stats",   node_type="Workflow", align_with_node_name="prepare_peers"),
+        TopologyNodeDef(node_name="final_report",       node_type="Workflow"),
     ],
     edges=[
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_peers",        kind="sequential"),
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_macro_stats",  kind="sequential"),
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_index",        kind="sequential"),
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_news",         kind="sequential"),
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_industry_news", kind="sequential"),
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_macro_news",   kind="sequential"),
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_options",      kind="sequential"),
-        TopologyEdgeDef(from_node="query_node",    to_node="prepare_futures",      kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",       to_node="prepare_peers",       kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",       to_node="prepare_macro_stats", kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",       to_node="prepare_index",       kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",       to_node="prepare_news",        kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",       to_node="prepare_industry_news", kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",       to_node="prepare_macro_news",  kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",       to_node="load_symbol_stats", kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",       to_node="prepare_options",     kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",       to_node="prepare_futures",     kind="sequential"),
+        TopologyEdgeDef(from_node="query_node",       to_node="prepare_fundamentals", kind="sequential"),
+        TopologyEdgeDef(from_node="prepare_peers",    to_node="load_peers_stats",    kind="sequential"),
+        TopologyEdgeDef(from_node="load_peers_stats",   to_node="final_report", kind="sequential"),
+        TopologyEdgeDef(from_node="prepare_macro_stats", to_node="final_report", kind="sequential"),
+        TopologyEdgeDef(from_node="prepare_index",      to_node="final_report", kind="sequential"),
+        TopologyEdgeDef(from_node="prepare_news",       to_node="final_report", kind="sequential"),
+        TopologyEdgeDef(from_node="prepare_industry_news", to_node="final_report", kind="sequential"),
+        TopologyEdgeDef(from_node="prepare_macro_news", to_node="final_report", kind="sequential"),
+        TopologyEdgeDef(from_node="load_symbol_stats", to_node="final_report", kind="sequential"),
+        TopologyEdgeDef(from_node="prepare_options",    to_node="final_report", kind="sequential"),
+        TopologyEdgeDef(from_node="prepare_futures",    to_node="final_report", kind="sequential"),
+        TopologyEdgeDef(from_node="prepare_fundamentals", to_node="final_report", kind="sequential"),
     ],
 )
 
@@ -201,6 +229,43 @@ def get_compiled_topology() -> GraphTopologyResponse:
             for t in targets:
                 par_group_map[t] = group_name
 
+    # Detect "continuation" nodes: a node B is a continuation of node A when
+    # A is part of a parallel group (multi-spur fan-out) and B is A's only
+    # non-END sequential successor.  In the UI, B should align to the same
+    # y-coordinate as A (same horizon), forming a two-slot branch while the
+    # other spurs in the group are single-slot.
+    successors: dict[str, list[str]] = {}
+    for edge in drawable.edges:
+        if edge.conditional:
+            continue
+        if edge.source in skip:
+            continue
+        if edge.target in skip:
+            continue
+        successors.setdefault(edge.source, []).append(edge.target)
+
+    align_map: dict[str, str] = {}
+    for name, succ_list in successors.items():
+        if par_group_map.get(name) is None:
+            continue
+        non_end_successors = [s for s in succ_list if s not in skip]
+        if len(non_end_successors) != 1:
+            continue
+        successor_name = non_end_successors[0]
+        # Only align when the successor is NOT itself in the same parallel
+        # group (which would indicate a sibling in a multi-row fan) and has
+        # no other predecessor -- i.e. it is a "continuation" of `name`.
+        if par_group_map.get(successor_name) == par_group_map.get(name):
+            continue
+        predecessor_count = sum(
+            1
+            for e in drawable.edges
+            if (not e.conditional and e.target == successor_name and e.source not in skip)
+        )
+        if predecessor_count != 1:
+            continue
+        align_map[successor_name] = name
+
     topology_nodes: list[TopologyNodeDef] = []
     for node_id in drawable.nodes:
         if node_id in skip:
@@ -212,6 +277,7 @@ def get_compiled_topology() -> GraphTopologyResponse:
                 node_type=node_type,
                 conditional_group=cond_group_map.get(node_id),
                 parallel_group=par_group_map.get(node_id),
+                align_with_node_name=align_map.get(node_id),
             )
         )
 

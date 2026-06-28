@@ -1,6 +1,6 @@
 """calculate_corr -- common NodeTask to compute pairwise Pearson correlation of close prices.
 
-Fetches close-price series for a list of equity symbols from
+Fetches close-price series for a list of equity/stock/etf/futures symbols from
 ``fin_markets.quant_stats`` and computes the full Pearson correlation matrix
 using ``pandas``.
 
@@ -46,6 +46,7 @@ from pydantic import BaseModel, Field
 
 from backend.celery_task.workers.task_delegation import delegate_completion
 from backend.db.postgres import raw_conn
+from backend.db.postgres.queries.fin_markets_indexes import is_index_ticker
 from backend.db.postgres.queries.fin_markets_quant import OhlcvStatsSQL
 from backend.langgraph.lifecycle import complete_task, create_task
 from backend.langgraph.models.common_tasks.errors.codes import (
@@ -53,6 +54,7 @@ from backend.langgraph.models.common_tasks.errors.codes import (
 )
 from backend.langgraph.models.models import TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
+from backend.quant.instrument_types import resolve_instrument_type
 from backend.quant.stats import compute_pearson_matrix, STATS_VIEW_TYPE
 
 logger = logging.getLogger(__name__)
@@ -82,12 +84,13 @@ class CalculateCorrInput(BaseModel):
     """Input for the calculate_corr task.
 
     Attributes:
-        symbols:     List of equity ticker symbols to correlate, e.g. ``['AAPL', 'MSFT']``.
+        symbols:     List of equity/stock/etf/futures ticker symbols to correlate,
+                     e.g. ``['AAPL', 'MSFT']``.
         granularity: Bar granularity to query from ``quant_stats``, e.g. ``'1day'``.
         window_bars: Number of most-recent bars to include per symbol.
     """
 
-    symbols: list[str] = Field(min_length=2, description="Equity tickers to correlate.")
+    symbols: list[str] = Field(min_length=2, description="Equity/stock/etf/futures tickers to correlate.")
     granularity: str = Field(description="Bar granularity: '1h', '1day', '1mo', etc.")
     window_bars: int = Field(default=252, ge=2, description="Lookback bar count per symbol.")
 
@@ -158,8 +161,12 @@ async def _fetch_close_series(symbol: str, granularity: str, start_dt: datetime)
         with close prices as values, named *symbol*.  Empty Series when no
         rows are found.
     """
+    instrument_type = resolve_instrument_type(symbol, is_index=is_index_ticker(symbol))
     async with raw_conn(readonly=True) as conn:
-        cur = await conn.execute(OhlcvStatsSQL.GET_BARS_IN_WINDOW, (symbol, granularity, start_dt))
+        cur = await conn.execute(
+            OhlcvStatsSQL.GET_BARS_IN_WINDOW,
+            {"symbol": symbol, "instrument_type": instrument_type, "granularity": granularity, "start_dt": start_dt},
+        )
         rows = await cur.fetchall()
 
     if not rows:
@@ -190,9 +197,11 @@ async def _fetch_sma_ema_series(
         Dict mapping each indicator column to a :class:`pandas.Series`.
         Empty dict when no rows are found.
     """
+    instrument_type = resolve_instrument_type(symbol, is_index=is_index_ticker(symbol))
     async with raw_conn(readonly=True) as conn:
         cur = await conn.execute(
-            OhlcvStatsSQL.GET_SMA_EMA_BARS_IN_WINDOW, (symbol, granularity, start_dt)
+            OhlcvStatsSQL.GET_SMA_EMA_BARS_IN_WINDOW,
+            {"symbol": symbol, "instrument_type": instrument_type, "granularity": granularity, "start_dt": start_dt},
         )
         rows = await cur.fetchall()
 

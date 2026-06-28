@@ -41,6 +41,7 @@ _PERIOD_MAP: dict[str, tuple[str, str]] = {
     "3mo": ("6mo", "1wk"),
     "1y":  ("2y",  "1wk"),
     "2y":  ("2y",  "1d"),
+    "max": ("max", "1d"),
 }
 
 # yfinance column name -> OhlcvStatsMatrix series key

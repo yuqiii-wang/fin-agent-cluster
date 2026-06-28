@@ -1,30 +1,25 @@
-"""PrepareFuturesNode -- Workflow node that fetches and calculates OHLCV-based
-stats for the configured futures-instrument universe (Gold, Silver, Crude,
-Natural Gas, BTC, ETH, etc.) via the shared ``get_and_calculate_stats`` pipeline.
+"""PrepareFuturesNode -- Workflow node that fetches OHLCV bars for the
+queried symbol across multiple aggregation windows defined by
+:class:`~backend.quant.stats.constants.FUTURES_PERIODS`.
 
-Hierarchy
----------
-Thread
-  └── prepare_futures (Workflow)
-        └── get_and_calculate_stats (TaskSeq -> get_stats + calculate_stats)
-            [× N instruments, parallel]
+The node mirrors :class:`PrepareOptionsNode` in structure:
 
-Node design
------------
-The node loads the ``'futures'`` category from ``fin_markets.macro_instruments``
-at runtime and runs ``get_and_calculate_stats`` (``pipeline='futures'``) for
-each instrument in parallel.  Each instrument's bars are processed through the
-pandas_ta pipeline and upserted into the appropriate ``quant_*_stats`` table
-determined by the stats-record instrument-type classifier
-(e.g. ``precious_metal`` -> ``quant_precious_metal_stats``, ``commodity`` ->
-``quant_commodity_stats``, ``crypto`` -> ``quant_crypto_stats``).
+1. ``prepare_futures_requests`` proposes the full catalogue of windows.
+2. The hosting node filters windows by its own ``maturity_horizon``.
+3. A fan-out of ``get_and_calculate_stats(pipeline="futures")`` calls is
+   issued concurrently, one per window.
+
+Crucially, futures bars share the same ``OhlcvStatsMatrix`` shape as plain
+equities -- the difference is routing: each bar is tagged with
+``pipeline="futures"`` and the underlying ``StatsRecord.id`` is prefixed
+``yf-futures-`` (so downstream renderers / caches can distinguish futures
+bars from plain equity bars without re-running symbol heuristics).
 
 Predecessor
 -----------
 ``query_node`` -- must be completed before ``prepare_futures`` starts.
-Runs in parallel with ``prepare_peers``, ``prepare_macro_stats``,
-``prepare_index``, ``prepare_news``, ``prepare_industry_news``,
-``prepare_macro_news``, and ``prepare_options``.
+Runs in parallel with ``prepare_peers``, ``prepare_index``,
+``prepare_news``, ``prepare_industry_news``, and ``prepare_options``.
 """
 
 from __future__ import annotations
@@ -35,11 +30,8 @@ from typing import Any, ClassVar
 
 from langchain_core.runnables import Runnable, RunnableLambda
 
-from backend.db.postgres.queries.fin_markets_macro import (
-    MacroInstrument,
-    load_macro_instruments,
-)
 from backend.db.postgres.types import NodeType
+from backend.langgraph.lifecycle import read_node_output
 from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats import (
     GetAndCalculateStatsInput,
     get_and_calculate_stats,
@@ -47,127 +39,238 @@ from backend.langgraph.models.common_tasks.task_seqs.get_and_calculate_stats imp
 from backend.langgraph.models.models import NodeContext
 from backend.langgraph.models.node import BaseNode
 from backend.langgraph.models.task import NodeTask
-from backend.langgraph.nodes.prepare_futures.models import (
-    FuturesInstrumentResult,
-    PrepareFuturesInput,
-    PrepareFuturesOutput,
+from backend.langgraph.nodes.prepare_options.models import (
+    OptionsStatResult,
+    PrepareOptionsInput,
+    PrepareOptionsRequestItem,
+    PrepareOptionsRequestsInput,
+    PrepareOptionsRequestsOutput,
+    PrepareOptionsOutput,
 )
-from backend.langgraph.state import GraphState
+from backend.langgraph.nodes.prepare_futures.tasks.prepare_futures_requests import (
+    prepare_futures_requests,
+)
+from backend.quant.stats.constants import FUTURES_PERIODS
 
 logger = logging.getLogger(__name__)
 
-_STATS_PERIOD: str = "1y"
-_INSTRUMENT_CATEGORY: str = "futures"
+_DEFAULT_HORIZON: FUTURES_PERIODS = FUTURES_PERIODS.ONE_YEAR
 
 
-class PrepareFuturesNode(BaseNode[PrepareFuturesInput, PrepareFuturesOutput]):
-    """Workflow node: OHLCV stats for the configured futures universe."""
+def _coerce_horizon_seconds(value: object) -> int:
+    """Normalise any supported horizon representation to a raw seconds int.
+
+    Accepts:
+      * ``None`` → ``ONE_YEAR.seconds``.
+      * A ``FUTURES_PERIODS`` member.
+      * A string matching ``display_name`` or ``name``.
+      * A raw int / float seconds (snapped to the largest enum member
+        whose seconds are still <= the value).
+      * A ``(display_name, seconds)`` tuple.
+
+    Returns:
+        The raw seconds of the chosen enum member.
+    """
+
+    if value is None:
+        return int(_DEFAULT_HORIZON.seconds)
+    if isinstance(value, FUTURES_PERIODS):
+        return int(value.seconds)
+    if isinstance(value, str):
+        key = value.strip().lower().replace("_", " ")
+        if not key:
+            return int(_DEFAULT_HORIZON.seconds)
+        for member in FUTURES_PERIODS:
+            if member.display_name.lower() == key or member.name.lower() == key:
+                return int(member.seconds)
+        try:
+            seconds = int(float(key))
+        except ValueError:
+            raise ValueError(
+                f"maturity_horizon string {value!r} is not a recognised "
+                f"FUTURES_PERIODS label."
+            )
+        return _snap_seconds(seconds)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return _snap_seconds(int(value))
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        try:
+            seconds = int(value[1])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"maturity_horizon tuple[1] is not an int seconds value: {value}"
+            ) from exc
+        return _snap_seconds(seconds)
+    raise ValueError(f"Unsupported maturity_horizon value: {value!r}")
+
+
+def _snap_seconds(seconds: int) -> int:
+    """Snap a raw ``seconds`` to the nearest-fitting enum member's seconds."""
+
+    if seconds < 0:
+        raise ValueError(f"maturity_horizon seconds must be >= 0, got {seconds}")
+    ordered = sorted(FUTURES_PERIODS, key=lambda m: m.seconds)
+    chosen = ordered[0]
+    for member in ordered:
+        if member.seconds <= seconds:
+            chosen = member
+        else:
+            break
+    return int(chosen.seconds)
+
+
+class PrepareFuturesNode(BaseNode[PrepareOptionsInput, PrepareOptionsOutput]):
+    """Workflow node: multi-window OHLCV for futures pipeline."""
 
     node_name = "prepare_futures"
     node_type = NodeType.WORKFLOW
     display_name = "Prepare Futures"
     category = "Analysis"
     parallel_group: ClassVar[str] = "analyze_parallel"
-    config_fields: ClassVar[list[dict]] = []
-    tasks: ClassVar[list[NodeTask]] = [*get_and_calculate_stats.tasks]
+
+    # ``prepare_futures_requests`` must be first so LangGraph dispatches it
+    # before any of the stats pipelines it plans.
+    tasks: ClassVar[list[NodeTask]] = [
+        prepare_futures_requests,
+        *get_and_calculate_stats.tasks,
+    ]
+
     _prev_node_names: ClassVar[list[str]] = ["query_node"]
 
-    async def build_input(self, state: GraphState) -> PrepareFuturesInput:
-        """Return typed input with the configured stats period.
+    async def build_input(self, state: Any) -> PrepareOptionsInput:
+        """Read stock_symbol from query_node's completed node_executions row."""
 
-        Args:
-            state: Current GraphState.
-
-        Returns:
-            :class:`PrepareFuturesInput` with the configured stats period.
-        """
-        return PrepareFuturesInput(period=_STATS_PERIOD)
+        query_node_id = self._find_node_id_by_name(state, "query_node")
+        stock_symbol = ""
+        if query_node_id:
+            output = await read_node_output(query_node_id)
+            stock_symbol = output.get("stock_name", "") or ""
+        if not stock_symbol:
+            logger.warning("[PF-001] No stock_symbol from query_node; prepare_futures will skip.")
+        return PrepareOptionsInput(
+            stock_symbol=stock_symbol,
+            ohlcv_period="1y",
+            options_period="1y",
+            maturity_horizon=_DEFAULT_HORIZON,
+        )
 
     def build_chain(
-        self, ctx: NodeContext
-    ) -> Runnable[PrepareFuturesInput, dict[str, Any]]:
-        """Run get_and_calculate_stats for every futures instrument in parallel.
+        self,
+        ctx: NodeContext,
+    ) -> Runnable[PrepareOptionsInput, dict[str, Any]]:
+        """Run two phases: propose windows, then parallel fan-out of futures pipelines."""
 
-        Args:
-            ctx: Current node context carrying thread/node/task identity.
+        async def _run(node_input: PrepareOptionsInput) -> dict[str, Any]:
+            results: list[OptionsStatResult] = []
+            df_splits: list[dict[str, Any]] = []
 
-        Returns:
-            Runnable that produces a keyed dict with ``instruments`` and
-            ``df_splits``, consumed by :meth:`build_output`.
-        """
+            if not node_input.stock_symbol:
+                return {"results": results, "df_splits": df_splits}
 
-        async def _run(node_input: PrepareFuturesInput) -> dict[str, Any]:
-            instruments: list[MacroInstrument] = await load_macro_instruments(
-                _INSTRUMENT_CATEGORY
-            )
-            if not instruments:
-                logger.warning(
-                    "[PF-001] No futures instruments loaded from DB "
-                    "(category=%r); skipping prepare_futures.",
-                    _INSTRUMENT_CATEGORY,
+            # Phase 1 -- propose the full catalogue of windows.
+            try:
+                plan_output = await self.run_task(
+                    prepare_futures_requests,
+                    ctx,
+                    PrepareOptionsRequestsInput(
+                        stock_symbol=node_input.stock_symbol,
+                        include_next=True,
+                    ),
                 )
-                return {"instruments": [], "df_splits": []}
+                plan: PrepareOptionsRequestsOutput = plan_output.content
+                horizon_seconds = _coerce_horizon_seconds(node_input.maturity_horizon)
+                logger.info(
+                    "prepare_futures plan symbol=%r horizon_seconds=%d "
+                    "maturities=%d requests=%d",
+                    node_input.stock_symbol,
+                    horizon_seconds,
+                    len(plan.maturities),
+                    len(plan.requests),
+                )
+            except Exception as exc:
+                logger.error("[PF-003] prepare_futures_requests failed: %s", exc)
+                raise
 
-            async def _fetch_one(
-                inst: MacroInstrument,
-            ) -> tuple[FuturesInstrumentResult, dict[str, Any]] | None:
+            # Phase 2 -- fan out: one get_and_calculate_stats per window
+            # within the node-level horizon.
+            async def _run_one(req: PrepareOptionsRequestItem) -> None:
                 try:
                     seq_out = await get_and_calculate_stats.run(
                         self.run_task,
                         ctx,
                         GetAndCalculateStatsInput(
-                            symbol=inst.symbol,
-                            period=node_input.period,
-                            pipeline="futures",
+                            symbol=req.symbol,
+                            period=req.period,
+                            pipeline=req.pipeline,
+                            maturity_horizon=req.maturity_horizon,
                         ),
                     )
                     calc = seq_out.calculate_stats
-                    result = FuturesInstrumentResult(
-                        code=inst.code,
-                        symbol=inst.symbol,
-                        label=inst.label,
-                        currency_code=inst.currency_code,
-                        rows_upserted=int(getattr(calc, "rows_upserted", 0) or 0),
-                        granularity=getattr(calc, "granularity", "") or "",
-                        source=getattr(calc, "source", "") or "",
-                        from_cache=bool(seq_out.get_stats.from_cache),
+                    rows = int(getattr(calc, "rows_upserted", 0) or 0)
+                    results.append(
+                        OptionsStatResult(
+                            pipeline=req.pipeline,
+                            symbol=req.symbol,
+                            maturity_label=req.maturity_label,
+                            maturity_seconds=req.maturity_seconds,
+                            rows_upserted=rows,
+                            from_cache=bool(seq_out.get_stats.from_cache),
+                        )
                     )
-                    return result, getattr(calc, "df_split", {}) or {}
+                    df_split = getattr(calc, "df_split", None)
+                    if df_split:
+                        df_splits.append(
+                            {
+                                "symbol": req.symbol,
+                                "label": f"{req.symbol} ({req.maturity_label})",
+                                "df_split": df_split,
+                            }
+                        )
                 except Exception as exc:
                     logger.error(
-                        "[PF-002] futures stats failed symbol=%r: %s", inst.symbol, exc,
+                        "[PF-004] futures pipeline failed symbol=%r label=%r: %s",
+                        req.symbol, req.maturity_label, exc,
                     )
-                    return None
 
-            raw = await asyncio.gather(*[_fetch_one(inst) for inst in instruments])
-            pairs = [r for r in raw if r is not None]
-            results = [p[0] for p in pairs]
-            df_splits = [
-                {"symbol": p[0].symbol, "label": p[0].label, "df_split": p[1]}
-                for p in pairs
-                if p[1]
-            ]
-            return {"instruments": results, "df_splits": df_splits}
+            awaitables: list[Any] = []
+            for item in plan.requests:
+                if item.maturity_seconds is None:
+                    continue
+                if item.maturity_seconds > horizon_seconds:
+                    continue
+                # Override symbol/period with the current node's inputs so
+                # a single plan can be reused for different symbols/periods.
+                item = PrepareOptionsRequestItem(
+                    symbol=node_input.stock_symbol,
+                    period=item.period,
+                    pipeline=item.pipeline,
+                    maturity_horizon=item.maturity_horizon,
+                    maturity_label=item.maturity_label,
+                    maturity_seconds=item.maturity_seconds,
+                )
+                awaitables.append(_run_one(item))
+
+            if awaitables:
+                await asyncio.gather(*awaitables)
+
+            return {"results": results, "df_splits": df_splits}
 
         return RunnableLambda(_run)
 
-    def build_output(self, results: dict[str, Any]) -> PrepareFuturesOutput:
-        """Compose node output from the parallel pipeline results.
+    def build_output(self, results: dict[str, Any]) -> PrepareOptionsOutput:
+        """Compose node output from the parallel pipeline results."""
 
-        Args:
-            results: Keyed task outputs from the chain.
-
-        Returns:
-            :class:`PrepareFuturesOutput` with per-instrument results and any
-            ``df_split`` payloads.
-        """
-        return PrepareFuturesOutput(
-            instruments=results.get("instruments", []),
-            period=results.get("period", _STATS_PERIOD) or _STATS_PERIOD,
-            df_splits=results.get("df_splits", []),
+        symbol = ""
+        items = results.get("results") or []
+        if items:
+            symbol = str(getattr(items[0], "symbol", ""))
+        return PrepareOptionsOutput(
+            stock_symbol=symbol,
+            results=items,
+            df_splits=(results.get("df_splits") or []),
         )
 
-    def get_state_updates(self, output: PrepareFuturesOutput) -> dict[str, Any]:
+    def get_state_updates(self, output: PrepareOptionsOutput) -> dict[str, Any]:
         """No GraphState updates -- data flows via DB."""
         return {}
 

@@ -79,6 +79,8 @@ class CancelHandlerMixin:
 
         # 3. Return cancelled state delta -- do not raise.
         cancelled_record = self._build_node_record(node_id, version, prev_node_ids, "cancelled")  # type: ignore[attr-defined]
+        cancelled_record["metadata"]["error"] = f"cancelled: {reason}"
+        cancelled_record["metadata"]["node_id"] = node_id
         return {"nodes": {node_id: cancelled_record}}
 
     async def _fail_self_and_cascade(
@@ -146,8 +148,12 @@ class CancelHandlerMixin:
                 thread_id, exc,
             )
 
-        # 3. Return failed state delta -- do not raise.
+        # 3. Return failed state delta -- do not raise.  Put the error string
+        # into metadata so downstream nodes (and UI, via the returned state)
+        # can inspect why the predecessor failed without doing a DB round-trip.
         failed_record = self._build_node_record(node_id, version, prev_node_ids, "failed")  # type: ignore[attr-defined]
+        failed_record["metadata"]["error"] = error
+        failed_record["metadata"]["node_id"] = node_id
         return {"nodes": {node_id: failed_record}}
 
 

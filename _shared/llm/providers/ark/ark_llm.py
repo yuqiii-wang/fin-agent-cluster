@@ -1,24 +1,9 @@
-"""ARK (Volcano Engine / Doubao) chat model provider.
+"""ARK (Volcano Engine / Doubao) chat model provider and its native web_search extension.
 
 ARK exposes an OpenAI-compatible ``/chat/completions`` endpoint at
-``https://ark.cn-beijing.volces.com/api/v3``.  We implement a custom
-:class:`BaseChatModel` subclass backed by plain httpx so there is no
-dependency on ``langchain_openai`` and the HTTP proxy is fully controlled.
-
-For non-streaming (completion) mode POST with ``"stream": false``.
-For streaming mode POST with ``"stream": true`` — ARK returns standard
-OpenAI SSE lines::
-
-    data: {"choices": [{"delta": {"content": "..."}, "finish_reason": null}]}
-    ...
-    data: [DONE]
-
-Usage::
-
-    from _shared.llm.providers.ark import get_ark_llm
-
-    llm = get_ark_llm()
-    result = llm.invoke([HumanMessage(content="Summarise: Apple beat EPS")])
+``https://ark.cn-beijing.volces.com/api/v3``.  Certain Doubao models also expose a
+native ``/api/v3/web_search`` endpoint that performs a web search and summarises the
+result in a single call — this is wired up via :meth:`ArkLLM.search_and_summary`.
 """
 
 from __future__ import annotations
@@ -49,7 +34,7 @@ from _shared.httpx_client import (
     make_ark_async_client,
     make_ark_sync_client,
 )
-from _shared.llm.providers.base_llm import BaseLLM
+from _shared.llm.providers.base_llm import BaseLLM, SearchAndSummaryResult
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +317,128 @@ class ArkLLM(BaseLLM):
         except TimeoutException as exc:
             logger.error("[ArkLLM] request to %s timed out: %s", url, exc)
             raise
+
+    # ------------------------------------------------------------------
+    # Native web_search support
+    # ------------------------------------------------------------------
+
+    async def search_and_summary(
+        self,
+        query: str,
+        **kwargs: Any,
+    ) -> Optional["SearchAndSummaryResult"]:
+        """Call ARK/Doubao's native web-search endpoint.
+
+        Uses the standard ``/chat/completions`` endpoint with
+        ``tools=[{"type":"web_search"}]`` — Doubao models that support
+        ``web_search`` run an internet search, cite sources, and return
+        a summarised answer.  Models that do not support the
+        ``web_search`` tool raise an HTTP error; in that case we return
+        ``None`` so the caller falls back to DDGS + LLM summary.
+
+        Args:
+            query: Plain-text query.
+            **kwargs: Extra request body overrides forwarded verbatim.
+
+        Returns:
+            :class:`SearchAndSummaryResult` on success, ``None`` when the
+            tool is unsupported / disabled.
+        """
+        if not query or not query.strip():
+            return None
+
+        url = f"{self.base_url}/chat/completions"
+        request_body: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant with web search capability."},
+                {"role": "user", "content": query},
+            ],
+            "tools": [
+                {"type": "web_search"},
+            ],
+            "stream": False,
+        }
+        # Let callers override e.g. temperature / stream without redoing
+        # the dict from scratch.
+        for k, v in kwargs.items():
+            request_body[k] = v
+
+        try:
+            async with make_ark_async_client(proxy=self.http_proxy, timeout_seconds=120.0) as client:
+                resp = await client.post(
+                    url,
+                    json=request_body,
+                    headers=self._auth_headers(),
+                )
+                if resp.status_code == 400 or resp.status_code == 403 or resp.status_code == 404:
+                    # Unspecific "unsupported tool" / "feature not enabled"
+                    # response — fall back to DDGS + LLM summary.
+                    logger.warning(
+                        "[ArkLLM.search_and_summary] HTTP %d from %s — web_search unsupported; body=%s",
+                        resp.status_code, url, resp.text[:500],
+                    )
+                    return None
+                if resp.status_code >= 400:
+                    logger.error(
+                        "[ArkLLM.search_and_summary] HTTP %d from %s — %s",
+                        resp.status_code, url, resp.text[:500],
+                    )
+                    resp.raise_for_status()
+                data = resp.json()
+        except ConnectError as exc:
+            logger.error("[ArkLLM.search_and_summary] cannot connect to ARK at %s: %s", url, exc)
+            return None
+        except TimeoutException as exc:
+            logger.error("[ArkLLM.search_and_summary] request to %s timed out: %s", url, exc)
+            return None
+        except Exception as exc:  # noqa: BLE001 — we intentionally fall back on any error
+            logger.error("[ArkLLM.search_and_summary] failed: %s", exc)
+            return None
+
+        choices = data.get("choices") or []
+        if not choices:
+            return None
+
+        answer_text = ""
+        sources: list[dict[str, Any]] = []
+        msg_data = choices[0].get("message", {})
+        answer_text = msg_data.get("content") or ""
+
+        # Doubao web_search typically puts source URLs inside tool_calls
+        # or inside the assistant message itself.  Pull any URL-bearing
+        # dicts out of tool_calls and the response top-level.
+        raw_calls = msg_data.get("tool_calls") or []
+        for tc in raw_calls:
+            try:
+                function_body = (tc.get("function") or {}).get("arguments") or "{}"
+                if isinstance(function_body, str):
+                    parsed = json.loads(function_body)
+                else:
+                    parsed = function_body
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            # Normalise known shapes: {url, title, snippet} / {link, name}
+            url_candidate = (
+                parsed.pop("url", None) or parsed.pop("link", None) or parsed.pop("href", None)
+            )
+            if url_candidate:
+                sources.append({
+                    "url": url_candidate,
+                    "title": (
+                        parsed.pop("title", None) or parsed.pop("name", None) or parsed.pop("source", None) or ""
+                    ),
+                    "snippet": parsed.pop("snippet", None) or "",
+                    **parsed,
+                })
+
+        return SearchAndSummaryResult(
+            answer=answer_text,
+            sources=sources,
+            raw={"response": data},
+        )
 
 
 def get_ark_llm(temperature: float = 0.1, streaming: bool = True) -> ArkLLM:

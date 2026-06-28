@@ -29,25 +29,126 @@ type EdgeUnit =
   | { type: 'single'; from: string; to: string; kind: EdgeKind }
   | { type: 'fan'; froms: string[]; tos: string[]; kind: 'fan-out' | 'fan-in'; dashed?: boolean };
 
+/** Group `topEdges` into logical rendering units.
+ *
+ * Rules (applied in order; each tuple consumed exactly once):
+ *   1. Multiple edges sharing the SAME destination → a single `fan-in` unit.
+ *      This is the right-angle bus pattern for merge nodes (e.g. `final_report`).
+ *   2. Multiple edges sharing the SAME source → a single `fan-out` unit.
+ *   3. Any remaining tuple → a `single` (straight-line) unit.
+ *
+ * Conditional fan variants are normalised to `fan-out`/`fan-in` for grouping;
+ * the `dashed` flag is set on the unit instead so `FanEdgeGroup` can still
+ * render conditionality when the runtime graph needs it.
+ */
 function groupEdges(edges: EdgeTuple[]): EdgeUnit[] {
-  const units: EdgeUnit[] = [];
+  // Count outgoing / incoming edge cardinality so we can pick the dominant
+  // grouping direction when a single edge could be assigned either way.
+  const outDeg = new Map<string, number>();
+  const inDeg = new Map<string, number>();
+  for (const [from, to] of edges) {
+    outDeg.set(from, (outDeg.get(from) ?? 0) + 1);
+    inDeg.set(to, (inDeg.get(to) ?? 0) + 1);
+  }
+
   const consumed = new Set<number>();
+  const units: EdgeUnit[] = [];
+
+  // 1. Group edges by destination (fan-in).  Iterate in first-seen order so
+  //    `final_report` and its siblings are drawn in the order the topology
+  //    declared them.
+  const byDest = new Map<string, { indices: number[]; anyConditional: boolean }>();
+  edges.forEach(([from, to, kind], i) => {
+    // Fan-in eligible: an edge whose destination has more than one incoming edge.
+    // Also accept explicitly-marked fan-in / cond-fan-in tuples even when the
+    // destination otherwise looks single-input (keeps backend intent intact).
+    const eligible =
+      (inDeg.get(to) ?? 0) > 1 ||
+      kind === 'fan-in' ||
+      kind === 'cond-fan-in';
+    if (!eligible) return;
+    const bucket = byDest.get(to) ?? { indices: [], anyConditional: false };
+    bucket.indices.push(i);
+    if (kind === 'cond-fan-in' || kind === 'conditional') bucket.anyConditional = true;
+    byDest.set(to, bucket);
+  });
+
+  // Emit fan-in groups, marking each participating edge index consumed.  Only
+  // actually emit a *group* when there is more than one participating edge;
+  // single-participant entries fall through to the later passes so simple
+  // sequential edges keep their straight-line rendering.
+  const destOrder: string[] = [];
+  const seenDest = new Set<string>();
+  for (const [, to] of edges) {
+    if (!seenDest.has(to)) {
+      seenDest.add(to);
+      destOrder.push(to);
+    }
+  }
+  for (const dest of destOrder) {
+    const bucket = byDest.get(dest);
+    if (!bucket || bucket.indices.length < 2) continue;
+    bucket.indices.forEach(i => consumed.add(i));
+    const froms = bucket.indices
+      .map(i => edges[i][0])
+      // Preserve declaration order, but deduplicate so the visual bus isn't
+      // crowded with duplicate spurs when the layout over-declares them.
+      .filter((name, idx, arr) => arr.indexOf(name) === idx);
+    units.push({
+      type: 'fan',
+      froms,
+      tos: [dest],
+      kind: 'fan-in',
+      dashed: bucket.anyConditional,
+    });
+  }
+
+  // 2. Group remaining edges by source (fan-out).
+  const bySource = new Map<string, { indices: number[]; anyConditional: boolean }>();
+  edges.forEach(([from, to, kind], i) => {
+    if (consumed.has(i)) return;
+    const eligible =
+      (outDeg.get(from) ?? 0) > 1 ||
+      kind === 'fan-out' ||
+      kind === 'cond-fan-out';
+    if (!eligible) return;
+    const bucket = bySource.get(from) ?? { indices: [], anyConditional: false };
+    bucket.indices.push(i);
+    if (kind === 'cond-fan-out' || kind === 'conditional') bucket.anyConditional = true;
+    bySource.set(from, bucket);
+  });
+
+  const sourceOrder: string[] = [];
+  const seenSource = new Set<string>();
+  for (const [from] of edges) {
+    if (!seenSource.has(from)) {
+      seenSource.add(from);
+      sourceOrder.push(from);
+    }
+  }
+  for (const src of sourceOrder) {
+    const bucket = bySource.get(src);
+    if (!bucket || bucket.indices.length < 2) continue;
+    bucket.indices.forEach(i => consumed.add(i));
+    const tos = bucket.indices
+      .map(i => edges[i][1])
+      .filter((name, idx, arr) => arr.indexOf(name) === idx);
+    units.push({
+      type: 'fan',
+      froms: [src],
+      tos,
+      kind: 'fan-out',
+      dashed: bucket.anyConditional,
+    });
+  }
+
+  // 3. Everything else — render as a single (straight-line) edge.
   for (let i = 0; i < edges.length; i++) {
     if (consumed.has(i)) continue;
     const [from, to, kind] = edges[i];
-    if (kind === 'fan-out' || kind === 'cond-fan-out') {
-      const group = edges.map((e, j) => ({ e, j })).filter(({ e, j }) => !consumed.has(j) && e[0] === from && (e[2] === kind));
-      group.forEach(({ j }) => consumed.add(j));
-      units.push({ type: 'fan', froms: [from], tos: group.map(({ e }) => e[1]), kind: 'fan-out', dashed: kind === 'cond-fan-out' });
-    } else if (kind === 'fan-in' || kind === 'cond-fan-in') {
-      const group = edges.map((e, j) => ({ e, j })).filter(({ e, j }) => !consumed.has(j) && e[1] === to && (e[2] === kind));
-      group.forEach(({ j }) => consumed.add(j));
-      units.push({ type: 'fan', froms: group.map(({ e }) => e[0]), tos: [to], kind: 'fan-in', dashed: kind === 'cond-fan-in' });
-    } else {
-      consumed.add(i);
-      units.push({ type: 'single', from, to, kind });
-    }
+    units.push({ type: 'single', from, to, kind });
   }
+
   return units;
 }
 
@@ -71,11 +172,44 @@ const NodeGraph: React.FC<Props> = ({ nodes, topology, selectedNodeId, onSelectN
     return m;
   }, [topology]);
 
+  /** Set of "from→to" pairs that are declared in the topology (used to filter
+   *  fan-out/fan-in spurs so only real edges get drawn). */
+  const topologyEdgeSet = useMemo(() => {
+    const s = new Set<string>();
+    if (!topology) return s;
+    for (const e of topology.edges) s.add(`${e.from_node}→${e.to_node}`);
+    return s;
+  }, [topology]);
+
+  /** Returns true if `fromName→toName` is explicitly declared in the topology.
+   *  When no topology is available (legacy paths), returns true so all inferred
+   *  spurs are drawn as before. */
+  const isEdgeInTopology = useMemo(() => {
+    if (!topology || topology.edges.length === 0) {
+      return (_from: string, _to: string) => true;
+    }
+    return (fromName: string, toName: string) =>
+      topologyEdgeSet.has(`${fromName}→${toName}`);
+  }, [topology, topologyEdgeSet]);
+
   const nodeByName = useMemo(() => {
     const m: Record<string, NodeInfo> = {};
     for (const n of nodes) m[n.node_name] = n;
     return m;
   }, [nodes]);
+
+  /** Nodes whose status is failed/wrong/cancelled do not forward edges —
+   *  their downstream "output" never ran and should not be rendered. */
+  const BAD_STATUSES = new Set(['failed', 'wrong', 'cancelled']);
+  const nodeProducesEdges = useMemo(() => {
+    return (nodeName: string) => {
+      const n = nodeByName[nodeName];
+      if (!n) return false;
+      if (n.is_topology_only) return false;
+      if (BAD_STATUSES.has(n.status)) return false;
+      return true;
+    };
+  }, [nodeByName]);
 
   /**
    * A subgraph is expanded when it is the selected node, or when any of its
@@ -180,9 +314,15 @@ const NodeGraph: React.FC<Props> = ({ nodes, topology, selectedNodeId, onSelectN
       })}
 
       {/* Pass 2 — top-level chain edges (sequential, fan-out/in, or conditional dashed fan)
-           Only draw edges whose source node has actually run (is_topology_only = false/undefined). */}
-      {groupEdges(topEdges.filter(([from]) => !nodeByName[from]?.is_topology_only)).map((unit, ui) => {
+           Only draw edges whose source node actually ran successfully:
+             - topology-only placeholders are pending upstream execution
+             - `failed` / `wrong` / `cancelled` nodes never produced downstream output
+           For fan-out/fan-in groups, only spurs declared in `topology.edges` are drawn so
+           partial fan-patterns (e.g. only prepare_peers→load_peers_stats inside a larger
+           parallel group) render correctly instead of spurious spurs from every sibling. */}
+      {groupEdges(topEdges.filter(([from]) => nodeProducesEdges(from))).map((unit, ui) => {
         if (unit.type === 'single') {
+          if (!isEdgeInTopology(unit.from, unit.to)) return null;
           const fp = positions[unit.from];
           const tp = positions[unit.to];
           if (!fp || !tp) return null;
@@ -201,8 +341,13 @@ const NodeGraph: React.FC<Props> = ({ nodes, topology, selectedNodeId, onSelectN
             />
           );
         }
-        const froms = unit.froms.map(n => positions[n]).filter((p): p is { x: number; y: number } => !!p);
-        const tos   = unit.tos.map(n => positions[n]).filter((p): p is { x: number; y: number } => !!p);
+        // Filter fan spurs against topology edges so only declared edges are drawn.
+        const filteredFroms = unit.froms.filter(fn =>
+          unit.tos.some(tn => isEdgeInTopology(fn, tn)));
+        const filteredTos = unit.tos.filter(tn =>
+          unit.froms.some(fn => isEdgeInTopology(fn, tn)));
+        const froms = filteredFroms.map(n => positions[n]).filter((p): p is { x: number; y: number } => !!p);
+        const tos   = filteredTos.map(n => positions[n]).filter((p): p is { x: number; y: number } => !!p);
         if (froms.length === 0 || tos.length === 0) return null;
         const fanId = `top-fan-${ui}`;
         // For conditional fans, dash each section based on whether its nearest node ran.
@@ -214,25 +359,25 @@ const NodeGraph: React.FC<Props> = ({ nodes, topology, selectedNodeId, onSelectN
         };
         const dashedSpurs = unit.dashed
           ? unit.kind === 'fan-out'
-            ? unit.tos.map(spurDashed)
-            : unit.froms.map(spurDashed)
+            ? filteredTos.map(spurDashed)
+            : filteredFroms.map(spurDashed)
           : undefined;
         const trunkDashed = unit.dashed
           ? (unit.kind === 'fan-out'
-              ? spurDashed(unit.froms[0])
-              : spurDashed(unit.tos[0]))
+              ? spurDashed(filteredFroms[0])
+              : spurDashed(filteredTos[0]))
           : false;
         // Per-spur condition labels: for fan-out keyed by each to-node; for fan-in keyed by each from-node
         const conditionLabels = unit.kind === 'fan-out'
-          ? unit.tos.map(toName => edgeConditionLabels.get(`${unit.froms[0]}→${toName}`))
-          : unit.froms.map(fromName => edgeConditionLabels.get(`${fromName}→${unit.tos[0]}`));
+          ? filteredTos.map(toName => edgeConditionLabels.get(`${filteredFroms[0]}→${toName}`))
+          : filteredFroms.map(fromName => edgeConditionLabels.get(`${fromName}→${filteredTos[0]}`));
         return (
           <FanEdgeGroup
             key={fanId}
             froms={froms}
             tos={tos}
-            fromR={effectiveRadius(unit.froms[0])}
-            toR={effectiveRadius(unit.tos[0])}
+            fromR={effectiveRadius(filteredFroms[0])}
+            toR={effectiveRadius(filteredTos[0])}
             kind={unit.kind}
             dashedSpurs={dashedSpurs}
             trunkDashed={trunkDashed}
@@ -241,7 +386,8 @@ const NodeGraph: React.FC<Props> = ({ nodes, topology, selectedNodeId, onSelectN
         );
       })}
 
-      {/* Pass 3 — inner edges per subgraph (scaled + clipped when collapsed; hover active when expanded) */}
+      {/* Pass 3 — inner edges per subgraph (scaled + clipped when collapsed; hover active when expanded)
+           Same failure-gating as top-level: subgraph edges are hidden when a source node never ran. */}
       {Array.from(innerEdges.entries()).map(([parentId, edges]) => {
         const bubble = bubbles.get(parentId);
         const expanded = !bubble || expandedSubgraphIds.has(parentId);
@@ -253,7 +399,7 @@ const NodeGraph: React.FC<Props> = ({ nodes, topology, selectedNodeId, onSelectN
             clipPath={bubble ? `url(#clip-${parentId})` : undefined}
             style={{ pointerEvents: expanded ? undefined : 'none' }}
           >
-            {groupEdges(edges).map((unit, ui) => {
+            {groupEdges(edges.filter(([from]) => nodeProducesEdges(from))).map((unit, ui) => {
               if (unit.type === 'single') {
                 const fp = positions[unit.from];
                 const tp = positions[unit.to];

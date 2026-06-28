@@ -8,6 +8,9 @@ from the OHLCV pipeline:
 * Period fallback does not apply to options chains.
 * The cache key embeds the ``maturity_horizon`` short label (``next``, ``1w``,
   ``1mo``, ...) so each maturity window gets an independent cache slot.
+* When every provider returns nothing or fails, the handler emits an empty
+  ``GetStatsOutput`` instead of raising, so the downstream calculation path
+  can still persist an empty aggregate row for observability.
 
 Public exports
 --------------
@@ -15,6 +18,8 @@ Public exports
 """
 
 from __future__ import annotations
+
+import logging
 
 from backend.db.postgres import raw_conn
 from backend.db.postgres.queries.fin_markets_input_raw import InputRawSQL
@@ -39,6 +44,8 @@ from backend.quant.stats import STATS_DATA_TYPE
 from backend.resources.stats.client import StatsClient
 from backend.resources.stats.models import StatsRecord
 
+logger = logging.getLogger(__name__)
+
 
 async def get_options_stats_handler(inp: GetStatsInput, symbol: str) -> dict:
     """Fetch an options-chain StatsRecord via StatsClient with provider fallback.
@@ -49,10 +56,9 @@ async def get_options_stats_handler(inp: GetStatsInput, symbol: str) -> dict:
         symbol: Normalised ticker.
 
     Returns:
-        Serialised :class:`GetStatsOutput` dict.
-
-    Raises:
-        ValueError: When no provider returns data.
+        Serialised :class:`GetStatsOutput` dict -- either the cached/fresh
+        record, or an empty ``GetStatsOutput`` (with ``stats_record=None``)
+        when no provider supplied options data for this symbol.
     """
     ttl_seconds = get_task_cache_ttl(_TASK_NAME)
     providers = _build_provider_chain(symbol)
@@ -115,10 +121,19 @@ async def get_options_stats_handler(inp: GetStatsInput, symbol: str) -> dict:
             pipeline=STATS_DATA_TYPE.OPTIONS.value,
         ).model_dump(mode="json")
 
-    raise ValueError(
-        f"[{STATS_TASK_NO_DATA}] No options stats data for symbol={symbol} "
-        f"period={inp.period} from any provider. Last error: {last_error}"
+    # All providers exhausted with no usable data -- emit a best-effort empty
+    # output instead of raising, so the call site can still surface the
+    # missing-data reason without breaking the graph.
+    logger.warning(
+        "[%s] no options stats data for symbol=%r period=%r; last_error=%r",
+        STATS_TASK_NO_DATA, symbol, inp.period, last_error,
     )
+    return GetStatsOutput(
+        stats_record=None,
+        from_cache=False,
+        pipeline=STATS_DATA_TYPE.OPTIONS.value,
+        note=f"{STATS_TASK_NO_DATA}: provider chain returned no items",
+    ).model_dump(mode="json")
 
 
 __all__ = ["get_options_stats_handler"]

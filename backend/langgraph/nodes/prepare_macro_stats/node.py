@@ -48,7 +48,7 @@ from backend.quant.stats import STATS_VIEW_TYPE
 
 logger = logging.getLogger(__name__)
 
-_STATS_PERIOD: str = "2y"
+_STATS_PERIOD: str = "1y"
 _INSTRUMENT_CATEGORY: str = "macro"
 
 

@@ -1,8 +1,8 @@
 """handler -- Celery-layer persistence handler for options stats.
 
 Provides:
-- ``calculate_option_stats_handler``: persist an options chain (per-contract rows +
-  per-expiry aggregates) to the database.
+- ``calculate_option_stats_handler``: persist an options chain (per-contract rows)
+  to the database and compute per-expiry metrics (vol smile, PC ratios) in memory.
 - ``_handler``: thin dispatch wrapper for Celery task registration.
 """
 
@@ -13,7 +13,6 @@ from datetime import datetime
 
 from backend.db.postgres import raw_conn
 from backend.db.postgres.queries.fin_markets_quant import (
-    DerivativeStatsSQL,
     OptionsStatsSQL,
 )
 from backend.langgraph.models.common_tasks.errors.codes import (
@@ -25,6 +24,7 @@ from backend.quant.stats import safe_float
 from .models import (
     CalculateOptionStatsInput,
     CalculateOptionStatsOutput,
+    PcRatioPoint,
     VolSmileExpiry,
     VolSmilePoint,
 )
@@ -45,8 +45,30 @@ from .parser_utils import (
 logger = logging.getLogger(__name__)
 
 
+def _positive_float(value: object) -> float | None:
+    """Return ``value`` as a non-negative finite float or ``None`` when missing.
+
+    Accepts numeric types and strings.  NaN/negative/empty values all collapse
+    to ``None`` so downstream aggregations skip them cleanly instead of
+    producing negative or NaN sums.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if f != f:  # NaN
+        return None
+    if f < 0:
+        return None
+    return f
+
+
 async def calculate_option_stats_handler(payload: dict) -> dict:
-    """Persist an options chain as per-contract rows plus per-expiry aggregates.
+    """Persist an options chain as per-contract rows and compute per-expiry metrics.
 
     Args:
         payload: Serialised :class:`CalculateOptionStatsInput` dict.
@@ -78,6 +100,11 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
     # expiry_date -> strike -> {"call": volume | None, "put": volume | None}
     volume_by_expiry: dict[datetime, dict[float, dict[str, float | None]]] = {}
 
+    # Per-expiry rolling totals used to compute Put/Call ratios even when some
+    # contracts are missing volume / open_interest fields.
+    # expiry_date -> {"call": {"volume": float, "oi": float}, "put": {...}}
+    pc_totals: dict[datetime, dict[str, dict[str, float]]] = {}
+
     try:
         async with raw_conn() as conn:
             # --- Step 1: per-contract upserts ---------------------------------
@@ -99,6 +126,12 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
                 implied_volatility = _coerce_pct(contract.implied_volatility)
                 pct_change = _coerce_pct(contract.pct_change)
 
+                # Volume / open interest: accept when positive; otherwise propagate
+                # NULL so providers that only return one of the two still produce
+                # a sensible aggregate.
+                volume = _positive_float(contract.volume)
+                open_interest = _positive_float(contract.open_interest)
+
                 await conn.execute(
                     OptionsStatsSQL.UPSERT,
                     {
@@ -114,8 +147,8 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
                         "ask":                ask,
                         "price_change":       safe_float(contract.price_change),
                         "pct_change":         pct_change,
-                        "volume":             safe_float(contract.volume),
-                        "open_interest":      safe_float(contract.open_interest),
+                        "volume":             volume,
+                        "open_interest":      open_interest,
                         "implied_volatility": implied_volatility,
                     },
                 )
@@ -136,43 +169,40 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
                     cost_strikes.setdefault(strike, {})[options_type] = cost
 
                 # Track volume for volatility smile bar chart
-                volume = safe_float(contract.volume)
                 if volume is not None and volume > 0:
                     vol_strikes = volume_by_expiry.setdefault(expiry_date, {})
                     vol_strikes.setdefault(strike, {})[options_type] = volume
 
-            # --- Step 2: per-expiry aggregate upserts -------------------------
-            for expiry_date, legs in by_expiry.items():
+                # Accumulate per-side totals for Put/Call ratio.  Missing fields
+                # contribute zero; when every contract on one side is missing the
+                # aggregate remains zero, which the SQL layer converts to NULL.
+                side = pc_totals.setdefault(
+                    expiry_date, {"call": {"volume": 0.0, "oi": 0.0}, "put": {"volume": 0.0, "oi": 0.0}}
+                )[options_type]
+                if volume is not None:
+                    side["volume"] += volume
+                if open_interest is not None:
+                    side["oi"] += open_interest
+
+            # --- Step 2: per-expiry aggregate tracking -----------------------
+            # Track expiries that have any tracked cost data, counting shared
+            # strikes for informational purposes.
+            all_expiries: set[datetime] = set(by_expiry) | set(pc_totals)
+
+            for expiry_date in sorted(all_expiries):
+                legs = by_expiry.get(expiry_date, {"call": {}, "put": {}})
                 call_costs = legs["call"]
                 put_costs = legs["put"]
                 common_strikes = call_costs.keys() & put_costs.keys()
-                if not common_strikes:
+
+                if common_strikes:
+                    expiries_aggregated += 1
+                else:
                     expiries_skipped += 1
                     logger.warning(
                         "[%s] no shared strike between calls/puts symbol=%r expiry=%s",
                         DERIV_TASK_NO_CROSS, symbol, expiry_date.date().isoformat(),
                     )
-                    continue
-
-                # ATM strike: smallest straddle cost = where call/put breakevens meet.
-                cross_strike = min(
-                    common_strikes, key=lambda k: call_costs[k] + put_costs[k]
-                )
-                estimated_price = cross_strike + (
-                    call_costs[cross_strike] - put_costs[cross_strike]
-                ) / 2.0
-
-                await conn.execute(
-                    DerivativeStatsSQL.UPSERT_OPTIONS_AGGREGATE,
-                    {
-                        "symbol":          symbol,
-                        "source":          source,
-                        "expiry_date":     expiry_date,
-                        "estimated_price": estimated_price,
-                        "cross_strike":    cross_strike,
-                    },
-                )
-                expiries_aggregated += 1
     except Exception as exc:
         logger.error(
             "[%s] options stats persistence failed symbol=%r: %s",
@@ -203,8 +233,48 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
         )
     ]
 
+    # --- Put/Call ratio per expiry plus overall -------------------------------
+    # NOTE: only the two schema columns are reported; the "total" blend
+    # is dropped because the schema keeps per-metric ratios only.
+    pc_ratio_points: list[PcRatioPoint] = []
+    total_call_volume = 0.0
+    total_put_volume = 0.0
+    total_call_oi = 0.0
+    total_put_oi = 0.0
+    for expiry_dt, sides in pc_totals.items():
+        call_v = sides["call"]["volume"] or None
+        put_v = sides["put"]["volume"] or None
+        call_oi = sides["call"]["oi"] or None
+        put_oi = sides["put"]["oi"] or None
+
+        ratio_volume = round(put_v / call_v, 4) if (call_v and put_v) else None
+        ratio_oi = round(put_oi / call_oi, 4) if (call_oi and put_oi) else None
+        if call_v and put_v:
+            total_call_volume += call_v
+            total_put_volume += put_v
+        if call_oi and put_oi:
+            total_call_oi += call_oi
+            total_put_oi += put_oi
+
+        pc_ratio_points.append(
+            PcRatioPoint(
+                expiry_date=expiry_dt.date().isoformat(),
+                call_volume=call_v,
+                put_volume=put_v,
+                call_open_interest=call_oi,
+                put_open_interest=put_oi,
+                put_call_volume_ratio=ratio_volume,
+                put_call_open_interest_ratio=ratio_oi,
+            )
+        )
+    overall_ratio: float | None = None
+    if total_call_volume > 0 and total_put_volume > 0:
+        overall_ratio = round(total_put_volume / total_call_volume, 4)
+    elif total_call_oi > 0 and total_put_oi > 0:
+        overall_ratio = round(total_put_oi / total_call_oi, 4)
+
     return CalculateOptionStatsOutput(
-        rows_upserted=contracts_upserted + expiries_aggregated,
+        rows_upserted=contracts_upserted,
         symbol=symbol,
         source=source,
         contracts_upserted=contracts_upserted,
@@ -212,6 +282,8 @@ async def calculate_option_stats_handler(payload: dict) -> dict:
         expiries_aggregated=expiries_aggregated,
         expiries_skipped=expiries_skipped,
         vol_smile=vol_smile,
+        put_call_ratios=pc_ratio_points,
+        put_call_ratio_overall=overall_ratio,
     ).model_dump(mode="json")
 
 

@@ -1,8 +1,8 @@
 """Quant market-data SQL templates for the ``fin_markets`` schema.
 
 Covers ``fin_markets.quant_stats`` (OHLCV + technicals for
-equity/crypto/commodity/precious_metal/index) and
-``fin_markets.quant_derivative_stats`` (options and futures contracts).
+equity/stock/etf/crypto/commodity/precious_metal/index/futures) and
+``fin_markets.quant_options_stats`` (per-contract options rows).
 
 All constants are raw SQL strings ready for use with psycopg3 ``%s`` /
 ``%(name)s`` parameterisation.
@@ -17,12 +17,17 @@ __all__ = [
     "PreciousMetalStatsSQL",
     "IndexStatsSQL",
     "OptionsStatsSQL",
-    "DerivativeStatsSQL",
 ]
 
 
 class OhlcvStatsSQL:
-    """Queries against ``fin_markets.quant_stats`` for equity (instrument_type='equity')."""
+    """Queries against ``fin_markets.quant_stats`` for equity/stock/etf/futures.
+
+    All queries use ``%(instrument_type)s`` named parameterisation so the caller
+    can target any supported instrument type (``'equity'``, ``'stock'``, ``'etf'``,
+    ``'futures'``, etc.) instead of hardcoding ``'equity'``.  Upsert INSERT uses the
+    same parameter for the ``instrument_type`` column.
+    """
 
     UPSERT = """
         INSERT INTO fin_markets.quant_stats (
@@ -38,7 +43,7 @@ class OhlcvStatsSQL:
             vwap, obv, ad,
             index_code
         ) VALUES (
-            %(symbol)s, 'equity', %(currency_code)s, %(source)s, %(granularity)s, %(bar_time)s,
+            %(symbol)s, %(instrument_type)s, %(currency_code)s, %(source)s, %(granularity)s, %(bar_time)s,
             %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s, %(trade_count)s,
             %(sma_20)s, %(sma_50)s, %(sma_200)s, %(ema_12)s, %(ema_26)s,
             %(macd_line)s, %(macd_signal)s, %(macd_hist)s,
@@ -93,45 +98,45 @@ class OhlcvStatsSQL:
     GET_COVERAGE = """
         SELECT MAX(bar_time) AS latest
         FROM fin_markets.quant_stats
-        WHERE symbol = %s
-          AND instrument_type = 'equity'
-          AND granularity = %s
-          AND bar_time >= %s
+        WHERE symbol = %(symbol)s
+          AND instrument_type = %(instrument_type)s
+          AND granularity = %(granularity)s
+          AND bar_time >= %(bar_time)s
     """
 
     GET_BARS_IN_WINDOW = """
         SELECT bar_time, open, high, low, close, volume
         FROM fin_markets.quant_stats
-        WHERE symbol = %s
-          AND instrument_type = 'equity'
-          AND granularity = %s
-          AND bar_time >= %s
+        WHERE symbol = %(symbol)s
+          AND instrument_type = %(instrument_type)s
+          AND granularity = %(granularity)s
+          AND bar_time >= %(start_dt)s
         ORDER BY bar_time ASC
     """
 
     GET_SMA_EMA_BARS_IN_WINDOW = """
         SELECT bar_time, sma_20, sma_50, ema_12, ema_26
         FROM fin_markets.quant_stats
-        WHERE symbol = %s
-          AND instrument_type = 'equity'
-          AND granularity = %s
-          AND bar_time >= %s
+        WHERE symbol = %(symbol)s
+          AND instrument_type = %(instrument_type)s
+          AND granularity = %(granularity)s
+          AND bar_time >= %(start_dt)s
         ORDER BY bar_time ASC
     """
 
     COUNT_BY_SYMBOL_GRANULARITY = """
         SELECT COUNT(*) AS row_count
         FROM fin_markets.quant_stats
-        WHERE symbol = %s
-          AND instrument_type = 'equity'
-          AND granularity = %s
+        WHERE symbol = %(symbol)s
+          AND instrument_type = %(instrument_type)s
+          AND granularity = %(granularity)s
     """
 
     GET_BY_SYMBOL = """
         SELECT *
         FROM fin_markets.quant_stats
         WHERE symbol = %(symbol)s
-          AND instrument_type = 'equity'
+          AND instrument_type = %(instrument_type)s
           AND granularity = %(granularity)s
         ORDER BY bar_time DESC
         LIMIT %(limit)s
@@ -140,9 +145,9 @@ class OhlcvStatsSQL:
     GET_LATEST_ID = """
         SELECT id
         FROM fin_markets.quant_stats
-        WHERE symbol = %s
-          AND instrument_type = 'equity'
-          AND granularity = %s
+        WHERE symbol = %(symbol)s
+          AND instrument_type = %(instrument_type)s
+          AND granularity = %(granularity)s
         ORDER BY bar_time DESC
         LIMIT 1
     """
@@ -541,34 +546,5 @@ class OptionsStatsSQL:
             open_interest      = COALESCE(EXCLUDED.open_interest,      fin_markets.quant_options_stats.open_interest),
             implied_volatility = COALESCE(EXCLUDED.implied_volatility, fin_markets.quant_options_stats.implied_volatility),
             created_at         = NOW()
-        RETURNING id
-    """
-
-
-class DerivativeStatsSQL:
-    """Queries against ``fin_markets.quant_derivative_stats`` (aggregate per-expiry rows).
-
-    ``UPSERT_OPTIONS_AGGREGATE`` writes one row per (symbol, source, expiry_date) for
-    options, with ``contract_name = NULL``, carrying the ``estimated_price`` where the
-    call breakeven (strike + call cost) and put breakeven (strike - put cost) meet at the
-    ATM ``cross_strike``.  The unique key is
-    ``(derivative_type, symbol, source, expiry_date, COALESCE(contract_name, ''))``.
-    """
-
-    UPSERT_OPTIONS_AGGREGATE = """
-        INSERT INTO fin_markets.quant_derivative_stats (
-            symbol, derivative_type, source, contract_name, expiry_date,
-            estimated_price, cross_strike
-        ) VALUES (
-            %(symbol)s, 'options', %(source)s, NULL, %(expiry_date)s,
-            %(estimated_price)s, %(cross_strike)s
-        )
-        ON CONFLICT (
-            derivative_type, symbol, source, expiry_date,
-            COALESCE(contract_name, '')
-        ) DO UPDATE SET
-            estimated_price = EXCLUDED.estimated_price,
-            cross_strike    = EXCLUDED.cross_strike,
-            created_at      = NOW()
         RETURNING id
     """

@@ -5,7 +5,7 @@ Anchor: ``(symbol, fin_report_date)`` where ``fin_report_date IS NOT NULL``.
   - New financial report (new ``fin_report_date``) -> INSERT new row.
   - Re-fetch of same report period -> UPSERT updates the existing row.
   - ``fin_report_date IS NULL`` (no report date available) -> plain INSERT.
-Optionally linked to a news article via ``news_stats_id`` / ``published_at``.
+Optionally linked to a news article via ``fin_report_news_stats_id``.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ class QuantStaticStatsSQL:
             total_debt, shareholders_equity, debt_to_equity, free_cash_flow,
             pe_ratio, forward_pe, ev_ebitda, market_cap,
             dividend_per_share, dividend_stability, dividend_record_date, dividend_payment_date,
-            published_at, news_stats_id,
+            fin_report_news_stats_id,
             primary_index_name, primary_index_weight,
             other_opt1_index_name, other_opt1_index_weight,
             other_opt2_index_name, other_opt2_index_weight,
@@ -45,7 +45,7 @@ class QuantStaticStatsSQL:
             total_debt, shareholders_equity, free_cash_flow,
             pe_ratio, forward_pe, ev_ebitda, market_cap,
             dividend_per_share, dividend_stability, dividend_record_date, dividend_payment_date,
-            published_at, news_stats_id,
+            fin_report_news_stats_id,
             primary_index_name, primary_index_weight,
             other_opt1_index_name, other_opt1_index_weight,
             other_opt2_index_name, other_opt2_index_weight,
@@ -59,7 +59,7 @@ class QuantStaticStatsSQL:
             %(pe_ratio)s, %(forward_pe)s, %(ev_ebitda)s, %(market_cap)s,
             %(dividend_per_share)s, %(dividend_stability)s,
             %(dividend_record_date)s, %(dividend_payment_date)s,
-            %(published_at)s, %(news_stats_id)s,
+            %(fin_report_news_stats_id)s,
             %(primary_index_name)s, %(primary_index_weight)s,
             %(other_opt1_index_name)s, %(other_opt1_index_weight)s,
             %(other_opt2_index_name)s, %(other_opt2_index_weight)s,
@@ -86,8 +86,7 @@ class QuantStaticStatsSQL:
             dividend_stability      = EXCLUDED.dividend_stability,
             dividend_record_date    = EXCLUDED.dividend_record_date,
             dividend_payment_date   = EXCLUDED.dividend_payment_date,
-            published_at            = EXCLUDED.published_at,
-            news_stats_id           = EXCLUDED.news_stats_id,
+            fin_report_news_stats_id = EXCLUDED.fin_report_news_stats_id,
             primary_index_name      = EXCLUDED.primary_index_name,
             primary_index_weight    = EXCLUDED.primary_index_weight,
             other_opt1_index_name   = EXCLUDED.other_opt1_index_name,

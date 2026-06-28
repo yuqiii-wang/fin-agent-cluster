@@ -4,11 +4,18 @@ Each entry maps a :class:`~backend.resources.web_knowledge.models.WebPageType`
 to a callable that builds the canonical URL from the given symbol and optional
 exchange.
 
+``web_search`` is special: it is backed by the Doubao ``web_search`` tool
+(see :mod:`backend.resources.web_knowledge.providers.ark`) rather than a plain
+HTTP URL.  Its builder resolves to the configured ARK ``chat/completions``
+endpoint.
+
 URL patterns
 ------------
-* competitors   -- ``https://www.marketbeat.com/stocks/{EXCHANGE}/{SYMBOL}/competitors-and-alternatives/``
-* press_releases -- ``https://www.nasdaq.com/market-activity/stocks/{symbol}/press-releases``
-* option_chain  -- ``https://www.nasdaq.com/market-activity/stocks/{symbol}/option-chain``
+* competitors     -- ``https://www.marketbeat.com/stocks/{EXCHANGE}/{SYMBOL}/...``
+* press_releases  -- ``https://www.nasdaq.com/market-activity/stocks/{symbol}/press-releases``
+* option_chain    -- ``https://www.nasdaq.com/market-activity/stocks/{symbol}/option-chain``
+* estimate        -- ``https://finance.yahoo.com/quote/{symbol.upper()}/analysis/``
+* web_search      -- ``https://ark.cn-beijing.volces.com/api/v3/chat/completions``
 
 yfinance exchange code -> MarketBeat exchange name mapping
 ----------------------------------------------------------
@@ -21,20 +28,21 @@ from __future__ import annotations
 
 from typing import Callable
 
+from backend.config import get_settings
 from backend.resources.web_knowledge.errors import WK_EXCHANGE_REQUIRED
 from backend.resources.web_knowledge.models import WebPageType
 
 # ---------------------------------------------------------------------------
-# yfinance exchange code -> MarketBeat URL exchange name
+# yfinance exchange code -> MarketBeat exchange name
 # ---------------------------------------------------------------------------
 
 _YF_EXCHANGE_TO_MARKETBEAT: dict[str, str] = {
     # US -- NASDAQ
-    "NMS": "NASDAQ",    # NASDAQ National Market Select
-    "NNM": "NASDAQ",    # NASDAQ National Market
-    "NGM": "NASDAQ",    # NASDAQ Global Market
-    "NCM": "NASDAQ",    # NASDAQ Capital Market
-    "BTS": "NASDAQ",    # NASDAQ BGS / BATS
+    "NMS": "NASDAQ",
+    "NNM": "NASDAQ",
+    "NGM": "NASDAQ",
+    "NCM": "NASDAQ",
+    "BTS": "NASDAQ",
     # US -- NYSE
     "NYQ": "NYSE",
     "NYSE": "NYSE",
@@ -92,7 +100,7 @@ def _competitors_url(symbol: str, exchange: str | None) -> str:
         Fully qualified MarketBeat competitors page URL.
 
     Raises:
-        ValueError: When *exchange* is not supplied.
+        ValueError: When ``exchange`` is not supplied.
     """
     if not exchange:
         raise ValueError(f"[{WK_EXCHANGE_REQUIRED}] exchange is required for page_type=competitors")
@@ -129,16 +137,31 @@ def _option_chain_url(symbol: str, exchange: str | None) -> str:
 
 
 def _estimate_url(symbol: str, exchange: str | None) -> str:
-    """Build the Nasdaq analyst-estimates URL.
+    """Build the Yahoo Finance analyst-estimates URL.
 
     Args:
         symbol:   Equity ticker, e.g. ``'AAPL'``.
-        exchange: Unused -- Nasdaq URL is exchange-agnostic.
+        exchange: Unused.
 
     Returns:
-        Fully qualified Nasdaq analyst-estimates page URL.
+        Fully qualified Yahoo Finance analyst estimates page URL.
     """
     return f"https://finance.yahoo.com/quote/{symbol.upper()}/analysis/"
+
+
+def _web_search_url(symbol: str, exchange: str | None) -> str:
+    """Return the ARK Doubao ``chat/completions`` endpoint.
+
+    ``symbol`` and ``exchange`` are unused — the builder exists so the
+    ``URL_BUILDERS`` dispatch table stays regular.
+    """
+    settings = get_settings()
+    base_url = (
+        getattr(settings, "ARK_WEB_SEARCH_BASE_URL", None)
+        or getattr(settings, "ARK_BASE_URL", None)
+        or "https://ark.cn-beijing.volces.com/api/v3"
+    )
+    return f"{base_url.rstrip('/')}/chat/completions"
 
 
 #: Maps each :class:`WebPageType` to its URL-builder callable.
@@ -147,6 +170,7 @@ URL_BUILDERS: dict[WebPageType, Callable[[str, str | None], str]] = {
     WebPageType.press_releases: _press_releases_url,
     WebPageType.option_chain: _option_chain_url,
     WebPageType.estimate: _estimate_url,
+    WebPageType.web_search: _web_search_url,
 }
 
 
@@ -155,16 +179,15 @@ def build_url(page_type: WebPageType, symbol: str, exchange: str | None = None) 
 
     Args:
         page_type: Category of page to build the URL for.
-        symbol:    Equity ticker symbol.
+        symbol:    Equity ticker symbol (may be empty for ``web_search``).
         exchange:  Exchange name; required only for ``competitors``.
 
     Returns:
         Canonical URL string.
 
     Raises:
-        ValueError: When *exchange* is missing for page types that require it.
-        KeyError:   When *page_type* has no registered URL builder (should never
-                    happen with a validated :class:`WebPageType`).
+        ValueError: When ``exchange`` is missing for page types that require it.
+        KeyError:   When ``page_type`` has no registered URL builder.
     """
     builder = URL_BUILDERS[page_type]
     return builder(symbol, exchange)

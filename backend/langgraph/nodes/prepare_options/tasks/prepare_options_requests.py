@@ -1,7 +1,7 @@
 """prepare_options_requests -- first task executed by prepare_options.
 
 Proposes the full catalogue of maturity windows that
-:class:`~backend.quant.stats.constants.FUTURES_OPTIONS_PERIODS` knows
+:class:`~backend.quant.stats.constants.OPTIONS_PERIODS` knows
 about.  Each window is emitted in two shapes:
 
 * :class:`~backend.langgraph.nodes.prepare_options.models.MaturityRequest`
@@ -42,7 +42,7 @@ from backend.langgraph.nodes.prepare_options.models import (
     PrepareOptionsRequestsInput,
     PrepareOptionsRequestsOutput,
 )
-from backend.quant.stats.constants import FUTURES_OPTIONS_PERIODS
+from backend.quant.stats.constants import OPTIONS_PERIODS
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +64,10 @@ def _propose_maturities(include_next: bool, pipeline: str = "options") -> list[M
     ``NEXT`` (0s) member is dropped from the proposal.
     """
 
-    ordered = sorted(FUTURES_OPTIONS_PERIODS, key=lambda m: m.seconds)
+    ordered = sorted(OPTIONS_PERIODS, key=lambda m: m.seconds)
     proposed: list[MaturityRequest] = []
     for member in ordered:
-        if member is FUTURES_OPTIONS_PERIODS.NEXT and not include_next:
+        if member is OPTIONS_PERIODS.NEXT and not include_next:
             continue
         proposed.append(
             MaturityRequest(

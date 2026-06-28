@@ -4,6 +4,14 @@ Given a ticker symbol (``'AAPL'``, ``'^GSPC'``, ``'CL=F'``,
 ``'000300.SS'`` ...), :func:`service_for_symbol` returns the service
 module that should be used to fetch stats for it.
 
+The canonical product-type detection now lives in
+:mod:`backend.resources.stats.symbol_config` — :func:`_detect_product`
+here is a thin wrapper that maps the universal labels down to the five
+service labels this module exposes (``crypto`` is routed through the
+``stock`` service at the transport level because it is structurally
+OHLCV; the label is kept separate so downstream viewers / DB write
+paths can treat it distinctly).
+
 Product labels
 --------------
 * ``'stock'``   -- individual equities and A-shares (``AAPL``,
@@ -24,11 +32,11 @@ Product labels
 Decision order
 --------------
 1. ``force_product`` when explicitly supplied.
-2. Known index ticker (``is_index_ticker`` cache).
-3. Futures suffix ``=F``.
-4. Macro suffix ``=X``.
-5. Leading ``^`` prefix -> index.
-6. Otherwise -> stock (the safe catch-all).
+2. Index detection via :func:`symbol_config.detect_product_type`
+   (``is_index_ticker`` cache / ``^`` prefix).
+3. Futures / crypto / macro / stock — all via the unified
+   :func:`symbol_config.detect_product_type` so there is a single
+   source of truth.
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ import types
 from typing import Optional
 
 from backend.db.postgres.queries.fin_markets_indexes import is_index_ticker
+from backend.resources.stats import symbol_config as _sym_cfg
 from backend.resources.stats.services import futures, index, macro, options, stock
 
 
@@ -56,33 +65,27 @@ ProductService = types.ModuleType
 
 
 def _detect_product(symbol: str | None) -> str:
-    """Infer a product label from *symbol*.
+    """Infer a service-layer product label from *symbol*.
 
-    Args:
-        symbol: Ticker symbol (may be ``None``).
-
-    Returns:
-        One of the ``PRODUCT_*`` constants; defaults to
-        :data:`PRODUCT_STOCK` when no more specific match applies.
+    Delegates to :func:`_sym_cfg.detect_product_type` — the one true
+    source of symbol-pattern logic.  The only post-processing step is
+    mapping ``PRODUCT_CRYPTO`` down to ``PRODUCT_STOCK`` at the
+    *transport* layer: crypto spot tickers (``BTC-USD`` ...) are
+    structurally OHLCV and share yfinance/FMP/mock endpoints with
+    equities, so they reuse :mod:`services.stock`.  Downstream code
+    that cares about the distinction can re-read the canonical label
+    from :mod:`symbol_config` directly.
     """
+
     if not symbol:
         return PRODUCT_STOCK
 
-    up = symbol.upper()
+    is_idx = bool(is_index_ticker(symbol))
+    label = _sym_cfg.detect_product_type(symbol, is_index=is_idx)
 
-    if is_index_ticker(up):
-        return PRODUCT_INDEX
-
-    if up.endswith("=F"):
-        return PRODUCT_FUTURES
-
-    if up.endswith("=X"):
-        return PRODUCT_MACRO
-
-    if up.startswith("^"):
-        return PRODUCT_INDEX
-
-    return PRODUCT_STOCK
+    if label == _sym_cfg.PRODUCT_CRYPTO:
+        return PRODUCT_STOCK
+    return label if label in VALID_PRODUCTS else PRODUCT_STOCK
 
 
 def service_for_symbol(

@@ -33,9 +33,6 @@ TARGET_FILES = [
     "backend/langgraph/nodes/prepare_options/node.py",
     "backend/langgraph/nodes/prepare_options/models/output.py",
     "backend/langgraph/nodes/prepare_futures/node.py",
-    "backend/langgraph/nodes/prepare_derivatives/agent_steps/calculate_options.py",
-    "backend/langgraph/nodes/prepare_derivatives/agent_steps/study_web.py",
-    "backend/langgraph/nodes/prepare_derivatives/agent_steps/extraction_schema.py",
     "backend/langgraph/models/common_tasks/task_seqs/prepare_fundamentals/get_fundamentals.py",
 ]
 

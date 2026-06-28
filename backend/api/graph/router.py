@@ -12,7 +12,6 @@ from fastapi import APIRouter
 
 from backend.api.graph.topology import GraphTopologyResponse, GRAPH_TOPOLOGY
 from backend.api.graph.node_metas import NodeMetaResponse, get_node_metas
-from backend.api.graph.node_skills import NodeSkillsResponse, get_all_node_skills
 
 router = APIRouter(prefix="/graph", tags=["graph"])
 
@@ -35,18 +34,7 @@ async def get_graph_node_metas() -> list[NodeMetaResponse]:
 
     The list starts with the ``__global__`` virtual entry (graph-wide defaults)
     followed by one entry per production node that declares ``config_fields``.
-    The frontend uses this to render the per-node agent preferences panel
+    The frontend uses this to render the per-node preferences panel
     without any hardcoded metadata on the client side.
     """
     return get_node_metas()
-
-
-@router.get("/node-skills", response_model=list[NodeSkillsResponse])
-async def get_graph_node_skills() -> list[NodeSkillsResponse]:
-    """Return built-in skill files for all graph nodes that have a skills/ directory.
-
-    Each entry contains the node name and the list of markdown files found in
-    its ``skills/`` directory.  The frontend uses this to display the node's
-    built-in workflow documentation in the agent detail panel.
-    """
-    return get_all_node_skills()

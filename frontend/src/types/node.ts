@@ -18,6 +18,12 @@ export interface NodeInfo {
    *  nodes API.  Nodes with the same conditional_group are stacked vertically
    *  in a single topology slot with conditional (dashed) edge styling. */
   conditional_group?: string;
+  /** Name of another top-level node this node should align with (same
+   *  y-coordinate / "horizon").  Enriched from the graph topology; used for
+   *  multi-step branches such as ``prepare_peers -> load_peers_stats`` where
+   *  the second step must sit on the same row as the first step even though
+   *  it is in a later topology slot. */
+  align_with_node_name?: string;
   /** True for topology placeholder nodes that have not yet executed. */
   is_topology_only?: boolean;
   /** Fork generation (0 = original run, 1+ = re-explore branches). */

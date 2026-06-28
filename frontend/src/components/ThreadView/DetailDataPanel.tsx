@@ -3,7 +3,6 @@ import { Button, Card, Typography } from 'antd';
 import { CaretRightOutlined, PauseOutlined, RetweetOutlined } from '@ant-design/icons';
 import DataViewer, { viewTypeToMode } from '../DataViewer/index';
 import { StatsViewSelect } from '../DataViewer/StatsViewer';
-import AgentNodeRunningOutput from '../NodeDetail/Agent/AgentNodeRunningOutput';
 import { retryFreshTask, continueTask, pauseTask } from '../../api/threads';
 import type { TaskInfo, NodeInfo, TaskRunEntry } from '../../types';
 import type { DetailData } from './types';
@@ -124,11 +123,6 @@ const DetailDataPanel: React.FC<Props> = ({
     ? (streamTask!.view_schema as Record<string, string> | undefined)
     : detailData.viewSchema;
   const effectiveFieldList = isCompletedStream ? true : detailData.fieldList;
-  const nodeTaskRunLog = detailData.nodeId
-    ? taskRunLog.filter((entry) => entry.node_id === detailData.nodeId)
-    : [];
-  const showAgentRunningOutput =
-    detailData.nodeContext === 'output' && nodeTaskRunLog.length > 0;
   // Always render DataViewer for stream mode (data=undefined is normal; task sub-handles tokens).
   const showDataViewer =
     effectiveMode === 'stream' ||
@@ -201,13 +195,6 @@ const DetailDataPanel: React.FC<Props> = ({
       }
       style={{ borderRadius: 8 }}
     >
-      {showAgentRunningOutput && (
-        <AgentNodeRunningOutput
-          entries={nodeTaskRunLog}
-          tokenStreams={tokenStreams}
-          showTitle={false}
-        />
-      )}
       {showDataViewer && (
         <DataViewer
           mode={effectiveMode}

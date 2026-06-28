@@ -3,7 +3,9 @@
 Supported types mirror the ``instrument_type`` CHECK constraint in
 ``fin_markets.quant_stats``:
 
-* ``'equity'``         -- exchange-listed stocks and ETFs (e.g. ``'AAPL'``, ``'005930.KS'``).
+* ``'equity'``         -- exchange-listed securities (fallback bucket, e.g. ``'AAPL'``, ``'005930.KS'``).
+* ``'stock'``          -- common/preferred stock tickers (explicit stock classification).
+* ``'etf'``            -- exchange-traded fund tickers (e.g. ``'SPY'``, ``'QQQ'``).
 * ``'crypto'``         -- cryptocurrency spot pairs (e.g. ``'BTC-USD'``, ``'ETH-USD'``).
 * ``'commodity'``      -- commodity futures tickers (e.g. ``'NG=F'``, ``'CL=F'``).
 * ``'precious_metal'`` -- precious metal futures tickers (e.g. ``'GC=F'``, ``'SI=F'``).
@@ -26,10 +28,12 @@ __all__ = [
 # Type alias -- valid instrument_type values for quant_stats
 # ---------------------------------------------------------------------------
 
-InstrumentType = Literal["equity", "crypto", "commodity", "precious_metal", "index", "futures", "options"]
+InstrumentType = Literal["equity", "stock", "etf", "crypto", "commodity", "precious_metal", "index", "futures", "options"]
 
 INSTRUMENT_TYPES: tuple[str, ...] = (
     "equity",
+    "stock",
+    "etf",
     "crypto",
     "commodity",
     "precious_metal",
@@ -78,6 +82,11 @@ def resolve_instrument_type(symbol: str, *, is_index: bool = False) -> Instrumen
     4. Symbol in :data:`_COMMODITY_FUTURES_SYMBOLS` -> ``'commodity'``.
     5. Everything else                              -> ``'equity'``.
 
+    Callers that know the specific classification (``'stock'`` vs ``'etf'`` vs
+    ``'futures'``) may override this result before writing to the DB, since the
+    *quant_stats* CHECK constraint accepts all nine values.  This resolver errs
+    on the side of the broad ``'equity'`` bucket when no hardcoded registry matches.
+
     The ``is_index`` flag is kept as a separate parameter to avoid importing
     the DB-backed :func:`~backend.db.postgres.queries.fin_markets_indexes.is_index_ticker`
     from this pure-computation module.
@@ -88,7 +97,8 @@ def resolve_instrument_type(symbol: str, *, is_index: bool = False) -> Instrumen
                   for this symbol.
 
     Returns:
-        One of ``'equity'``, ``'crypto'``, ``'precious_metal'``, ``'commodity'``, ``'index'``.
+        One of ``'equity'``, ``'stock'``, ``'etf'``, ``'crypto'``,
+        ``'precious_metal'``, ``'commodity'``, ``'index'``, ``'futures'``, ``'options'``.
     """
     sym = symbol.upper()
     if is_index or sym.startswith("^"):

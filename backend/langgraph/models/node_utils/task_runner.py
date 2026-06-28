@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from langchain_core.runnables import RunnableLambda
 
 from backend.langgraph.models.models import NodeContext, TaskContext, TaskInput, TaskOutput
 from backend.langgraph.models.task import NodeTask
+
+logger = logging.getLogger(__name__)
 
 
 class TaskRunnerMixin:
@@ -58,7 +61,16 @@ class TaskRunnerMixin:
             if k != "from_maybe_cache"
         }
         input_json = json.dumps(cache_dict)
+        logger.info(
+            "[task_runner] run_task DISPATCH node_id=%s task_name=%s from_maybe_cache=%s input_hash=%s",
+            getattr(ctx, "node_id", None), node_task.name, from_maybe_cache,
+            hex(abs(hash(input_json))),
+        )
         existing = await get_existing_task_for_node(ctx.thread_id, ctx.node_id, node_task.name, input_json)
+        logger.info(
+            "[task_runner] run_task GET_EXISTING node_id=%s task_name=%s existing_match=%s",
+            getattr(ctx, "node_id", None), node_task.name, existing,
+        )
         # Guard against returning a cached result from a *different* parallel invocation of the
         # same task within this node (e.g. prepare_index running get_and_calculate_stats for N
         # symbols concurrently).  ctx.task_ids is appended to before the @task fn is awaited, so
@@ -67,6 +79,10 @@ class TaskRunnerMixin:
         if from_maybe_cache and existing and not existing_claimed and existing["status"] == "completed":
             # SQL already verified input_hash matches and TTL is live -- serve from cache.
             task_id = existing["task_id"]
+            logger.info(
+                "[task_runner] run_task CACHE HIT node_id=%s task_name=%s task_id=%s",
+                getattr(ctx, "node_id", None), node_task.name, task_id,
+            )
             task_row = await get_task_full(ctx.thread_id, task_id)
             output_data = task_row.get("output") if task_row else None
             if output_data is not None:
@@ -85,14 +101,26 @@ class TaskRunnerMixin:
                     content=node_task.output_type.model_validate(raw),
                 )
             # output is missing; reset and re-run normally.
+            logger.info(
+                "[task_runner] run_task CACHE HIT with empty output node_id=%s task_id=%s -> re-run",
+                getattr(ctx, "node_id", None), task_id,
+            )
             await reset_task_for_retry(ctx.thread_id, task_id)
         elif existing and not existing_claimed and existing["status"] in ("paused", "failed"):
             task_id = existing["task_id"]
+            logger.info(
+                "[task_runner] run_task REUSE failed/paused node_id=%s task_name=%s task_id=%s status=%s",
+                getattr(ctx, "node_id", None), node_task.name, task_id, existing["status"],
+            )
             await reset_task_for_retry(ctx.thread_id, task_id)
             if existing["status"] == "paused":
                 await clear_task_pause_flag(task_id)
         else:
             task_id = make_task_id()
+            logger.info(
+                "[task_runner] run_task FRESH node_id=%s task_name=%s NEW_TASK_ID=%s",
+                getattr(ctx, "node_id", None), node_task.name, task_id,
+            )
         ctx.task_ids.append(task_id)
         task_ctx = TaskContext(
             **ctx.model_dump(),
@@ -122,6 +150,10 @@ class TaskRunnerMixin:
                 )
                 return TaskOutput(ctx=task_ctx, content=cached_content)
 
+        logger.info(
+            "[task_runner] run_task INVOKE task_fn node_id=%s task_name=%s task_id=%s",
+            getattr(ctx, "node_id", None), node_task.name, task_id,
+        )
         result = await node_task.task_fn(TaskInput(ctx=task_ctx, content=content, memory=ctx.metadata.get("agent_memory", [])))
         # LangGraph @task may return a checkpoint-cached result where the generic
         # TaskOutput[T].content was deserialized as a plain dict instead of the
